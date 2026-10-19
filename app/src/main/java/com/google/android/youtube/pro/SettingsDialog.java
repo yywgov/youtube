@@ -32,7 +32,6 @@ public class SettingsDialog {
         scroll.addView(box);
 
         box.addView(header("播放与内容"));
-        box.addView(toggle("隐藏 Shorts", "首页、搜索和底部栏不显示 Shorts", Prefs.HIDE_SHORTS, Prefs.hideShorts(a)));
         box.addView(toggle("SponsorBlock 自动跳过", "自动跳过赞助、自我推广和求订阅片段", Prefs.SPONSOR_BLOCK, Prefs.sponsorBlock(a)));
         box.addView(toggle("后台/熄屏时最低画质", "省电省流量；回到前台恢复自动画质", Prefs.LOW_QUALITY_BG, Prefs.lowQualityBg(a)));
 
@@ -58,8 +57,8 @@ public class SettingsDialog {
         box.addView(row("应用详情（自启动 / 耗电策略）", v -> a.openAppDetails()));
 
         box.addView(header("关于"));
-        box.addView(row("检查更新（GitHub Releases）", v -> a.openExternal(MainActivity.RELEASES)));
-        TextView ver = text("YT Lite " + version() + " · 基于 YTPro (MIT)", 12, 0xFF9E9E9E);
+        box.addView(row("检查更新", v -> Updater.checkNow(a)));
+        TextView ver = text("YT Lite " + version() + " · 每天自动检查一次更新 · 基于 YTPro (MIT)", 12, 0xFF9E9E9E);
         ver.setPadding(dp(16), dp(8), dp(16), dp(4));
         box.addView(ver);
 

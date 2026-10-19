@@ -1,6 +1,13 @@
 apply plugin: 'com.android.application'
 
+// versionCode = CI run number (always increasing, so every build installs over the last).
+// versionName = the release tag without "v" on tag builds (v1.1.0 -> 1.1.0); the in-app
+// updater compares it with the latest GitHub release. Other builds are "<next>-dev.<run>".
 def ciRun = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
+def baseVersion = "1.1.0"
+def refName = System.getenv("GITHUB_REF_NAME") ?: ""
+def isTagBuild = System.getenv("GITHUB_REF_TYPE") == "tag" && refName ==~ /v\d+(\.\d+)*.*/
+def verName = isTagBuild ? refName.substring(1) : (baseVersion + "-dev." + ciRun)
 
 android {
     // Java package kept from upstream; applicationId differs so it installs
@@ -13,7 +20,7 @@ android {
         minSdkVersion 21
         targetSdkVersion 36
         versionCode ciRun
-        versionName "1.0." + ciRun
+        versionName verName
     }
 
     buildTypes {
@@ -38,4 +45,5 @@ android {
 dependencies {
     implementation 'androidx.webkit:webkit:1.12.0'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'androidx.core:core:1.13.1' // FileProvider for the updater
 }

@@ -30,21 +30,36 @@ public class YTProWebViewClient extends WebViewClient {
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         if (AdBlocker.shouldBlock(request.getUrl())) return AdBlocker.empty(request);
+        if (WatchPageFilter.applies(request)) return WatchPageFilter.fetch(request);
         return null;
     }
 
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-        return handleUrl(request.getUrl());
+        return handleUrl(view, request.getUrl());
     }
 
     @SuppressWarnings("deprecation")
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, String url) {
-        return handleUrl(Uri.parse(url));
+        return handleUrl(view, Uri.parse(url));
     }
 
-    private boolean handleUrl(Uri uri) {
+    /** youtube.com/shorts/ID -> /watch?v=ID, channel /shorts tab -> /videos; null if not Shorts. */
+    public static String unshort(Uri uri) {
+        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
+        if (!host.endsWith("youtube.com") || uri.getPath() == null) return null;
+        java.util.regex.Matcher m = SHORTS.matcher(uri.getPath());
+        if (m.find()) return "https://m.youtube.com/watch?v=" + m.group(1);
+        m = CHANNEL_SHORTS.matcher(uri.getPath());
+        if (m.matches()) return "https://m.youtube.com" + m.group(1) + "/videos";
+        return null;
+    }
+
+    private static final Pattern SHORTS = Pattern.compile("^/shorts/([A-Za-z0-9_-]{6,})");
+    private static final Pattern CHANNEL_SHORTS = Pattern.compile("^(/(?:@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+))/shorts/?$");
+
+    private boolean handleUrl(WebView view, Uri uri) {
         String scheme = uri.getScheme();
         if (scheme == null) return false;
         if (!scheme.equals("http") && !scheme.equals("https")) {
@@ -56,6 +71,11 @@ public class YTProWebViewClient extends WebViewClient {
         if (host.endsWith("youtube.com") && "/redirect".equals(uri.getPath())) {
             String q = uri.getQueryParameter("q");
             if (q != null) activity.openExternal(q);
+            return true;
+        }
+        String watch = unshort(uri);
+        if (watch != null) {
+            view.loadUrl(watch);
             return true;
         }
         if (IN_APP.matcher(host).find()) return false;

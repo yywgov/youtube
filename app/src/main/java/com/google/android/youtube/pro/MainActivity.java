@@ -1,228 +1,420 @@
 package com.google.android.youtube.pro;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.PictureInPictureParams;
-import android.content.Context;
+import android.app.AlertDialog;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.util.Rational;
-import android.view.View;
-import android.view.WindowManager;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.widget.Toast;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
-import android.widget.Button;
 
-// Import the separated components
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+import androidx.webkit.WebSettingsCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import com.google.android.youtube.pro.webview.WebAppInterface;
+import com.google.android.youtube.pro.webview.YTProWebChromeClient;
 import com.google.android.youtube.pro.webview.YTProWebView;
 import com.google.android.youtube.pro.webview.YTProWebViewClient;
-import com.google.android.youtube.pro.webview.YTProWebChromeClient;
-import com.google.android.youtube.pro.webview.WebAppInterface;
-import com.google.android.youtube.pro.webview.BinaryStreamManager;
-import android.view.MotionEvent;
-import android.os.SystemClock;
 
-import com.google.android.youtube.pro.receivers.MediaCommandReceiver;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 public class MainActivity extends Activity {
 
-    public boolean portrait = false;
-    public boolean isPlaying = false;
-    public boolean mediaSession = false;
-    public boolean isPip = false;
-    public boolean dL = false;
+    public static final int REQ_MIC = 101;
+    private static final int REQ_NOTIF = 102;
+    private static final String HOME = "https://m.youtube.com/";
+    public static final String RELEASES = "https://github.com/yywgov/youtube/releases";
+
+    private static WeakReference<MainActivity> current = new WeakReference<>(null);
+    private static boolean visible = false;
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+
+    public boolean portraitVideo = false;
 
     private YTProWebView web;
-    private MediaCommandReceiver broadcastReceiver;
+    private SwipeRefreshLayout swipe;
+    private YTProWebChromeClient chrome;
     private OnBackInvokedCallback backCallback;
-    public BinaryStreamManager streamManager;
-    
-    
+    private String script = "";
+    private boolean docStartScript = false;
+    private boolean pageAtTop = true;
+    private String currentUrl = HOME;
+
+    // ===================== static helpers =====================
+
+    public static boolean isVisible() { return visible; }
+
+    /** Run a snippet against the injected script (window.ytl) on the main thread. */
+    public static void js(final String code) {
+        Runnable r = () -> {
+            MainActivity a = current.get();
+            if (a == null || a.web == null) return;
+            a.web.evaluateJavascript("window.ytl&&(function(){try{" + code + "}catch(e){}})()", null);
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) r.run();
+        else MAIN.post(r);
+    }
+
+    // ===================== lifecycle =====================
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        current = new WeakReference<>(this);
         setContentView(R.layout.main);
-        
-        SharedPreferences prefs = getSharedPreferences("YTPRO", MODE_PRIVATE);
-        if (!prefs.contains("bgplay")) {
-            prefs.edit().putBoolean("bgplay", true).apply();
-        }
-
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        load(false);
-    }
-
-    public void load(boolean dl) {
-              
-        
-        this.dL = dl;
+        swipe = findViewById(R.id.swipe);
         web = findViewById(R.id.web);
-        
-        web.getSettings().setJavaScriptEnabled(true);
-        web.getSettings().setSupportZoom(true);
-        web.getSettings().setBuiltInZoomControls(true);
-        web.getSettings().setDisplayZoomControls(false);
-        web.getSettings().setDomStorageEnabled(true);
-        web.getSettings().setDatabaseEnabled(true);
-        web.getSettings().setMediaPlaybackRequiresUserGesture(false); 
-        web.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-
-        CookieManager cookieManager = CookieManager.getInstance();
-        cookieManager.setAcceptCookie(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookieManager.setAcceptThirdPartyCookies(web, true);
-        }
-
-        Intent intent = getIntent();
-        String action = intent.getAction();
-        Uri data = intent.getData();
-        String url = "https://m.youtube.com/";
-        if (Intent.ACTION_VIEW.equals(action) && data != null) {
-            url = data.toString();
-        } else if (Intent.ACTION_SEND.equals(action)) {
-            String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
-            if (sharedText != null && (sharedText.contains("youtube.com") || sharedText.contains("youtu.be"))) {
-                url = sharedText;
-            }
-        }
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-          web.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        }
-
-
-        web.addJavascriptInterface(new WebAppInterface(this, web), "Android");
-        web.setWebChromeClient(new YTProWebChromeClient(this, web));
-        web.setWebViewClient(new YTProWebViewClient(this, web));
-        
-        web.loadUrl(url);
-
-        setupReceiver();
-        setupBackNavigation();
-        streamManager = new BinaryStreamManager(web,this);
-        
-        
-    }
-         
-
-   
-
-    private void setupReceiver() {
-        broadcastReceiver = new MediaCommandReceiver(web);
-        if (Build.VERSION.SDK_INT >= 34 && getApplicationInfo().targetSdkVersion >= 34) {
-            registerReceiver(broadcastReceiver, new IntentFilter("TRACKS_TRACKS"), RECEIVER_EXPORTED);
-        } else {
-            registerReceiver(broadcastReceiver, new IntentFilter("TRACKS_TRACKS"));
-        }
-    }
-
-    private void setupBackNavigation() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            OnBackInvokedDispatcher dispatcher = getOnBackInvokedDispatcher();
-            backCallback = new OnBackInvokedCallback() {
-                @Override
-                public void onBackInvoked() {
-                    handleBackPress();
-                }
-            };
-            dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
-        }
-    }
-
-    private void handleBackPress() {
-        if (web.canGoBack()) {
-            web.goBack();
-        } else {
-            finish();
-        }
+        script = readAsset("ytlite.js");
+        setupWebView();
+        setupSwipe();
+        setupBack();
+        web.loadUrl(urlFromIntent(getIntent()));
+        MAIN.postDelayed(this::askPermissionsOnce, 1500);
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String url = urlFromIntent(intent);
+        boolean external = Intent.ACTION_VIEW.equals(intent.getAction()) || Intent.ACTION_SEND.equals(intent.getAction());
+        if (external && web != null) web.loadUrl(url);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+        js("ytl.bg(false)");
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        visible = false;
+        js("ytl.bg(true)");
+        CookieManager.getInstance().flush();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+        }
+        if (current.get() == this) {
+            SleepTimer.cancel(null);
+            PlaybackService.stop(this);
+            current = new WeakReference<>(null);
+        }
+        destroyWebView();
+        super.onDestroy();
+    }
+
+    // ===================== WebView =====================
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void setupWebView() {
+        WebSettings s = web.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setSupportZoom(false);
+        s.setBuiltInZoomControls(false);
+        s.setDisplayZoomControls(false);
+        s.setAllowFileAccess(false);
+        s.setGeolocationEnabled(false);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // Google blocks sign-in from embedded WebViews ("This browser or app may not be secure")
+        // based on the "; wv" token in the user agent – present as plain Chrome instead.
+        s.setUserAgentString(s.getUserAgentString()
+                .replace("; wv)", ")")
+                .replaceAll("Version/\\d+(\\.\\d+)* ", ""));
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+            WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, Collections.<String>emptySet());
+        }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, false); // YouTube's own dark theme
+        }
+
+        web.setBackgroundColor(0xFF0F0F0F);
+        web.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
+        if (Build.VERSION.SDK_INT >= 26) {
+            // keep the renderer important even when not visible (screen off)
+            web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        }
+
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(web, true);
+        ensureDarkThemeCookie(cm);
+
+        web.addJavascriptInterface(new WebAppInterface(this), "YTL");
+        chrome = new YTProWebChromeClient(this);
+        web.setWebChromeClient(chrome);
+        web.setWebViewClient(new YTProWebViewClient(this));
+
+        // Bundled script, injected at document start, once per document.
+        if (!script.isEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            Set<String> origins = new HashSet<>();
+            origins.add("https://m.youtube.com");
+            origins.add("https://www.youtube.com");
+            origins.add("https://youtube.com");
+            try {
+                WebViewCompat.addDocumentStartJavaScript(web, script, origins);
+                docStartScript = true;
+            } catch (Exception e) {
+                docStartScript = false;
+            }
+        }
+    }
+
+    /** First run: ask YouTube for its dark theme (PREF f6=400) unless the user already chose one. */
+    private void ensureDarkThemeCookie(CookieManager cm) {
+        String c = cm.getCookie("https://m.youtube.com");
+        if (c == null || !c.contains("PREF=")) {
+            cm.setCookie("https://m.youtube.com", "PREF=f6=400; Domain=.youtube.com; Path=/; Max-Age=63072000; Secure");
+        }
+    }
+
+    private void injectFallback() {
+        if (!docStartScript && !script.isEmpty() && web != null) web.evaluateJavascript(script, null);
+    }
+
+    private void destroyWebView() {
+        if (web == null) return;
+        try {
+            ViewGroup parent = (ViewGroup) web.getParent();
+            if (parent != null) parent.removeView(web);
+            web.stopLoading();
+            web.destroy();
+        } catch (Exception ignored) {}
+        web = null;
+    }
+
+    public void onRendererGone() {
+        destroyWebView();
+        recreate();
+    }
+
+    private String readAsset(String name) {
+        try (InputStream in = getAssets().open(name)) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            return bos.toString("UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // ===================== callbacks from the WebView clients / bridge =====================
+
+    public void onPageStarted(String url) {
+        currentUrl = url;
+        pageAtTop = true;
+    }
+
+    public void onPageFinished(String url) {
+        currentUrl = url;
+        injectFallback();
+        swipe.setRefreshing(false);
+    }
+
+    public void onUrlChanged(String url) {
+        currentUrl = url;
+        if (!isPlayerUrl(url)) pageAtTop = web == null || web.getScrollY() == 0;
+    }
+
+    public void setPageAtTop(boolean top) {
+        pageAtTop = top;
+    }
+
+    public void onPlayingChanged(boolean playing) {
+        // nothing extra for now: the screen is allowed to time out while playing
+        // (so you can fall asleep); fullscreen keeps it on via the chrome client.
+    }
+
+    public void reloadFeed() {
+        if (web == null) return;
+        swipe.setRefreshing(true);
+        web.reload();
+        MAIN.postDelayed(() -> swipe.setRefreshing(false), 8000);
+    }
+
+    public void openExternal(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception e) {
+            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    public void openSettings() {
+        new SettingsDialog(this).show();
+    }
+
+    // ===================== pull to refresh =====================
+
+    private static boolean isPlayerUrl(String url) {
+        return url != null && (url.contains("/watch") || url.contains("/shorts/") || url.contains("/live/"));
+    }
+
+    private boolean canPullToRefresh() {
+        return web != null && pageAtTop && web.getScrollY() == 0
+                && !isPlayerUrl(currentUrl) && !chrome.isFullscreen();
+    }
+
+    private void setupSwipe() {
+        swipe.setColorSchemeColors(0xFFFF0033);
+        swipe.setProgressBackgroundColorSchemeColor(0xFF212121);
+        swipe.setOnChildScrollUpCallback((parent, child) -> !canPullToRefresh());
+        swipe.setOnRefreshListener(() -> {
+            if (web == null) return;
+            web.reload();
+            MAIN.postDelayed(() -> swipe.setRefreshing(false), 8000);
+        });
+    }
+
+    // ===================== back navigation =====================
+
+    private void setupBack() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = this::handleBack;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback);
+        }
+    }
+
+    private void handleBack() {
+        if (chrome != null && chrome.isFullscreen()) {
+            chrome.exitFullscreen();
+        } else if (web != null && web.canGoBack()) {
+            web.goBack();
+        } else {
+            // keep playing in the background instead of killing the WebView
+            moveTaskToBack(true);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
     public void onBackPressed() {
-        handleBackPress();
+        handleBack();
+    }
+
+    // ===================== intents =====================
+
+    private static String urlFromIntent(Intent intent) {
+        if (intent == null) return HOME;
+        String action = intent.getAction();
+        if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null) {
+            return normalize(intent.getData().toString());
+        }
+        if (Intent.ACTION_SEND.equals(action)) {
+            String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+            if (text != null) {
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("https?://(?:[\\w-]+\\.)?(?:youtube\\.com|youtu\\.be)/\\S+").matcher(text);
+                if (m.find()) return normalize(m.group());
+            }
+        }
+        return HOME;
+    }
+
+    private static String normalize(String url) {
+        Uri u = Uri.parse(url);
+        String host = u.getHost() == null ? "" : u.getHost();
+        if (host.endsWith("youtu.be") && u.getPath() != null && u.getPath().length() > 1) {
+            String t = u.getQueryParameter("t");
+            return HOME + "watch?v=" + u.getPath().substring(1) + (t != null ? "&t=" + t : "");
+        }
+        return url;
+    }
+
+    // ===================== first-run permissions =====================
+
+    private void askPermissionsOnce() {
+        if (isFinishing()) return;
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                && !Prefs.get(this).getBoolean(Prefs.ASKED_NOTIF, false)) {
+            Prefs.put(this, Prefs.ASKED_NOTIF, true);
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
+            return;
+        }
+        askBatteryOnce();
+    }
+
+    private void askBatteryOnce() {
+        if (Build.VERSION.SDK_INT < 23 || isIgnoringBattery() || Prefs.get(this).getBoolean(Prefs.ASKED_BATTERY, false)) return;
+        Prefs.put(this, Prefs.ASKED_BATTERY, true);
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("允许后台持续播放")
+                .setMessage("为了熄屏后也能一直播放（听着入睡），请在下一步允许 YT Lite「不受电池优化限制」。\n\n"
+                        + "国产系统（MIUI/HyperOS、ColorOS、EMUI/HarmonyOS 等）还需要在应用详情里开启「自启动」并把耗电策略设为「无限制」。")
+                .setPositiveButton("去设置", (d, w) -> requestIgnoreBattery())
+                .setNegativeButton("以后再说", null)
+                .show();
+    }
+
+    public boolean isIgnoringBattery() {
+        if (Build.VERSION.SDK_INT < 23) return true;
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    @SuppressLint("BatteryLife")
+    public void requestIgnoreBattery() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception ignored) {
+                openAppDetails();
+            }
+        }
+    }
+
+    public void openAppDetails() {
+        try {
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception ignored) {}
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 101) {
+        if (requestCode == REQ_NOTIF) {
+            askBatteryOnce();
+        } else if (requestCode == REQ_MIC) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                web.loadUrl("https://m.youtube.com");
-            } else {
-                Toast.makeText(getApplicationContext(), getString(R.string.grant_mic), Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "麦克风已授权，请再点一次语音搜索", Toast.LENGTH_SHORT).show();
             }
-        } else if (requestCode == 1) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_DENIED) {
-                Toast.makeText(getApplicationContext(), getString(R.string.grant_storage), Toast.LENGTH_SHORT).show();
-            }
-        }
-    }
-
-    @Override
-    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
-        isPip = isInPictureInPictureMode;
-        web.evaluateJavascript(isInPictureInPictureMode ? "PIPlayer();" : "removePIP();", null);
-    }
-
-    @Override
-    protected void onUserLeaveHint() {
-        super.onUserLeaveHint();
-        if (Build.VERSION.SDK_INT >= 26 && web.getUrl() != null && (web.getUrl().contains("watch") || web.getUrl().contains("shorts"))) {
-            if (isPlaying) {
-                try {
-
-         /**Webview requires gesture for FullScreenView which is used for PiP mode , this does that ig.*/
-         web.loadUrl("javascript:showCurtain();");
-         long downTime = SystemClock.uptimeMillis();
-         long eventTime = downTime;
-
-         float x = web.getWidth() / 2f;
-         float y = 10f; 
-         MotionEvent down = MotionEvent.obtain(downTime, eventTime, MotionEvent.ACTION_DOWN, x, y, 0);
-         web.dispatchTouchEvent(down);
-
-         eventTime += 15; 
-         MotionEvent up = MotionEvent.obtain(downTime, eventTime, MotionEvent.ACTION_UP, x, y, 0);
-         web.dispatchTouchEvent(up);
-         down.recycle();
-         up.recycle();
-         web.loadUrl( "javascript:hideCurtain();");
-                 
-                    PictureInPictureParams params = new PictureInPictureParams.Builder()
-                            .setAspectRatio(new Rational(portrait ? 9 : 16, portrait ? 16 : 9))
-                            .build();
-                    enterPictureInPictureMode(params);
-                } catch (IllegalStateException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        CookieManager.getInstance().flush();
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        stopService(new Intent(getApplicationContext(), ForegroundService.class));
-        if (broadcastReceiver != null) unregisterReceiver(broadcastReceiver);
-        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
-            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
-        }
-        if (streamManager != null) {
-            streamManager.cleanup();
         }
     }
 }

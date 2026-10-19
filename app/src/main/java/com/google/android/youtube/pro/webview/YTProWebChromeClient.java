@@ -1,9 +1,9 @@
 package com.google.android.youtube.pro.webview;
 
 import android.Manifest;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.view.View;
 import android.view.WindowManager;
@@ -11,97 +11,98 @@ import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.widget.FrameLayout;
 
-// Import the main files from the parent package
 import com.google.android.youtube.pro.MainActivity;
-import com.google.android.youtube.pro.R;
 
+/** Fullscreen video + mic permission for voice search. */
 public class YTProWebChromeClient extends WebChromeClient {
     private final MainActivity activity;
-    private final YTProWebView web;
-    
-    private View mCustomView;
-    private WebChromeClient.CustomViewCallback mCustomViewCallback;
-    private int mOriginalOrientation;
-    private int mOriginalSystemUiVisibility;
+    private View customView;
+    private CustomViewCallback customViewCallback;
+    private int savedUiVisibility;
 
-    public YTProWebChromeClient(MainActivity activity, YTProWebView web) {
+    public YTProWebChromeClient(MainActivity activity) {
         this.activity = activity;
-        this.web = web;
+    }
+
+    public boolean isFullscreen() {
+        return customView != null;
     }
 
     @Override
     public Bitmap getDefaultVideoPoster() {
-       return BitmapFactory.decodeResource(activity.getApplicationContext().getResources(), 2130837573);
+        // transparent instead of the grey play-button placeholder
+        return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
     }
 
+    @SuppressWarnings("deprecation")
     @Override
-    public void onShowCustomView(View paramView, WebChromeClient.CustomViewCallback viewCallback) {
-        // 1. Determine orientation for FULL SCREEN
-        mOriginalOrientation = activity.portrait ?
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT :
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
-
-        if (activity.isPip) mOriginalOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            activity.getWindow().setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
-            WindowManager.LayoutParams params = activity.getWindow().getAttributes();
-            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            activity.getWindow().setAttributes(params);
-        }
-
-        if (mCustomView != null) {
-            onHideCustomView();
+    public void onShowCustomView(View view, CustomViewCallback callback) {
+        if (customView != null) {
+            callback.onCustomViewHidden();
             return;
         }
-
-        mCustomView = paramView;
-        mOriginalSystemUiVisibility = activity.getWindow().getDecorView().getSystemUiVisibility();
-        
-        // 2. Set the activity to full screen orientation (Landscape usually)
-        activity.setRequestedOrientation(mOriginalOrientation);
-        
-        // Store portrait so onHideCustomView knows what to go back to
-        mOriginalOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
-
-        mCustomViewCallback = viewCallback;
-        ((FrameLayout) activity.getWindow().getDecorView()).addView(mCustomView, new FrameLayout.LayoutParams(-1, -1));
-        activity.getWindow().getDecorView().setSystemUiVisibility(3846);
+        customView = view;
+        customViewCallback = callback;
+        android.view.Window w = activity.getWindow();
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams p = w.getAttributes();
+            p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            w.setAttributes(p);
+        }
+        savedUiVisibility = w.getDecorView().getSystemUiVisibility();
+        ((FrameLayout) w.getDecorView()).addView(view, new FrameLayout.LayoutParams(-1, -1));
+        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        activity.setRequestedOrientation(activity.portraitVideo
+                ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
     }
 
     @Override
     public void onHideCustomView() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
-            WindowManager.LayoutParams params = activity.getWindow().getAttributes();
-            params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
-            activity.getWindow().setAttributes(params);
+        hide();
+    }
+
+    /** Leave fullscreen (back button). */
+    public void exitFullscreen() {
+        CustomViewCallback cb = customViewCallback;
+        hide();
+        if (cb != null) cb.onCustomViewHidden();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void hide() {
+        if (customView == null) return;
+        android.view.Window w = activity.getWindow();
+        ((FrameLayout) w.getDecorView()).removeView(customView);
+        customView = null;
+        customViewCallback = null;
+        w.getDecorView().setSystemUiVisibility(savedUiVisibility);
+        w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams p = w.getAttributes();
+            p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            w.setAttributes(p);
         }
-
-        ((FrameLayout) activity.getWindow().getDecorView()).removeView(mCustomView);
-        mCustomView = null;
-        activity.getWindow().getDecorView().setSystemUiVisibility(mOriginalSystemUiVisibility);
-        
-        // 3. Set the activity BACK to the orientation saved right after going full screen (Portrait)
-        activity.setRequestedOrientation(mOriginalOrientation);
-        
-        // Reset state for the next time we enter full screen
-        mOriginalOrientation = activity.portrait ?
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT :
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
-
-        mCustomViewCallback = null;
-        web.clearFocus();
+        activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
     }
 
     @Override
     public void onPermissionRequest(final PermissionRequest request) {
-        if (Build.VERSION.SDK_INT > 22 && request.getOrigin().toString().contains("youtube.com")) {
-            if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_DENIED) {
-                activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 101);
-            } else {
-                request.grant(request.getResources());
-            }
+        String origin = request.getOrigin() != null ? request.getOrigin().toString() : "";
+        if (!origin.contains("youtube.com")) {
+            request.deny();
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 23
+                && activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MainActivity.REQ_MIC);
+            request.deny();
+        } else {
+            request.grant(request.getResources());
         }
     }
 }

@@ -10,8 +10,10 @@
 **去广告**
 - 在 WebView 网络层直接拦截广告 / 跟踪 / 遥测请求（doubleclick、googleads、googlesyndication、`/pagead/`、`/ptracking`、`/api/stats/ads`、`log_event` 等）
 - 保留 `watchtime` / `playback` 统计，观看记录和续播进度不受影响
-- 从播放器数据中剔除广告字段（`adPlacements` / `playerAds` / `adSlots`），漏网的视频广告自动跳过
-- 用 CSS 隐藏首页推广、横幅和「在 App 中打开」
+- 从播放器数据中剔除广告字段（`adPlacements` / `playerAds` / `adSlots` / `adBreakHeartbeatParams`），覆盖所有入口：
+  打开视频页时的 HTML（原生拦截后改写）、`ytInitialPlayerResponse`、`JSON.parse`、`fetch` / `Response.json()`、`XMLHttpRequest`（`/youtubei/v1/player`、`/next`）。脚本在页面最开始注入，早于 YouTube 自己的代码
+- 万一还有广告：自动静音、16 倍速、跳到结尾并点「跳过」
+- 用 CSS 隐藏信息流推广卡片、横幅和「在 App 中打开」
 
 **熄屏收听 / 助眠**
 - 后台、熄屏持续播放（前台服务 `mediaPlayback` + 部分唤醒锁 + Wi‑Fi 锁，播放时才持有）
@@ -26,26 +28,32 @@
 **界面与流畅度**
 - 默认深色主题
 - 隐藏视频下方的点赞 / 点踩 / 分享 / 保存 / 混剪 / 下载 / 剪辑 / 感谢 按钮行（评论保留）
-- 首页下拉刷新；在首页时再点「首页」也会刷新推荐
-- 可选隐藏 Shorts
+- 首页下拉刷新 / 在首页再点「首页」：清掉 YouTube 本地缓存的推荐并绕过缓存重新加载，每次都是新的推荐
+- **彻底移除 Shorts**：首页、订阅、搜索结果、底部栏、频道页 Shorts 标签都不显示；打开 `/shorts/` 链接会直接按普通视频播放
+- 隐藏「帮助和反馈」「发送反馈」「举报」等菜单项（中英文界面都适用）
 - SponsorBlock 自动跳过赞助、自我推广、求订阅片段（默认开启）
-- 注入脚本全面重写：没有 `setInterval` 轮询，只有一个去抖的 MutationObserver；每个页面只注入一次
+- 注入脚本全面重写：没有 `setInterval` 轮询，只有一个节流的 MutationObserver（空闲时执行，不触发同步布局）；每个页面只注入一次
+- 高刷新率：自动请求屏幕支持的最高刷新率（如 120Hz）；下拉刷新只在页面顶部开始下拉时生效，不干扰正常滚动
 - 硬件加速、WebView 缓存
 
 **登录**：在应用里直接登录 Google 账号（已处理「此浏览器或应用可能不安全」的拦截）。
+
+**应用内一键更新**：设置 →「检查更新」，启动时也会每天自动检查一次 GitHub 最新 Release；有新版本时显示更新说明，点「立即更新」即在应用内下载并调起系统安装（首次需要允许「安装未知应用」，开启后返回会自动继续）。
 
 设置入口：YouTube 顶栏 Logo 旁边的齿轮图标。
 
 ## 已删除的上游功能
 
-下载器（视频 / Shorts / 封面 / 字幕）、合流、分享到下载、Gemini、画中画、音量 / 亮度手势、双指缩放和强制缩放、10 倍速、点踩数显示、收藏（爱心）、开发者模式 / eruda、从 CDN 加载脚本、上游自动更新检查。
+下载器（视频 / Shorts / 封面 / 字幕）、合流、分享到下载、Gemini、画中画、音量 / 亮度手势、双指缩放和强制缩放、10 倍速、点踩数显示、收藏（爱心）、开发者模式 / eruda、从 CDN 加载脚本、上游的更新检查（换成了本仓库自己的应用内更新）。
 
 ## 下载安装
 
-- **正式版**：在 [Releases](https://github.com/yywgov/youtube/releases) 下载 `YTLite-x.y.z.apk`（推送 `v*` 标签时自动发布）。
+- **正式版**：在 [Releases](https://github.com/yywgov/youtube/releases) 下载 `YTLite-x.y.z.apk`（推送 `v*` 标签时自动发布）。装好 1.1.0 及以后的版本后，就可以直接在应用里一键更新。
 - **最新构建**：打开 [Actions](https://github.com/yywgov/youtube/actions)，点最新一次成功的 “Build APK”，在页面底部 Artifacts 里下载 `YTLite-apk`（需登录 GitHub，下载下来是 zip，解压得到 apk）。
 
 包名为 `com.yywgov.ytlite`，应用名「YT Lite」，可以和官方 YouTube、上游 YTPro 同时安装。每次构建都用仓库里同一把测试签名，新版本可以直接覆盖安装。
+
+版本号：正式版的 versionName 来自标签（`v1.1.0` → `1.1.0`），其它构建是 `1.1.0-dev.<构建号>`（视为早于 1.1.0）；versionCode 是 CI 构建号，始终递增。
 
 > 签名使用的是仓库 `signer/` 里的公开测试密钥，只适合个人自用。
 
@@ -58,6 +66,13 @@
    - **OPPO / 一加 / realme（ColorOS）**：应用详情 → 耗电管理 → 允许后台运行、允许自启动。
    - **vivo / iQOO**：i 管家 → 应用管理 → 自启动；电池 → 后台耗电管理 → 允许后台高耗电。
    - **华为 / 荣耀**：电池 → 启动管理 → 关闭「自动管理」，三项全部允许。
+
+## 更流畅（高刷新率）
+
+应用会自动向系统请求最高刷新率（例如 OPPO Find X7 Ultra 的 120Hz）。部分系统仍会对单个应用限制刷新率，可以手动放开：
+
+- **OPPO / 一加 / realme（ColorOS）**：设置 → 显示与亮度 → 屏幕刷新率 → 选「高」，如果有「应用刷新率 / 自定义」选项，把 YT Lite 设为「高」或 120Hz（不同 ColorOS 版本位置略有不同，部分版本没有按应用设置）。
+- 其他品牌类似：在「屏幕刷新率」里选高刷新率 / 为应用单独设置。
 
 ## 自行构建
 

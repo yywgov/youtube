@@ -13,7 +13,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.view.Display;
+import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -30,12 +34,15 @@ import com.google.android.youtube.pro.webview.WebAppInterface;
 import com.google.android.youtube.pro.webview.YTProWebChromeClient;
 import com.google.android.youtube.pro.webview.YTProWebView;
 import com.google.android.youtube.pro.webview.YTProWebViewClient;
+import com.google.android.youtube.pro.webview.WatchPageFilter;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -43,7 +50,6 @@ public class MainActivity extends Activity {
     public static final int REQ_MIC = 101;
     private static final int REQ_NOTIF = 102;
     private static final String HOME = "https://m.youtube.com/";
-    public static final String RELEASES = "https://github.com/yywgov/youtube/releases";
 
     private static WeakReference<MainActivity> current = new WeakReference<>(null);
     private static boolean visible = false;
@@ -58,6 +64,9 @@ public class MainActivity extends Activity {
     private String script = "";
     private boolean docStartScript = false;
     private boolean pageAtTop = true;
+    private boolean touchStartedAtTop = false;
+    private boolean noCacheLoad = false;
+    private boolean clearHistoryOnFinish = false;
     private String currentUrl = HOME;
 
     // ===================== static helpers =====================
@@ -85,11 +94,62 @@ public class MainActivity extends Activity {
         swipe = findViewById(R.id.swipe);
         web = findViewById(R.id.web);
         script = readAsset("ytlite.js");
+        requestHighRefreshRate();
         setupWebView();
         setupSwipe();
         setupBack();
         web.loadUrl(urlFromIntent(getIntent()));
         MAIN.postDelayed(this::askPermissionsOnce, 1500);
+        Updater.cleanup(this);
+        MAIN.postDelayed(() -> { if (!isFinishing()) Updater.autoCheck(this); }, 4000);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        requestHighRefreshRate();
+        Updater.onResume(this);
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        requestHighRefreshRate();
+    }
+
+    // ===================== high refresh rate (120 Hz LTPO etc.) =====================
+
+    /**
+     * Ask for the display mode with the highest refresh rate at the current resolution.
+     * LTPO panels (and ColorOS/MIUI) otherwise often keep WebView apps at 60 Hz.
+     */
+    private void requestHighRefreshRate() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try {
+            @SuppressWarnings("deprecation")
+            Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
+            if (d == null) return;
+            Display.Mode cur = d.getMode();
+            Display.Mode best = cur;
+            for (Display.Mode m : d.getSupportedModes()) {
+                if (m.getPhysicalWidth() == cur.getPhysicalWidth()
+                        && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                        && m.getRefreshRate() > best.getRefreshRate() + 0.5f) {
+                    best = m;
+                }
+            }
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            if (lp.preferredDisplayModeId != best.getModeId() || lp.preferredRefreshRate != best.getRefreshRate()) {
+                lp.preferredDisplayModeId = best.getModeId();
+                lp.preferredRefreshRate = best.getRefreshRate();
+                getWindow().setAttributes(lp);
+            }
+            if (Build.VERSION.SDK_INT >= 35) {
+                getWindow().setFrameRatePowerSavingsBalanced(false);
+                getWindow().setFrameRateBoostOnTouchEnabled(true);
+                if (web != null) web.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH);
+            }
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -150,6 +210,7 @@ public class MainActivity extends Activity {
         s.setUserAgentString(s.getUserAgentString()
                 .replace("; wv)", ")")
                 .replaceAll("Version/\\d+(\\.\\d+)* ", ""));
+        WatchPageFilter.userAgent = s.getUserAgentString();
         if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, Collections.<String>emptySet());
         }
@@ -158,6 +219,7 @@ public class MainActivity extends Activity {
         }
 
         web.setBackgroundColor(0xFF0F0F0F);
+        if (Build.VERSION.SDK_INT >= 35) web.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH);
         web.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
         if (Build.VERSION.SDK_INT >= 26) {
             // keep the renderer important even when not visible (screen off)
@@ -240,6 +302,11 @@ public class MainActivity extends Activity {
         currentUrl = url;
         injectFallback();
         swipe.setRefreshing(false);
+        if (noCacheLoad) restoreCacheMode();
+        if (clearHistoryOnFinish && web != null) {
+            clearHistoryOnFinish = false;
+            web.clearHistory(); // refreshed home is the new root: back leaves the app
+        }
     }
 
     public void onUrlChanged(String url) {
@@ -256,11 +323,49 @@ public class MainActivity extends Activity {
         // (so you can fall asleep); fullscreen keeps it on via the chrome client.
     }
 
-    public void reloadFeed() {
+    /**
+     * Pull-to-refresh / tap Home. Let the page script drop YouTube's client-side feed
+     * caches first (it calls back hardReload); without the script, reload directly.
+     */
+    public void refreshFeed() {
         if (web == null) return;
         swipe.setRefreshing(true);
-        web.reload();
-        MAIN.postDelayed(() -> swipe.setRefreshing(false), 8000);
+        web.evaluateJavascript("(window.ytl&&ytl.refresh)?(ytl.refresh(),1):0", r -> {
+            if (!"1".equals(r)) hardReload();
+        });
+        MAIN.postDelayed(() -> { if (swipe != null) swipe.setRefreshing(false); }, 10000);
+    }
+
+    /** Reload the current page (home by default) bypassing the HTTP cache, with a cache-busting param. */
+    public void hardReload() {
+        if (web == null) return;
+        swipe.setRefreshing(true);
+        String base = currentUrl == null || !currentUrl.startsWith("https://") || isPlayerUrl(currentUrl) ? HOME : currentUrl;
+        Uri u = Uri.parse(base);
+        Uri.Builder b = u.buildUpon().clearQuery();
+        for (String k : u.getQueryParameterNames()) {
+            if ("ytlr".equals(k)) continue;
+            for (String v : u.getQueryParameters(k)) b.appendQueryParameter(k, v);
+        }
+        b.appendQueryParameter("ytlr", Long.toString(System.currentTimeMillis(), 36));
+        String path = u.getPath();
+        clearHistoryOnFinish = path == null || path.isEmpty() || "/".equals(path);
+        web.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
+        noCacheLoad = true;
+        Map<String, String> h = new HashMap<>();
+        h.put("Cache-Control", "no-cache");
+        h.put("Pragma", "no-cache");
+        web.loadUrl(b.build().toString(), h);
+        MAIN.removeCallbacks(restoreCache);
+        MAIN.postDelayed(restoreCache, 20000);
+        MAIN.postDelayed(() -> { if (swipe != null) swipe.setRefreshing(false); }, 10000);
+    }
+
+    private final Runnable restoreCache = this::restoreCacheMode;
+
+    private void restoreCacheMode() {
+        noCacheLoad = false;
+        if (web != null) web.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
     }
 
     public void openExternal(String url) {
@@ -283,18 +388,25 @@ public class MainActivity extends Activity {
 
     private boolean canPullToRefresh() {
         return web != null && pageAtTop && web.getScrollY() == 0
-                && !isPlayerUrl(currentUrl) && !chrome.isFullscreen();
+                && !isPlayerUrl(currentUrl) && chrome != null && !chrome.isFullscreen();
+    }
+
+    /**
+     * The pull gesture is only armed when the finger goes down while the page is already
+     * at the very top; any gesture that starts mid-page scrolls the WebView untouched.
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) touchStartedAtTop = canPullToRefresh();
+        return super.dispatchTouchEvent(ev);
     }
 
     private void setupSwipe() {
         swipe.setColorSchemeColors(0xFFFF0033);
         swipe.setProgressBackgroundColorSchemeColor(0xFF212121);
-        swipe.setOnChildScrollUpCallback((parent, child) -> !canPullToRefresh());
-        swipe.setOnRefreshListener(() -> {
-            if (web == null) return;
-            web.reload();
-            MAIN.postDelayed(() -> swipe.setRefreshing(false), 8000);
-        });
+        swipe.setDistanceToTriggerSync(Math.round(120 * getResources().getDisplayMetrics().density));
+        swipe.setOnChildScrollUpCallback((parent, child) -> !(touchStartedAtTop && canPullToRefresh()));
+        swipe.setOnRefreshListener(this::refreshFeed);
     }
 
     // ===================== back navigation =====================
@@ -344,6 +456,8 @@ public class MainActivity extends Activity {
 
     private static String normalize(String url) {
         Uri u = Uri.parse(url);
+        String unshort = YTProWebViewClient.unshort(u);
+        if (unshort != null) return unshort;
         String host = u.getHost() == null ? "" : u.getHost();
         if (host.endsWith("youtu.be") && u.getPath() != null && u.getPath().length() > 1) {
             String t = u.getQueryParameter("t");

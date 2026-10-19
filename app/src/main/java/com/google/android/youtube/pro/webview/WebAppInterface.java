@@ -68,9 +68,15 @@ public class WebAppInterface {
         main.post(activity::openSettings);
     }
 
+    /** Fresh reload after the script dropped YouTube's client-side caches. */
+    @JavascriptInterface
+    public void hardReload() {
+        main.post(activity::hardReload);
+    }
+
     @JavascriptInterface
     public void reloadPage() {
-        main.post(activity::reloadFeed);
+        main.post(activity::hardReload);
     }
 
     @JavascriptInterface

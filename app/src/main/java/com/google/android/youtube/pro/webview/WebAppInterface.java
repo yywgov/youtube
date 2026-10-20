@@ -37,7 +37,16 @@ public class WebAppInterface {
 
     @JavascriptInterface
     public String getConfig() {
-        return Prefs.jsConfig(activity);
+        // settings + the state a freshly (re)loaded page must pick up again:
+        // "sleep at end of video" and whether the app is in the background / screen off
+        try {
+            JSONObject o = new JSONObject(Prefs.jsConfig(activity));
+            o.put("stopAtEnd", SleepTimer.mode() == SleepTimer.END_OF_VIDEO);
+            o.put("bg", !MainActivity.isVisible());
+            return o.toString();
+        } catch (Exception e) {
+            return Prefs.jsConfig(activity);
+        }
     }
 
     @JavascriptInterface

@@ -36,7 +36,7 @@
   }
 
   var B = window.YTL || null; // Java bridge
-  var cfg = { sponsorBlock: true, lowQualityBg: true };
+  var cfg = { sponsorBlock: true, lowQualityBg: true, hideWatched: true };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
   var bg = false;            // app in background / screen off (told by Java)
@@ -54,6 +54,10 @@
   var autonavFor = '';
   var adMuted = false;
   var adRate = 0;
+  // state Java still holds when this document is (re)loaded: sleep timer mode, background
+  if (cfg.stopAtEnd) stopAtEnd = true;
+  if (cfg.bg) bg = true;
+  delete cfg.stopAtEnd; delete cfg.bg;
 
   /* ---------- helpers ---------- */
   function call(fn) {
@@ -410,7 +414,7 @@
     /* Help / feedback / report */
     'ytm-compact-link-renderer:has(a[href*="support.google.com"]), ytm-compact-link-renderer:has(a[href*="feedback"]),',
     'ytm-compact-link-renderer:has(a[href*="reporthistory"]), ytm-multi-page-menu-renderer a[href*="support.google.com"],',
-    'ytm-multi-page-menu-renderer a[href*="feedback"], [data-ytl-hide] {display:none!important}',
+    'ytm-multi-page-menu-renderer a[href*="feedback"], [data-ytl-hide], [data-ytl-seen] {display:none!important}',
     /* settings gear */
     '#ytl-gear{display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}'
   ].join('\n');
@@ -425,6 +429,34 @@
   function applyCfg() {
     if (!cfg.sponsorBlock) segments = [];
     applyQuality();
+    if (document.documentElement) markWatched();
+  }
+
+  /* ---------- 7b. home feed: hide videos already watched (>= 80 %) ----------
+   * Reads only the inline width of YouTube's red progress bar (no layout), runs inside
+   * the throttled DOM pass, home page only. Partly watched videos stay so they can be resumed. */
+  var WATCHED_SEL = '.ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment, .thumbnail-overlay-resume-playback-progress,' +
+    ' ytm-thumbnail-overlay-resume-playback-renderer [style*="width"]';
+  var FEED_ITEM_SEL = 'ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer';
+  var SEEN_MIN = 80;
+  function watchedPct(el) {
+    var w = (el.style && el.style.width) || '';
+    var m = /^([\d.]+)%$/.exec(w.trim());
+    return m ? parseFloat(m[1]) : -1;
+  }
+  function markWatched() {
+    var hits = [];
+    if (cfg.hideWatched && location.pathname === '/') {
+      var bars = document.querySelectorAll(WATCHED_SEL);
+      for (var i = 0; i < bars.length; i++) {
+        if (watchedPct(bars[i]) < SEEN_MIN) continue;
+        var item = bars[i].closest(FEED_ITEM_SEL);
+        if (item && hits.indexOf(item) < 0) hits.push(item);
+      }
+    }
+    var old = document.querySelectorAll('[data-ytl-seen]');
+    for (var j = 0; j < old.length; j++) if (hits.indexOf(old[j]) < 0) old[j].removeAttribute('data-ytl-seen');
+    for (var k = 0; k < hits.length; k++) if (!hits[k].hasAttribute('data-ytl-seen')) hits[k].setAttribute('data-ytl-seen', '');
   }
   addCss();
   applyCfg();
@@ -698,6 +730,7 @@
     skipAd();
     hideMenus();
     hideByText(SHORTS_TEXT_SEL, /^shorts$/i);
+    markWatched();
     // settings gear in the top bar
     if (!document.getElementById('ytl-gear')) {
       var logo = document.querySelector('ytm-home-logo');

@@ -34,6 +34,7 @@ public class SettingsDialog {
         box.addView(header("播放与内容"));
         box.addView(toggle("SponsorBlock 自动跳过", "自动跳过赞助、自我推广和求订阅片段", Prefs.SPONSOR_BLOCK, Prefs.sponsorBlock(a)));
         box.addView(toggle("后台/熄屏时最低画质", "省电省流量；回到前台恢复自动画质", Prefs.LOW_QUALITY_BG, Prefs.lowQualityBg(a)));
+        box.addView(toggle("首页隐藏已看完的视频", "看过 80% 以上的不再占位置，刷新更容易出新视频", Prefs.HIDE_WATCHED, Prefs.hideWatched(a)));
 
         box.addView(header("睡眠定时"));
         sleepNowRow = row("", v -> {

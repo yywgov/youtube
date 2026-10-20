@@ -11,6 +11,8 @@ public final class Prefs {
 
     public static final String SPONSOR_BLOCK = "sponsorBlock";
     public static final String LOW_QUALITY_BG = "lowQualityBg";
+    /** Home feed: hide videos already watched (>= 80 %). */
+    public static final String HIDE_WATCHED = "hideWatched";
     /** Default sleep timer in minutes; -1 = end of current video. */
     public static final String SLEEP_DEFAULT = "sleepDefault";
     public static final String ASKED_BATTERY = "askedBattery";
@@ -28,6 +30,7 @@ public final class Prefs {
 
     public static boolean sponsorBlock(Context c) { return get(c).getBoolean(SPONSOR_BLOCK, true); }
     public static boolean lowQualityBg(Context c) { return get(c).getBoolean(LOW_QUALITY_BG, true); }
+    public static boolean hideWatched(Context c) { return get(c).getBoolean(HIDE_WATCHED, true); }
     public static int sleepDefault(Context c) { return get(c).getInt(SLEEP_DEFAULT, 30); }
 
     public static void put(Context c, String key, boolean v) { get(c).edit().putBoolean(key, v).apply(); }
@@ -41,6 +44,7 @@ public final class Prefs {
             JSONObject o = new JSONObject();
             o.put("sponsorBlock", sponsorBlock(c));
             o.put("lowQualityBg", lowQualityBg(c));
+            o.put("hideWatched", hideWatched(c));
             return o.toString();
         } catch (Exception e) {
             return "{}";

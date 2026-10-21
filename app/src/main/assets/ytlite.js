@@ -586,7 +586,7 @@
   }, true);
 
   /* ---------- 9. "Video paused. Continue watching?" ---------- */
-  var STILL_RE = /continue watching|still watching|video paused|继续观看|仍在观看|视频已暂停|繼續觀看|仍在觀看|影片已暫停/i;
+  var STILL_RE = /continue watching|still watching|still there|are you there|video paused|还在看吗|你还在吗|继续观看|仍在观看|视频已暂停|繼續觀看|仍在觀看|影片已暫停/i;
   function dismissStillWatching() {
     if (userPaused) return;
     var dlg = document.querySelector('ytm-confirm-dialog-renderer, yt-confirm-dialog-renderer');

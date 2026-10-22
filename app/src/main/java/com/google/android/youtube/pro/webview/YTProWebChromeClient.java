@@ -56,9 +56,11 @@ public class YTProWebChromeClient extends WebChromeClient {
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        activity.setRequestedOrientation(activity.portraitVideo
-                ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        int lock = activity.orientationLock();
+        activity.setRequestedOrientation(lock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? lock
+                : activity.portraitVideo ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                 : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        activity.raiseOverlays();
     }
 
     @Override
@@ -87,7 +89,7 @@ public class YTProWebChromeClient extends WebChromeClient {
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
             w.setAttributes(p);
         }
-        activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        activity.setRequestedOrientation(activity.orientationLock());
     }
 
     @Override

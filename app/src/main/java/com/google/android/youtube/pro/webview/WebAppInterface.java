@@ -42,7 +42,10 @@ public class WebAppInterface {
         // "sleep at end of video" and whether the app is in the background / screen off
         try {
             JSONObject o = new JSONObject(Prefs.jsConfig(activity));
-            o.put("stopAtEnd", SleepTimer.mode() == SleepTimer.END_OF_VIDEO);
+            o.put("stopAtEnd", SleepTimer.stopsAtEndNow());
+            o.put("countMode", SleepTimer.countRunning());
+            o.put("sleeping", SleepTimer.active());
+            o.put("badge", SleepTimer.badge());
             o.put("bg", !MainActivity.isVisible());
             return o.toString();
         } catch (Exception e) {
@@ -92,6 +95,51 @@ public class WebAppInterface {
     @JavascriptInterface
     public void sleepFired() {
         main.post(SleepTimer::onEndOfVideoFired);
+    }
+
+    /** "After N videos" sleep mode: a video played to its end (16). */
+    @JavascriptInterface
+    public void videoEnded(final String videoId) {
+        main.post(SleepTimer::onVideoEnded);
+    }
+
+    /** Metered network (mobile data): default quality "Wi-Fi best, mobile 720p" (29). */
+    @JavascriptInterface
+    public boolean isMetered() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    activity.getApplicationContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            return cm != null && cm.isActiveNetworkMetered();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Speed the user picked, remembered when that setting is on (30). */
+    @JavascriptInterface
+    public void saveRate(final String rate) {
+        try {
+            double r = Double.parseDouble(rate);
+            if (r >= 0.25 && r <= 2) Prefs.put(activity, Prefs.RATE, String.valueOf(r));
+        } catch (Exception ignored) {}
+    }
+
+    /** Last video + position, offered again when the app is reopened after being killed (27). */
+    @JavascriptInterface
+    public void savePos(final String videoId, final long sec, final String title) {
+        if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,20}")) return;
+        Prefs.get(activity).edit()
+                .putString(Prefs.LAST_VIDEO, videoId)
+                .putLong(Prefs.LAST_POS, Math.max(0, sec))
+                .putString(Prefs.LAST_TITLE, title == null ? "" : (title.length() > 120 ? title.substring(0, 120) : title))
+                .putLong(Prefs.LAST_AT, System.currentTimeMillis())
+                .apply();
+    }
+
+    /** Native playback tools sheet (sleep, black screen, touch lock, speed, loop...). */
+    @JavascriptInterface
+    public void openTools() {
+        main.post(activity::openTools);
     }
 
     @JavascriptInterface

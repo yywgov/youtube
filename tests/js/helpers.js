@@ -22,7 +22,8 @@ async function load(opts) {
     log: rec('log'), logAd: rec('logAd'), toast: rec('toast'), setAtTop: rec('setAtTop'),
     openSettings: rec('openSettings'), mediaState: rec('mediaState'), mediaMeta: rec('mediaMeta'),
     fetchSegments: rec('fetchSegments'), setPortrait: rec('setPortrait'), hardReload: rec('hardReload'),
-    sleepFired: rec('sleepFired')
+    sleepFired: rec('sleepFired'), saveRate: rec('saveRate'), savePos: rec('savePos'), videoEnded: rec('videoEnded'),
+    openTools: rec('openTools'), isMetered: () => !!opts.metered
   };
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };

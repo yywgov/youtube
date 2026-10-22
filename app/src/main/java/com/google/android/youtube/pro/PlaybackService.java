@@ -52,6 +52,11 @@ public class PlaybackService extends Service {
     public static final String ACTION_NEXT = "ytl.NEXT";
     public static final String ACTION_PREV = "ytl.PREV";
     public static final String ACTION_SLEEP = "ytl.SLEEP";
+    public static final String ACTION_REW = "ytl.REW";
+    public static final String ACTION_FWD = "ytl.FWD";
+    public static final String ACTION_EXTEND = "ytl.EXTEND";
+    private static final long SLEEP_DONE_STOP_MS = 2 * 60_000L;
+    private static final long MULTI_CLICK_MS = 450L;
 
     private static final long IDLE_STOP_MS = 30 * 60_000L;
     private static final long WAKE_LOCK_MS = 4 * 60 * 60_000L;
@@ -67,6 +72,9 @@ public class PlaybackService extends Service {
     static long positionAt = 0;
     static Bitmap art;
     private static String artLoadedFor = "";
+    /** The sleep timer paused playback: drop foreground + locks and stop soon (17). */
+    private static boolean sleepDone = false;
+    private static long lastVolHint = 0;
 
     private static PlaybackService instance;
     private static boolean starting = false;
@@ -100,6 +108,10 @@ public class PlaybackService extends Service {
         if ("playing".equals(s)) st = PlaybackState.STATE_PLAYING;
         else if ("buffering".equals(s)) st = PlaybackState.STATE_BUFFERING;
         else st = PlaybackState.STATE_PAUSED;
+        if (st == PlaybackState.STATE_PLAYING && state != PlaybackState.STATE_PLAYING) {
+            sleepDone = false;
+            volumeHint(c);
+        }
         state = st;
         positionMs = pos;
         rate = r > 0 ? r : 1f;
@@ -110,6 +122,30 @@ public class PlaybackService extends Service {
 
     public static void refresh() {
         if (instance != null) instance.update();
+    }
+
+    /** Sleep timer ended (paused): release everything that keeps the phone awake (17). */
+    public static boolean isPlaying() {
+        return state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
+    }
+
+    public static void onSleepEnded() {
+        sleepDone = true;
+        MainActivity.onSleepEnded();
+        if (instance != null) instance.update();
+    }
+
+    /** Playing with the media volume at 0: say so once in a while (150), only when the app is on screen. */
+    private static void volumeHint(Context c) {
+        try {
+            long now = SystemClock.elapsedRealtime();
+            if (!MainActivity.isVisible() || now - lastVolHint < 10 * 60_000L) return;
+            AudioManager am = (AudioManager) c.getApplicationContext().getSystemService(AUDIO_SERVICE);
+            if (am != null && am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
+                lastVolHint = now;
+                android.widget.Toast.makeText(c.getApplicationContext(), "媒体音量为 0，按音量键调大", android.widget.Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception ignored) {}
     }
 
     public static void stop(Context c) {
@@ -125,6 +161,9 @@ public class PlaybackService extends Service {
             case ACTION_NEXT: MainActivity.js("ytl.next()"); break;
             case ACTION_PREV: MainActivity.js("ytl.prev()"); break;
             case ACTION_SLEEP: SleepTimer.cycle(c); break;
+            case ACTION_REW: MainActivity.js("ytl.seekBy(-10)"); break;
+            case ACTION_FWD: MainActivity.js("ytl.seekBy(30)"); break;
+            case ACTION_EXTEND: SleepTimer.extend(c); break;
             default: break;
         }
     }
@@ -153,6 +192,15 @@ public class PlaybackService extends Service {
                     BitmapFactory.Options o = new BitmapFactory.Options();
                     o.inPreferredConfig = Bitmap.Config.RGB_565;
                     bmp = BitmapFactory.decodeStream(in, null, o);
+                }
+                // hqdefault is 4:3 with black bars around a 16:9 picture: crop them (116/117)
+                if (bmp != null && bmp.getHeight() > 0) {
+                    float ratio = bmp.getWidth() / (float) bmp.getHeight();
+                    if (ratio > 1.30f && ratio < 1.36f) {
+                        int h = Math.round(bmp.getWidth() * 9f / 16f);
+                        int y = (bmp.getHeight() - h) / 2;
+                        if (h > 0 && y > 0) bmp = Bitmap.createBitmap(bmp, 0, y, bmp.getWidth(), h);
+                    }
                 }
                 if (bmp != null && bmp.getWidth() > 640) {
                     int h = Math.round(bmp.getHeight() * (640f / bmp.getWidth()));
@@ -206,6 +254,7 @@ public class PlaybackService extends Service {
     @Override
     public void onDestroy() {
         MAIN.removeCallbacks(idleStop);
+        MAIN.removeCallbacks(clickDone);
         releaseLocks();
         try { if (noisyReceiver != null) unregisterReceiver(noisyReceiver); } catch (Exception ignored) {}
         try {
@@ -253,13 +302,48 @@ public class PlaybackService extends Service {
             @Override public void onSkipToNext() { MainActivity.js("ytl.next()"); }
             @Override public void onSkipToPrevious() { MainActivity.js("ytl.prev()"); }
             @Override public void onSeekTo(long pos) { MainActivity.js("ytl.seek(" + pos + ")"); }
+            @Override public void onRewind() { MainActivity.js("ytl.seekBy(-10)"); }
+            @Override public void onFastForward() { MainActivity.js("ytl.seekBy(30)"); }
             @Override public void onCustomAction(String action, android.os.Bundle extras) {
                 if (ACTION_SLEEP.equals(action)) SleepTimer.cycle(PlaybackService.this);
+                else if (ACTION_EXTEND.equals(action)) SleepTimer.extend(PlaybackService.this);
+            }
+            @Override public boolean onMediaButtonEvent(Intent mediaButtonIntent) {
+                if (handleMultiClick(mediaButtonIntent)) return true;
+                return super.onMediaButtonEvent(mediaButtonIntent);
             }
         });
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         session.setSessionActivity(PendingIntent.getActivity(this, 10, open, piFlags()));
         session.setActive(true);
+    }
+
+    // ---- headset button: 1 press play/pause, 2 next, 3 previous (24) ----
+    private int clicks = 0;
+    private final Runnable clickDone = () -> {
+        int n = clicks;
+        clicks = 0;
+        if (n >= 3) MainActivity.js("ytl.prev()");
+        else if (n == 2) MainActivity.js("ytl.next()");
+        else if (n == 1) MainActivity.js(state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING ? "ytl.pause()" : "ytl.play()");
+    };
+
+    private boolean handleMultiClick(Intent intent) {
+        try {
+            if (!Prefs.on(this, Prefs.HEADSET_MULTI) || intent == null) return false;
+            android.view.KeyEvent ev = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+            if (ev == null) return false;
+            int code = ev.getKeyCode();
+            if (code != android.view.KeyEvent.KEYCODE_HEADSETHOOK && code != android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) return false;
+            if (ev.getAction() == android.view.KeyEvent.ACTION_DOWN && ev.getRepeatCount() == 0) {
+                clicks++;
+                MAIN.removeCallbacks(clickDone);
+                MAIN.postDelayed(clickDone, MULTI_CLICK_MS);
+            }
+            return true; // swallow DOWN repeats and UP as well
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @SuppressLint("WakelockTimeout")
@@ -324,18 +408,26 @@ public class PlaybackService extends Service {
                 .putString(MediaMetadata.METADATA_KEY_TITLE, title)
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
                 .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
-        if (art != null && artUrl.equals(artLoadedFor)) mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+        if (art != null && artUrl.equals(artLoadedFor)) {
+            mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+            mb.putBitmap(MediaMetadata.METADATA_KEY_ART, art); // lock screen (117)
+        }
         session.setMetadata(mb.build());
 
         String sleep = SleepTimer.status();
         PlaybackState.Builder pb = new PlaybackState.Builder()
                 .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
                         | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                        | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP)
+                        | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
+                        | PlaybackState.ACTION_REWIND | PlaybackState.ACTION_FAST_FORWARD)
                 .setState(state == PlaybackState.STATE_NONE ? PlaybackState.STATE_PAUSED : state,
                         positionMs, state == PlaybackState.STATE_PLAYING ? rate : 0f, positionAt)
                 .addCustomAction(new PlaybackState.CustomAction.Builder(
                         ACTION_SLEEP, sleep != null ? sleep : "睡眠定时", R.drawable.ic_timer_white).build());
+        if (SleepTimer.timed()) {
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                    ACTION_EXTEND, "+" + SleepTimer.EXTEND_MIN + " 分钟", R.drawable.ic_add_time_white).build());
+        }
         session.setPlaybackState(pb.build());
 
         Notification n = buildNotification();
@@ -346,10 +438,11 @@ public class PlaybackService extends Service {
             else nm.notify(NOTIFICATION_ID, n);
         } else {
             releaseLocks();
-            if (foreground && MainActivity.isVisible()) stopFg(false); // dismissible while paused in app
+            // dismissible while paused in the app, and always once the sleep timer has stopped playback
+            if (foreground && (MainActivity.isVisible() || sleepDone)) stopFg(false);
             nm.notify(NOTIFICATION_ID, n);
             MAIN.removeCallbacks(idleStop);
-            MAIN.postDelayed(idleStop, IDLE_STOP_MS);
+            MAIN.postDelayed(idleStop, sleepDone ? SLEEP_DONE_STOP_MS : IDLE_STOP_MS);
         }
     }
 
@@ -402,15 +495,25 @@ public class PlaybackService extends Service {
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setShowWhen(false)
                 .setOngoing(playing)
-                .setOnlyAlertOnce(true)
-                .addAction(new Notification.Action.Builder(R.drawable.ic_skip_previous_white, "上一个", action(ACTION_PREV, 1)).build())
+                .setOnlyAlertOnce(true);
+        boolean seekButtons = Prefs.on(this, Prefs.NOTIF_SEEK);
+        b.addAction(seekButtons
+                        ? new Notification.Action.Builder(R.drawable.ic_replay_10_white, "快退 10 秒", action(ACTION_REW, 6)).build()
+                        : new Notification.Action.Builder(R.drawable.ic_skip_previous_white, "上一个", action(ACTION_PREV, 1)).build())
                 .addAction(playing
                         ? new Notification.Action.Builder(R.drawable.ic_pause_white, "暂停", action(ACTION_PAUSE, 2)).build()
                         : new Notification.Action.Builder(R.drawable.ic_play_arrow_white, "播放", action(ACTION_PLAY, 3)).build())
-                .addAction(new Notification.Action.Builder(R.drawable.ic_skip_next_white, "下一个", action(ACTION_NEXT, 4)).build())
+                .addAction(seekButtons
+                        ? new Notification.Action.Builder(R.drawable.ic_forward_30_white, "快进 30 秒", action(ACTION_FWD, 7)).build()
+                        : new Notification.Action.Builder(R.drawable.ic_skip_next_white, "下一个", action(ACTION_NEXT, 4)).build())
                 .addAction(new Notification.Action.Builder(R.drawable.ic_timer_white,
-                        sleep != null ? sleep : "睡眠定时", action(ACTION_SLEEP, 5)).build())
-                .setStyle(new Notification.MediaStyle()
+                        sleep != null ? sleep : "睡眠定时", action(ACTION_SLEEP, 5)).build());
+        if (SleepTimer.timed()) {
+            // half asleep: one more quarter hour without turning the screen on (14)
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_add_time_white,
+                    "+" + SleepTimer.EXTEND_MIN + " 分钟", action(ACTION_EXTEND, 8)).build());
+        }
+        b.setStyle(new Notification.MediaStyle()
                         .setMediaSession(session.getSessionToken())
                         .setShowActionsInCompactView(0, 1, 2));
         if (sleep != null) b.setSubText(sleep);

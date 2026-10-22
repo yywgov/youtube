@@ -83,6 +83,20 @@ public class MainActivity extends Activity {
     private Object errNetCallback;
     private long lastTrim = 0;
 
+    // batch 2: snack bar (night sleep prompt 18, resume 27), black screen (157), touch lock (131),
+    // orientation lock (132), double back to exit (118)
+    private FrameLayout overlayRoot;
+    private LinearLayout snack;
+    private TextView snackText;
+    private Button snackAction;
+    private final Runnable hideSnackRun = this::hideSnack;
+    private View blackView;
+    private View lockView;
+    private float savedBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+    private int orientationLock = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+    private long lastBackAt = 0;
+    private boolean coldStart = false;
+
     // ===================== static helpers =====================
 
     public static boolean isVisible() { return visible; }
@@ -115,7 +129,10 @@ public class MainActivity extends Activity {
         setupBack();
         setupOverlay();
         Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
-        web.loadUrl(urlFromIntent(getIntent()));
+        String startUrl = urlFromIntent(getIntent());
+        coldStart = savedInstanceState == null && HOME.equals(startUrl);
+        web.loadUrl(startUrl);
+        if (coldStart) MAIN.postDelayed(this::offerResume, 3000);
         MAIN.postDelayed(this::askPermissionsOnce, 1500);
         Updater.cleanup(this);
         MAIN.postDelayed(() -> { if (!isFinishing()) Updater.autoCheck(this); }, 4000);
@@ -126,6 +143,8 @@ public class MainActivity extends Activity {
         super.onResume();
         requestHighRefreshRate();
         Updater.onResume(this);
+        MAIN.removeCallbacks(nightPromptRun);
+        MAIN.postDelayed(nightPromptRun, coldStart ? 7000 : 2500);
     }
 
     @Override
@@ -203,6 +222,8 @@ public class MainActivity extends Activity {
             PlaybackService.stop(this);
             current = new WeakReference<>(null);
         }
+        MAIN.removeCallbacks(nightPromptRun);
+        MAIN.removeCallbacks(hideSnackRun);
         unregisterErrNet();
         destroyWebView();
         super.onDestroy();
@@ -409,6 +430,217 @@ public class MainActivity extends Activity {
         new SettingsDialog(this).show();
     }
 
+    /** Moon button: playback tools sheet, with the page's current player state. */
+    public void openTools() {
+        if (web == null) { PlayerTools.show(this, null); return; }
+        web.evaluateJavascript("(window.ytl&&ytl.state)?ytl.state():''", r -> {
+            org.json.JSONObject st = null;
+            try {
+                if (r != null && r.length() > 2 && !"null".equals(r)) {
+                    String json = new org.json.JSONTokener(r).nextValue().toString();
+                    st = new org.json.JSONObject(json);
+                }
+            } catch (Exception ignored) {}
+            if (!isFinishing()) PlayerTools.show(this, st);
+        });
+    }
+
+    // ===================== snack bar: night sleep prompt (18), continue after a kill (27) =====================
+
+    private void showSnack(String text, String action, final Runnable onAction, long ms) {
+        if (snack == null) return;
+        snackText.setText(text);
+        if (action != null) {
+            snackAction.setText(action);
+            snackAction.setVisibility(View.VISIBLE);
+            snackAction.setOnClickListener(v -> { hideSnack(); if (onAction != null) onAction.run(); });
+        } else snackAction.setVisibility(View.GONE);
+        snack.setVisibility(View.VISIBLE);
+        snack.setAlpha(0f);
+        snack.animate().alpha(1f).setDuration(200).start();
+        MAIN.removeCallbacks(hideSnackRun);
+        MAIN.postDelayed(hideSnackRun, ms);
+    }
+
+    private void hideSnack() {
+        MAIN.removeCallbacks(hideSnackRun);
+        if (snack != null) snack.setVisibility(View.GONE);
+    }
+
+    private boolean snackShowing() {
+        return snack != null && snack.getVisibility() == View.VISIBLE;
+    }
+
+    private final Runnable nightPromptRun = this::maybeNightPrompt;
+
+    /** 22:00-05:00, timer off, once per night: offer the usual sleep timer (18). */
+    private void maybeNightPrompt() {
+        try {
+            if (isFinishing() || !visible || SleepTimer.active() || snackShowing() || blackView != null || lockView != null) return;
+            if (!Prefs.on(this, Prefs.NIGHT_PROMPT)) return;
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            int h = cal.get(java.util.Calendar.HOUR_OF_DAY);
+            if (h < 22 && h >= 5) return;
+            if (h < 5) cal.add(java.util.Calendar.DAY_OF_MONTH, -1);
+            String night = cal.get(java.util.Calendar.YEAR) + "-" + cal.get(java.util.Calendar.DAY_OF_YEAR);
+            if (night.equals(Prefs.str(this, Prefs.NIGHT_SHOWN, ""))) return;
+            Prefs.put(this, Prefs.NIGHT_SHOWN, night);
+            final int m = Prefs.sleepDefault(this);
+            showSnack("夜深了，要开睡眠定时吗？", SleepTimer.optionLabel(m), () -> SleepTimer.start(this, m), 8000);
+        } catch (Throwable t) {
+            Diag.log("night", String.valueOf(t));
+        }
+    }
+
+    /** Cold start from the launcher: offer the video that was playing when the app was last closed (27). */
+    private void offerResume() {
+        try {
+            if (isFinishing() || !Prefs.on(this, Prefs.RESUME_PROMPT)) return;
+            android.content.SharedPreferences p = Prefs.get(this);
+            final String id = p.getString(Prefs.LAST_VIDEO, null);
+            long at = p.getLong(Prefs.LAST_AT, 0), pos = p.getLong(Prefs.LAST_POS, 0);
+            long age = System.currentTimeMillis() - at;
+            if (id == null || at <= 0 || age < 0 || age > 12 * 3600_000L || pos < 10) return;
+            if (currentUrl != null && isPlayerUrl(currentUrl)) return;
+            String title = p.getString(Prefs.LAST_TITLE, "");
+            final long fpos = pos;
+            showSnack("继续播放：" + (title == null || title.isEmpty() ? "上次的视频" : title), "继续", () -> {
+                if (web != null) web.loadUrl(HOME + "watch?v=" + id + "&t=" + fpos + "s");
+            }, 9000);
+        } catch (Throwable t) {
+            Diag.log("resume", String.valueOf(t));
+        }
+    }
+
+    private void clearLastVideo() {
+        Prefs.get(this).edit().remove(Prefs.LAST_VIDEO).remove(Prefs.LAST_POS).remove(Prefs.LAST_AT).remove(Prefs.LAST_TITLE).apply();
+    }
+
+    // ===================== black screen (157) and touch lock (131) =====================
+
+    private FrameLayout decor() {
+        return (FrameLayout) getWindow().getDecorView();
+    }
+
+    @SuppressWarnings("deprecation")
+    public void startBlackScreen() {
+        if (blackView != null) return;
+        try {
+            FrameLayout v = new FrameLayout(this);
+            v.setBackgroundColor(0xFF000000);
+            v.setClickable(true);
+            v.setOnClickListener(x -> stopBlackScreen());
+            TextView hint = new TextView(this);
+            hint.setText("黑屏播放中 · 轻点恢复");
+            hint.setTextColor(0xFF555555);
+            hint.setTextSize(14);
+            FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER);
+            v.addView(hint, hp);
+            hint.animate().alpha(0f).setStartDelay(2500).setDuration(800).start();
+            decor().addView(v, new FrameLayout.LayoutParams(-1, -1));
+            v.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            savedBrightness = lp.screenBrightness;
+            lp.screenBrightness = 0.01f;
+            getWindow().setAttributes(lp);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            blackView = v;
+        } catch (Throwable t) {
+            Diag.log("black", String.valueOf(t));
+        }
+    }
+
+    public void stopBlackScreen() {
+        if (blackView == null) return;
+        try {
+            decor().removeView(blackView);
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.screenBrightness = savedBrightness;
+            getWindow().setAttributes(lp);
+            if (chrome == null || !chrome.isFullscreen()) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } catch (Throwable ignored) {}
+        blackView = null;
+    }
+
+    /** Sleep timer finished: leave black screen so the display can time out normally. */
+    public static void onSleepEnded() {
+        MAIN.post(() -> {
+            MainActivity a = current.get();
+            if (a != null) a.stopBlackScreen();
+        });
+    }
+
+    public void startTouchLock() {
+        if (lockView != null) return;
+        try {
+            final FrameLayout v = new FrameLayout(this);
+            v.setBackgroundColor(0x00000000);
+            final TextView pill = new TextView(this);
+            pill.setText("触控已锁定 · 长按 1.5 秒解锁");
+            pill.setTextColor(0xFFFFFFFF);
+            pill.setTextSize(13);
+            pill.setPadding(dp(14), dp(8), dp(14), dp(8));
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+            bg.setColor(0xB0000000);
+            bg.setCornerRadius(dp(18));
+            pill.setBackground(bg);
+            FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
+            pp.topMargin = dp(48);
+            v.addView(pill, pp);
+            pill.animate().alpha(0.15f).setStartDelay(2500).setDuration(600).start();
+            final Runnable unlock = this::stopTouchLock;
+            v.setOnTouchListener((x, ev) -> {
+                switch (ev.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        pill.animate().cancel();
+                        pill.setAlpha(1f);
+                        pill.setText("继续按住解锁…");
+                        MAIN.postDelayed(unlock, 1500);
+                        break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        MAIN.removeCallbacks(unlock);
+                        pill.setText("触控已锁定 · 长按 1.5 秒解锁");
+                        pill.animate().alpha(0.15f).setStartDelay(1500).setDuration(600).start();
+                        break;
+                    default:
+                        break;
+                }
+                return true; // swallow everything
+            });
+            decor().addView(v, new FrameLayout.LayoutParams(-1, -1));
+            lockView = v;
+        } catch (Throwable t) {
+            Diag.log("lock", String.valueOf(t));
+        }
+    }
+
+    public void stopTouchLock() {
+        if (lockView == null) return;
+        try { decor().removeView(lockView); } catch (Throwable ignored) {}
+        lockView = null;
+        Toast.makeText(this, "已解锁", Toast.LENGTH_SHORT).show();
+    }
+
+    /** Fullscreen video was added to the decor view: keep our overlays above it. */
+    public void raiseOverlays() {
+        if (lockView != null) lockView.bringToFront();
+        if (blackView != null) blackView.bringToFront();
+    }
+
+    // ===================== orientation lock (132) =====================
+
+    public int orientationLock() { return orientationLock; }
+
+    public void setOrientationLock(int o) {
+        orientationLock = o;
+        if (chrome == null || !chrome.isFullscreen()) setRequestedOrientation(o);
+        Toast.makeText(this, o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? "屏幕方向：跟随系统"
+                : o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? "已锁定竖屏" : "已锁定横屏", Toast.LENGTH_SHORT).show();
+    }
+
     // ===================== top progress bar + offline screen (112/113) =====================
 
     private void setupOverlay() {
@@ -453,6 +685,39 @@ public class MainActivity extends Activity {
             panel.setVisibility(View.GONE);
             errorPanel = panel;
             overlay.addView(panel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            LinearLayout sb = new LinearLayout(this);
+            sb.setOrientation(LinearLayout.HORIZONTAL);
+            sb.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            sb.setPadding(dp(16), dp(6), dp(6), dp(6));
+            android.graphics.drawable.GradientDrawable sbg = new android.graphics.drawable.GradientDrawable();
+            sbg.setColor(0xF2323232);
+            sbg.setCornerRadius(dp(10));
+            sb.setBackground(sbg);
+            sb.setElevation(dp(6));
+            snackText = new TextView(this);
+            snackText.setTextColor(0xFFFFFFFF);
+            snackText.setTextSize(14);
+            snackText.setMaxLines(2);
+            snackText.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            sb.addView(snackText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            snackAction = new Button(this, null, android.R.attr.borderlessButtonStyle);
+            snackAction.setTextColor(0xFF3EA6FF);
+            snackAction.setAllCaps(false);
+            sb.addView(snackAction, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
+            Button close = new Button(this, null, android.R.attr.borderlessButtonStyle);
+            close.setText("✕");
+            close.setTextColor(0xFFAAAAAA);
+            close.setContentDescription("关闭");
+            close.setOnClickListener(v -> hideSnack());
+            sb.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            sb.setVisibility(View.GONE);
+            FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            sp.gravity = android.view.Gravity.BOTTOM;
+            sp.setMargins(dp(12), 0, dp(12), dp(64));
+            overlay.addView(sb, sp);
+            snack = sb;
+            overlayRoot = overlay;
 
             addContentView(overlay, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         } catch (Throwable t) {
@@ -605,13 +870,26 @@ public class MainActivity extends Activity {
     }
 
     private void handleBack() {
-        if (chrome != null && chrome.isFullscreen()) {
+        if (lockView != null) {               // touch lock: back does nothing (131)
+            Toast.makeText(this, "触控已锁定，长按屏幕 1.5 秒解锁", Toast.LENGTH_SHORT).show();
+        } else if (blackView != null) {
+            stopBlackScreen();
+        } else if (chrome != null && chrome.isFullscreen()) {
             chrome.exitFullscreen();
         } else if (web != null && web.canGoBack()) {
             web.goBack();
-        } else {
-            // keep playing in the background instead of killing the WebView
+        } else if (PlaybackService.isPlaying()) {
+            // playing: keep playing in the background instead of killing the WebView (118)
             moveTaskToBack(true);
+        } else {
+            long now = System.currentTimeMillis();
+            if (now - lastBackAt < 2000) {
+                clearLastVideo();
+                finish();
+            } else {
+                lastBackAt = now;
+                Toast.makeText(this, "再按一次退出", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 

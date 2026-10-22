@@ -37,7 +37,22 @@
   }
 
   var B = window.YTL || null; // Java bridge
-  var cfg = { sponsorBlock: true, lowQualityBg: true, hideWatched: true, perfCss: true };
+  var cfg = {
+    sponsorBlock: true, lowQualityBg: true, hideWatched: true, perfCss: true,
+    // batch 2 (v1.3.0) – every one has a safe default that keeps the old behaviour
+    fadeSec: 60,            // sleep fade length (13)
+    nextSource: 'rec',      // what plays next: rec | channel | playlist (22)
+    sleepCalm: false,       // while a sleep timer runs: same channel / playlist only (21)
+    resumeLocal: true,      // signed out: remember where each video was left (28)
+    quality: 'auto',        // auto | wifiMax | 1080 | 720 | 480 (29)
+    rememberRate: false, rate: 1,   // (30)
+    captions: 'yt',         // yt | off | zh (31)
+    origAudio: true,        // prefer the original audio track over auto-dubs (32)
+    noEndWall: true,        // no recommendation wall when a video ends (36)
+    normalize: false,       // WebAudio compressor, experimental (20)
+    sleepBadge: true,       // sleep time left in the player corner (154)
+    subSize: 'default', subBg: 'default'   // caption style (155)
+  };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
   var bg = false;            // app in background / screen off (told by Java)
@@ -56,10 +71,16 @@
   var autonavFor = '';
   var adMuted = false;
   var adRate = 0;
+  var sleeping = false;       // any sleep timer running (21)
+  var countMode = false;     // sleep timer "after N videos": report each finished video (16)
+  var badgeText = '';        // sleep time left shown on the player (154)
   // state Java still holds when this document is (re)loaded: sleep timer mode, background
   if (cfg.stopAtEnd) stopAtEnd = true;
   if (cfg.bg) bg = true;
-  delete cfg.stopAtEnd; delete cfg.bg;
+  if (cfg.sleeping) sleeping = true;
+  if (cfg.countMode) countMode = true;
+  if (cfg.badge) badgeText = String(cfg.badge);
+  delete cfg.stopAtEnd; delete cfg.bg; delete cfg.sleeping; delete cfg.countMode; delete cfg.badge;
 
   /* ---------- 0. the rule table: every selector the script uses lives here ---------- */
   var RULES = {
@@ -112,6 +133,11 @@
       ],
       own: ['[data-ytl-hide]', '[data-ytl-seen]']
     },
+    // recommendation wall at the end of a video (36): only the grid, never the autoplay countdown
+    endWall: ['.html5-video-player .ytp-endscreen-content', '.html5-video-player .ytp-endscreen-previous',
+      '.html5-video-player .ytp-endscreen-next'],
+    captionSeg: '.ytp-caption-segment',
+    captionWin: '.caption-window',
     // ad fallback: black cover over the picture while an ad still plays (4)
     adCover: ['#movie_player.ad-showing video', '#movie_player.ad-interrupting video', '#movie_player.ytl-ad video'],
     adCoverPlayer: ['#movie_player.ad-showing', '#movie_player.ad-interrupting', '#movie_player.ytl-ad'],
@@ -141,6 +167,8 @@
       playerError: '.ytp-error, ytm-player-error-message-renderer',
       playPause: '.player-control-play-pause-icon, .ytp-play-button, button[aria-label*="ause"]',
       contentRoot: 'ytm-app',
+      relatedItem: 'ytm-video-with-context-renderer, ytm-compact-video-renderer',
+      byline: '[class*="byline" i], ytm-badge-and-byline-renderer, .subhead',
       maxresImg: 'img[src*="/maxresdefault"]'
     }
   };
@@ -162,6 +190,17 @@
     rule(pre(RULES.perf.compact), 'content-visibility:auto;contain-intrinsic-size:auto 110px;contain:layout style');
     rule(pre(RULES.perf.noAnim), 'animation:none!important;transition:none!important');
     rule(pre(RULES.perf.noRipple), 'display:none!important');
+    rule(RULES.endWall.map(function (x) { return 'html[data-ytl-noendwall] ' + x; }), 'display:none!important');
+    // caption style (155): size by transform (no layout change), background opacity
+    var cw = RULES.captionWin, cs = RULES.captionSeg;
+    out.push('html[data-ytl-subsize="l"] ' + cw + '{transform:scale(1.25);transform-origin:50% 100%}');
+    out.push('html[data-ytl-subsize="xl"] ' + cw + '{transform:scale(1.5);transform-origin:50% 100%}');
+    out.push('html[data-ytl-subsize="s"] ' + cw + '{transform:scale(.85);transform-origin:50% 100%}');
+    out.push('html[data-ytl-subbg="half"] ' + cs + '{background:rgba(8,8,8,.45)!important}');
+    out.push('html[data-ytl-subbg="none"] ' + cs + '{background:transparent!important;text-shadow:0 0 3px #000,0 0 2px #000,1px 1px 2px #000}');
+    out.push('#ytl-badge{position:absolute;top:8px;left:8px;z-index:70;pointer-events:none;background:rgba(0,0,0,.6);color:#fff;' +
+      'font:500 12px/16px Roboto,Arial,sans-serif;padding:3px 8px;border-radius:10px;white-space:nowrap}');
+    out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
       'background:rgba(33,33,33,.96);color:#fff;font:14px/20px Roboto,Arial,sans-serif;padding:10px 14px 10px 16px;border-radius:10px;' +
@@ -269,6 +308,8 @@
       if (aw.length) art = aw[aw.length - 1].src || '';
     }
     if (!title) title = (document.title || '').replace(/ - YouTube$/, '');
+    // channel name for the notification when YouTube's metadata has none (116)
+    if (!artist) { try { var vd0 = player() && player().getVideoData && player().getVideoData(); artist = (vd0 && vd0.author) || ''; } catch (e) {} }
     // notification art: hqdefault is plenty, never the multi-megabyte maxres (47)
     if (art) art = art.replace('/maxresdefault', '/hqdefault');
     if (!art) art = 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg';
@@ -320,16 +361,107 @@
   }
   function sleepPause() { pause(); setTimeout(restoreVolume, 400); }
 
-  /* ---------- 4. low quality in background ---------- */
+  /* ---------- 3b. playback tools: seek by, fine speed, loop / A-B, shuffle (26/151/152/153) ---------- */
+  var loopOne = false;
+  var abA = -1, abB = -1;
+  var ourRate = 0;            // rate we set ourselves (not a user change to remember)
+  function seekBy(sec) {
+    var v = video(); if (!v || adNow()) return;
+    var t = (v.currentTime || 0) + Number(sec || 0);
+    if (isFinite(v.duration) && v.duration > 0) t = Math.min(t, v.duration - 0.5);
+    v.currentTime = Math.max(0, t);
+  }
+  function clampRate(r) {
+    r = Math.round(Number(r) * 100) / 100;
+    if (!isFinite(r) || r <= 0) return 1;
+    return Math.max(0.25, Math.min(2, r));
+  }
+  function setRate(r) {
+    var v = video(); if (!v || adNow()) return;
+    r = clampRate(r);
+    ourRate = r;
+    try { v.playbackRate = r; } catch (e) {}
+    if (cfg.rememberRate) { cfg.rate = r; call('saveRate', String(r)); }
+  }
+  function loopChanged() { autonavFor = ''; if (started) forceAutonav(); }
+  function setLoop(on) { loopOne = !!on; if (loopOne) { abA = abB = -1; } loopChanged(); }
+  function setAB(which) {
+    var v = video();
+    if (which === 'clear' || !v) { abA = abB = -1; loopChanged(); return; }
+    var t = v.currentTime || 0;
+    if (which === 'a') { abA = t; if (abB >= 0 && abB <= abA + 1) abB = -1; loopOne = false; }
+    else if (which === 'b' && abA >= 0 && t > abA + 1) { abB = t; loopOne = false; }
+    loopChanged();
+  }
+  function setShuffle(on) {
+    var p = player();
+    if (p && typeof p.setShuffle === 'function') { p.setShuffle(!!on); return true; }
+    return false;
+  }
+  function hasList() { return /[?&]list=/.test(location.search); }
+  function toolState() {
+    var v = video();
+    return {
+      watch: isWatch(), id: curId, rate: v ? (v.playbackRate || 1) : 1, loop: loopOne,
+      a: abA, b: abB, list: hasList(), shuffle: !!(player() && typeof player().setShuffle === 'function')
+    };
+  }
+  /** Loop / A-B check on every timeupdate; jumps back before the end so YouTube never moves on. */
+  function loopTick(v) {
+    if (adNow() || stopAtEnd) return;
+    var t = v.currentTime || 0, rate = v.playbackRate || 1;
+    if (abA >= 0 && abB > abA) {
+      if (t >= abB || t < abA - 2) v.currentTime = abA;
+      return;
+    }
+    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) v.currentTime = 0;
+  }
+
+  /* ---------- 3c. keyboard (133): space / k pause, arrows / j l seek ---------- */
+  document.addEventListener('keydown', guard('keys', function (e) {
+    if (!isWatch() || e.ctrlKey || e.altKey || e.metaKey) return;
+    var ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
+    var v = video(); if (!v) return;
+    var k = e.key, done = true;
+    if (k === ' ' || k === 'k' || k === 'K') { if (v.paused) play(); else pause(); }
+    else if (k === 'ArrowLeft') seekBy(-5);
+    else if (k === 'ArrowRight') seekBy(5);
+    else if (k === 'j' || k === 'J') seekBy(-10);
+    else if (k === 'l' || k === 'L') seekBy(10);
+    else done = false;
+    if (done) { e.preventDefault(); e.stopPropagation(); }
+  }), true);
+
+  /* ---------- 4. quality: lowest in background, preferred default in foreground (29) ---------- */
+  var QMAP = { '1080': 'hd1080', '720': 'hd720', '480': 'large' };
+  function metered() {
+    try { return !!(B && typeof B.isMetered === 'function' && B.isMetered()); } catch (e) { return false; }
+  }
+  /** Preferred foreground quality name for the player, or 'auto'. */
+  function prefQuality() {
+    var q = cfg.quality || 'auto';
+    if (q === 'wifiMax') return metered() ? 'hd720' : 'highres';
+    return QMAP[q] || 'auto';
+  }
+  function setQ(p, q) {
+    if (p.setPlaybackQualityRange) p.setPlaybackQualityRange(q, q);
+    if (p.setPlaybackQuality) p.setPlaybackQuality(q);
+  }
+  var qualityFor = '';
   var applyQuality = guard('quality', function () {
     if (!isWatch()) return;
     var p = player(); if (!p) return;
     if (bg && cfg.lowQualityBg) {
-      if (p.setPlaybackQualityRange) p.setPlaybackQualityRange('tiny', 'tiny');
-      if (p.setPlaybackQuality) p.setPlaybackQuality('tiny');
+      setQ(p, 'tiny');
     } else if (p.__ytlLow) {
-      if (p.setPlaybackQualityRange) p.setPlaybackQualityRange('auto', 'auto');
-      if (p.setPlaybackQuality) p.setPlaybackQuality('auto');
+      setQ(p, prefQuality());
+      qualityFor = curId;
+    } else if (qualityFor !== curId && curId) {
+      // once per video, so a quality the user picks by hand afterwards is kept
+      qualityFor = curId;
+      var q = prefQuality();
+      if (q !== 'auto') setQ(p, q);
     }
     p.__ytlLow = bg && cfg.lowQualityBg;
   });
@@ -455,7 +587,8 @@
   window.ytl = {
     play: play, pause: pause, next: next, prev: prev, seek: seek,
     setVolume: setVolume, restoreVolume: restoreVolume, sleepPause: sleepPause,
-    stopAtEnd: function (b) { stopAtEnd = !!b; if (!b) restoreVolume(); },
+    stopAtEnd: function (b) { stopAtEnd = !!b; if (!b) { pendingStop = false; restoreVolume(); } },
+    stopAtEndNext: function () { pendingStop = true; },
     bg: function (b) { setBg(!!b); },
     cfg: function (o) { cfg = Object.assign(cfg, o || {}); applyCfg(); },
     onSegments: function (id, arr) {
@@ -465,7 +598,16 @@
     },
     onNet: onNet,
     noisy: function () { pause(); },
-    trim: function () { trimCaches(); }
+    trim: function () { trimCaches(); },
+    seekBy: function (s) { seekBy(s); },
+    setRate: function (r) { setRate(r); },
+    loop: function (b) { setLoop(b); },
+    ab: function (w) { setAB(String(w)); },
+    shuffle: function (b) { return setShuffle(b); },
+    state: function () { return JSON.stringify(toolState()); },
+    sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); },
+    countMode: function (b) { countMode = !!b; },
+    badge: function (t) { badgeText = t ? String(t) : ''; updateBadge(); }
   };
 
   /* ---------- 7. ad removal ----------
@@ -525,7 +667,28 @@
       lenById[vd.videoId] = { len: isFinite(len) ? len : 0, live: !!(vd.isLive || vd.isLiveContent || vd.isUpcoming || vd.isPostLiveDvr) };
     }
     preconnectStream(o.streamingData);
+    if (vd && vd.videoId) noteAudioTracks(vd.videoId, o.streamingData);
     return o;
+  }
+  /* original audio track per video (32): "… original" track, else the one marked default */
+  var origAudio = {}, origIds = [];
+  var ORIG_RE = /original|原始|原声|原聲|オリジナル|원본/i;
+  function noteAudioTracks(id, sd) {
+    try {
+      var f = sd && sd.adaptiveFormats;
+      if (!f || !f.length) return;
+      var ids = {}, n = 0, byName = '', byDefault = '';
+      for (var i = 0; i < f.length; i++) {
+        var t = f[i] && f[i].audioTrack;
+        if (!t || !t.id) continue;
+        if (!ids[t.id]) { ids[t.id] = true; n++; }
+        if (!byName && ORIG_RE.test(t.displayName || '')) byName = t.id;
+        if (!byDefault && t.audioIsDefault) byDefault = t.id;
+      }
+      if (n < 2) return;
+      if (!origAudio[id]) { origIds.push(id); if (origIds.length > 40) delete origAudio[origIds.shift()]; }
+      origAudio[id] = byName || byDefault || '';
+    } catch (e) {}
   }
   function dropKeys(o) {
     for (var i = 0; i < AD_KEYS.length; i++) if (AD_KEYS[i] in o) delete o[AD_KEYS[i]];
@@ -789,17 +952,33 @@
     s.textContent = CSS;
     (document.head || document.documentElement).appendChild(s);
   }
+  function setAttr(name, val) {
+    var h = document.documentElement;
+    if (!h) return;
+    if (val) { if (h.getAttribute(name) !== val) h.setAttribute(name, val); }
+    else if (h.hasAttribute(name)) h.removeAttribute(name);
+  }
+  var SUB_SIZES = { s: 1, l: 1, xl: 1 }, SUB_BGS = { half: 1, none: 1 };
   function applyPerfAttr() {
     var h = document.documentElement;
     if (!h) return;
     if (cfg.perfCss) { if (!h.hasAttribute('data-ytl-perf')) h.setAttribute('data-ytl-perf', ''); }
     else if (h.hasAttribute('data-ytl-perf')) h.removeAttribute('data-ytl-perf');
+    setAttr('data-ytl-noendwall', cfg.noEndWall ? '1' : '');
+    setAttr('data-ytl-subsize', SUB_SIZES[cfg.subSize] ? cfg.subSize : '');
+    setAttr('data-ytl-subbg', SUB_BGS[cfg.subBg] ? cfg.subBg : '');
   }
   function applyCfg() {
     if (!cfg.sponsorBlock) { segments = []; hideSbPrompt(); }
     applyQuality();
     applyPerfAttr();
     if (document.documentElement) markWatched();
+    autonavFor = '';
+    if (started) {   // the helpers below are defined further down; first run is at start-up
+      updateBadge();
+      if (isWatch()) forceAutonav();
+      if (isWatch() && (cfg.normalize || audioFx.ctx)) applyNormalize(video());
+    }
   }
 
   /* ---------- 8b. home feed: hide videos already watched (>= 80 %) ----------
@@ -899,6 +1078,200 @@
     e.preventDefault();
   }), true);
 
+
+  /* ---------- 10b. per-video preferences, applied once when a video really starts ---------- */
+  var startedFor = '';
+  function onVideoStart(v) {
+    if (!curId || startedFor === curId || adNow() || !isWatch()) return;
+    startedFor = curId;
+    applyRate(v);
+    applyCaptions();
+    applyOrigAudio();
+    resumeLocal(v);
+  }
+  // remembered speed (30)
+  function applyRate(v) {
+    if (!cfg.rememberRate) return;
+    var r = clampRate(cfg.rate || 1);
+    if (r !== 1 && v.playbackRate !== r) { ourRate = r; try { v.playbackRate = r; } catch (e) {} }
+  }
+  // captions default (31): follow YouTube / always off / Chinese when the video has it
+  function applyCaptions() {
+    var p = player(); if (!p || cfg.captions === 'yt' || !cfg.captions) return;
+    if (cfg.captions === 'off') { if (typeof p.unloadModule === 'function') p.unloadModule('captions'); return; }
+    if (cfg.captions !== 'zh' || typeof p.getOption !== 'function' || typeof p.setOption !== 'function') return;
+    var id = curId;
+    setTimeout(guard('captions', function () {
+      if (videoId() !== id) return;
+      var list = p.getOption('captions', 'tracklist') || [];
+      if (!list.length && typeof p.loadModule === 'function') { p.loadModule('captions'); list = p.getOption('captions', 'tracklist') || []; }
+      var pick = null;
+      for (var i = 0; i < list.length && !pick; i++) if (/^zh/i.test((list[i] && list[i].languageCode) || '') && list[i].kind !== 'asr') pick = list[i];
+      for (var j = 0; j < list.length && !pick; j++) if (/^zh/i.test((list[j] && list[j].languageCode) || '')) pick = list[j];
+      if (pick) { if (typeof p.loadModule === 'function') p.loadModule('captions'); p.setOption('captions', 'track', pick); }
+    }), 1500);
+  }
+  // original audio instead of an auto-dub (32): only for videos that have several audio tracks
+  function trackId(t) {
+    try {
+      var li = t && t.getLanguageInfo && t.getLanguageInfo();
+      if (li && typeof li.getId === 'function') return li.getId() || '';
+      return (t && t.id) || '';
+    } catch (e) { return ''; }
+  }
+  function applyOrigAudio() {
+    if (!cfg.origAudio) return;
+    var id = curId, want = origAudio[id];
+    var p = player();
+    if (!want || !p || typeof p.getAvailableAudioTracks !== 'function' || typeof p.setAudioTrack !== 'function') return;
+    setTimeout(guard('orig-audio', function () {
+      if (videoId() !== id || adNow()) return;
+      var cur = typeof p.getAudioTrack === 'function' ? p.getAudioTrack() : null;
+      if (cur && trackId(cur) === want) return;
+      var list = p.getAvailableAudioTracks() || [];
+      for (var i = 0; i < list.length; i++) {
+        if (trackId(list[i]) === want) { p.setAudioTrack(list[i]); log('audio', 'original track ' + want); return; }
+      }
+    }), 800);
+  }
+  // signed out: remember the position of each video locally (28)
+  function loggedOut() {
+    try { return !!(window.ytcfg && typeof ytcfg.get === 'function' && ytcfg.get('LOGGED_IN') === false); } catch (e) { return false; }
+  }
+  var POS_KEY = 'ytl_pos';
+  function posStore() { try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function posSave(st) {
+    var ids = Object.keys(st);
+    if (ids.length > 150) {
+      ids.sort(function (a, b) { return st[a][1] - st[b][1]; });
+      for (var i = 0; i < ids.length - 150; i++) delete st[ids[i]];
+    }
+    try { localStorage.setItem(POS_KEY, JSON.stringify(st)); } catch (e) {}
+  }
+  function resumeLocal(v) {
+    if (!cfg.resumeLocal || !loggedOut() || /[?&]t=/.test(location.search) || (v.currentTime || 0) > 5) return;
+    var e = posStore()[curId];
+    if (!e || !(e[0] > 30)) return;
+    if (isFinite(v.duration) && v.duration > 0 && e[0] > v.duration - 30) return;
+    v.currentTime = e[0];
+    log('resume', curId + ' t=' + e[0]);
+  }
+  var lastPos = 0, lastAppPos = 0;
+  function posTick(v, now, force) {
+    if (!isWatch() || adNow() || !curId) return;
+    var t = Math.floor(v.currentTime || 0), d = v.duration;
+    // app restart resume (27): Java keeps the last video + position
+    if (force || now - lastAppPos > 30000) {
+      lastAppPos = now;
+      if (t > 0) call('savePos', curId, t, (meta && meta.title) || (document.title || '').replace(/ - YouTube$/, ''));
+    }
+    if (!cfg.resumeLocal || !(force || now - lastPos > 10000)) return;
+    lastPos = now;
+    var info = lenById[curId];
+    if (!isFinite(d) || d < 300 || (info && info.live) || !loggedOut()) return;
+    var st = posStore();
+    if (t > 30 && t < d - 30) st[curId] = [t, now];
+    else if (st[curId]) delete st[curId];
+    else return;
+    posSave(st);
+  }
+
+  /* ---------- 10c. volume levelling (20, experimental, off by default) ----------
+   * Audio is only routed through WebAudio once the user switched it on; switching it off later
+   * connects the element straight to the output again. */
+  var audioFx = { ctx: null, src: null, comp: null, el: null };
+  var applyNormalize = guard('normalize', function (v) {
+    if (!v || (!cfg.normalize && !audioFx.ctx)) return;
+    if (!audioFx.ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioFx.ctx = new AC();
+    }
+    var ctx = audioFx.ctx;
+    if (audioFx.el !== v) {
+      audioFx.src = ctx.createMediaElementSource(v);
+      audioFx.el = v;
+    }
+    if (!audioFx.comp) {
+      var c = ctx.createDynamicsCompressor();
+      c.threshold.value = -26; c.knee.value = 24; c.ratio.value = 4; c.attack.value = 0.005; c.release.value = 0.3;
+      var g = ctx.createGain(); g.gain.value = 1.35;
+      c.connect(g); g.connect(ctx.destination);
+      audioFx.comp = c;
+    }
+    try { audioFx.src.disconnect(); } catch (e) {}
+    audioFx.src.connect(cfg.normalize ? audioFx.comp : ctx.destination);
+    if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function () {});
+  });
+
+  /* ---------- 10d. sleep time left on the player (154) ---------- */
+  var updateBadge = guard('badge', function () {
+    var el = document.getElementById('ytl-badge');
+    var p = player();
+    if (!cfg.sleepBadge || !badgeText || !p || !isWatch()) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    if (!el || el.parentNode !== p) {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      el = document.createElement('div');
+      el.id = 'ytl-badge';
+      el.setAttribute('aria-hidden', 'true');
+      p.appendChild(el);
+    }
+    if (el.textContent !== badgeText) el.textContent = badgeText;
+  });
+
+  /* ---------- 10e. what plays next (21/22) ----------
+   * Default: YouTube's own autoplay (unchanged). With "same channel" / "playlist" (or the calm rule
+   * while a sleep timer runs) YouTube's autoplay is switched off and the next video is picked here. */
+  function ruleMode() {
+    if (cfg.nextSource === 'playlist') return 'playlist';
+    if (cfg.nextSource === 'channel' || (cfg.sleepCalm && sleeping)) return 'channel';
+    return 'rec';
+  }
+  function wantAutonav() { return ruleMode() === 'rec' && !loopOne && !(abA >= 0 && abB > abA); }
+  function itemWatched(item) {
+    var bars = item.querySelectorAll(RULES.sel.watchedBar);
+    for (var i = 0; i < bars.length; i++) if (watchedPct(bars[i]) >= SEEN_MIN) return true;
+    return false;
+  }
+  /** First up-next video by the same channel (byline starts with the channel name), not watched. */
+  function sameChannelLink(id) {
+    var author = '';
+    try { var p = player(), d = p && p.getVideoData && p.getVideoData(); author = ((d && d.author) || '').trim(); } catch (e) {}
+    if (author.length < 2) return null;
+    var items = document.querySelectorAll(RULES.sel.relatedItem);
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var a = it.querySelector('a[href*="/watch?v="]');
+      if (!a) continue;
+      var m = /[?&]v=([\w-]{6,})/.exec(a.getAttribute('href') || '');
+      if (!m || m[1] === id || it.hasAttribute('data-ytl-seen') || itemWatched(it)) continue;
+      var by = it.querySelector(RULES.sel.byline);
+      if (!by) continue;
+      var t = textOf(by);
+      if (t === author || t.indexOf(author + ' ') === 0 || t.indexOf(author + '·') === 0 || t.indexOf(author + '•') === 0) return a;
+    }
+    return null;
+  }
+  function nextByRule(mode, id) {
+    if (hasList()) {
+      var p = player();
+      try {
+        var pl = p && p.getPlaylist && p.getPlaylist();
+        var idx = p && p.getPlaylistIndex ? p.getPlaylistIndex() : -1;
+        if (pl && pl.length && idx >= 0 && idx < pl.length - 1) { log('next', 'playlist'); p.nextVideo(); return; }
+        if (pl && pl.length && idx >= pl.length - 1) { log('next', 'playlist end: stop'); return; }
+      } catch (e) {}
+      next();
+      return;
+    }
+    if (mode === 'channel') {
+      var a = sameChannelLink(id);
+      if (a) { log('next', 'same channel'); a.click(); return; }
+      log('next', 'no same-channel video, recommended');
+    }
+    next();
+  }
+
   /* ---------- 10. player events (capture on document: no element polling) ---------- */
   // Muted inline previews in the feed are not "playback": ignore them.
   function isMain(e) {
@@ -909,10 +1282,15 @@
   }
   var unmutedFor = '';
 
+  var pendingStop = false;    // sleep "after N videos": stop at the end of the next video (16)
+  var endedFor = '';
   function onVideoChange() {
     var id = videoId();
     if (!id || id === curId) return;
+    var had = !!curId;
     curId = id;
+    if (had) { loopOne = false; abA = abB = -1; }
+    if (pendingStop) { pendingStop = false; stopAtEnd = true; }
     lastMetaKey = '';
     stalled = false;
     netTries = 0;
@@ -952,6 +1330,8 @@
     if (adMuted || adRate) skipAd();
     // m.youtube sometimes starts autoplayed videos muted (YTPro had an unmute loop for this)
     if (v.muted && isWatch() && unmutedFor !== curId) { unmutedFor = curId; v.muted = false; }
+    onVideoStart(v);
+    if (cfg.normalize || audioFx.ctx) applyNormalize(v);
     sendMeta();
     call('mediaState', 'playing', pos(v), v.playbackRate || 1);
   });
@@ -961,6 +1341,7 @@
     var v = e.target;
     clearTimeout(stuckTimer);
     call('mediaState', 'paused', pos(v), v.playbackRate || 1);
+    try { posTick(v, Date.now(), true); } catch (x) { report('pos', x); }
     if (!userPaused && Date.now() - lastInput > 1500 && !v.ended) setTimeout(dismissStillWatching, 400);
   });
 
@@ -990,6 +1371,11 @@
   on('ratechange', 'ev-rate', function (e) {
     if (!isMain(e)) return;
     var v = e.target;
+    // remember a speed the user picked (30): never the 16x of the ad fallback or one we set
+    var r = v.playbackRate;
+    if (cfg.rememberRate && isWatch() && !adNow() && !adRate && !adMuted && r !== ourRate && r >= 0.25 && r <= 2) {
+      cfg.rate = r; call('saveRate', String(r));
+    }
     call('mediaState', v.paused ? 'paused' : 'playing', pos(v), v.playbackRate || 1);
   });
 
@@ -998,10 +1384,25 @@
     var v = e.target;
     clearTimeout(stuckTimer);
     call('mediaState', 'paused', pos(v), 1);
-    if (stopAtEnd || userPaused || adNow()) return;
-    // Auto-continue fallback: if YouTube's own autoplay didn't move on, do it ourselves.
+    if (adNow()) return;
     var id = curId;
+    // single-video / A-B loop (152): start over instead of moving on
+    if ((loopOne || (abA >= 0 && abB > abA)) && !stopAtEnd && !userPaused) {
+      v.currentTime = abB > abA && abA >= 0 ? abA : 0;
+      play();
+      return;
+    }
+    if (countMode && endedFor !== id) { endedFor = id; call('videoEnded', id); }
+    if (stopAtEnd || userPaused) return;
     clearTimeout(endTimer);
+    var mode = ruleMode();
+    if (mode !== 'rec') {
+      endTimer = setTimeout(guard('next-rule', function () {
+        if (videoId() === id && !userPaused) nextByRule(mode, id);
+      }), 700);
+      return;
+    }
+    // Auto-continue fallback: if YouTube's own autoplay didn't move on, do it ourselves.
     endTimer = setTimeout(function () {
       if (videoId() === id && !userPaused) next();
     }, 3500);
@@ -1019,10 +1420,13 @@
     // keep YouTube's "last activity" fresh so it never asks "Continue watching?"
     if (now - lastLact > 30000) { lastLact = now; try { window._lact = now; } catch (x) {} }
     sbTick(v, now);
-    // sleep timer: end of current video (fade over the last 60 s, then pause)
+    loopTick(v);
+    posTick(v, now, false);
+    // sleep timer: end of current video (fade over the last N s, then pause)
     if (stopAtEnd && isFinite(v.duration) && v.duration > 0) {
       var left = v.duration - v.currentTime;
-      if (left <= 60) setVolume(Math.max(0, (left - 1) / 59));
+      var F = Math.max(5, Math.min(120, Number(cfg.fadeSec) || 60));
+      if (left <= F) setVolume(Math.max(0, (left - 1) / (F - 1)));
       if (left <= 1.2) {
         stopAtEnd = false;
         sleepPause();
@@ -1184,12 +1588,34 @@
     b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openSettings'); }, true);
     logo.parentNode.insertBefore(b, logo.nextSibling);
   });
+  // moon button: native playback tools sheet (sleep, black screen, touch lock, speed, loop)
+  var ensureTools = guard('tools', function () {
+    if (document.getElementById('ytl-tools')) return;
+    var gear = document.getElementById('ytl-gear');
+    if (!gear || !gear.parentNode || !B || typeof B.openTools !== 'function') return;
+    var b = document.createElement('button');
+    b.id = 'ytl-tools';
+    b.setAttribute('aria-label', '播放工具与睡眠定时');
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
+    var path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M9.27 4.49A9 9 0 1019.51 14.73 7.75 7.75 0 019.27 4.49z');
+    svg.appendChild(path);
+    b.appendChild(svg);
+    b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openTools'); }, true);
+    gear.parentNode.insertBefore(b, gear.nextSibling);
+  });
+  // autoplay on by default; off while a "what plays next" rule or a loop decides (21/22/152)
   var forceAutonav = guard('autonav', function () {
-    if (autonavFor === curId) return;
+    var want = wantAutonav();
+    var key = curId + '|' + want;
+    if (autonavFor === key) return;
     var tg = document.querySelector(RULES.sel.autonav);
     if (tg) {
-      autonavFor = curId;
-      if (tg.getAttribute('aria-pressed') === 'false') tg.click();
+      autonavFor = key;
+      var pressed = tg.getAttribute('aria-pressed');
+      if ((want && pressed === 'false') || (!want && pressed === 'true')) tg.click();
     }
   });
   function domPass() {
@@ -1200,6 +1626,8 @@
     try { hideByText(RULES.sel.shortsText, /^shorts$/i); } catch (e) { report('shorts', e); }
     if (pt === 'home' || seenCount) markWatched();
     ensureGear();
+    ensureTools();
+    if (pt === 'watch' || badgeText) updateBadge();
     if (pt === 'watch') {
       forceAutonav();
       try { checkPlayerError(); } catch (e) { report('player-error', e); }
@@ -1310,7 +1738,10 @@
     cleanUrl: cleanUrl, cleanText: cleanText, retryOnce: retryOnce, nav: nav, selfCheck: selfCheck,
     guard: guard, worthChecking: worthChecking, domPass: domPass,
     observing: function () { return !!mo; }, observerRoot: function () { return moRoot; },
-    segments: function () { return segments; }
+    segments: function () { return segments; },
+    prefQuality: prefQuality, ruleMode: ruleMode, wantAutonav: wantAutonav, sameChannelLink: sameChannelLink,
+    origAudio: function () { return origAudio; }, posStore: posStore, toolState: toolState,
+    stopAtEnd: function () { return stopAtEnd; }
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });

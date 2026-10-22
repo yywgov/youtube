@@ -17,6 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node (JS unit tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: JS unit tests (jsdom) – a failure stops the build
+        working-directory: tests/js
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

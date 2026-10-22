@@ -91,6 +91,17 @@ public class YTProWebChromeClient extends WebChromeClient {
     }
 
     @Override
+    public void onProgressChanged(android.webkit.WebView view, int newProgress) {
+        activity.onProgress(newProgress);
+    }
+
+    /** No location for YouTube: deny quietly, never prompt. */
+    @Override
+    public void onGeolocationPermissionsShowPrompt(String origin, android.webkit.GeolocationPermissions.Callback callback) {
+        if (callback != null) callback.invoke(origin, false, false);
+    }
+
+    @Override
     public void onPermissionRequest(final PermissionRequest request) {
         String origin = request.getOrigin() != null ? request.getOrigin().toString() : "";
         if (!origin.contains("youtube.com")) {

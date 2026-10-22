@@ -1,0 +1,11 @@
+{
+  "name": "ytlite-js-tests",
+  "private": true,
+  "description": "jsdom unit tests for app/src/main/assets/ytlite.js (run in CI before the APK build)",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3"
+  }
+}

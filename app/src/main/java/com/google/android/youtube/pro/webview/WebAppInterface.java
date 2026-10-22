@@ -5,6 +5,7 @@ import android.os.Looper;
 import android.webkit.JavascriptInterface;
 import android.widget.Toast;
 
+import com.google.android.youtube.pro.Diag;
 import com.google.android.youtube.pro.MainActivity;
 import com.google.android.youtube.pro.PlaybackService;
 import com.google.android.youtube.pro.Prefs;
@@ -106,7 +107,11 @@ public class WebAppInterface {
             JSONArray out = new JSONArray();
             HttpURLConnection c = null;
             try {
-                String cats = URLEncoder.encode("[\"sponsor\",\"selfpromo\",\"interaction\"]", "UTF-8");
+                java.util.List<String> chosen = Prefs.sponsorCats(activity);
+                if (chosen.isEmpty()) throw new Exception("no categories");
+                JSONArray catArr = new JSONArray();
+                for (String k : chosen) catArr.put(k);
+                String cats = URLEncoder.encode(catArr.toString(), "UTF-8");
                 URL u = new URL("https://sponsor.ajay.app/api/skipSegments?videoID=" + videoId + "&categories=" + cats);
                 c = (HttpURLConnection) u.openConnection();
                 c.setConnectTimeout(6000);
@@ -118,8 +123,9 @@ public class WebAppInterface {
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject o = arr.getJSONObject(i);
                         JSONArray seg = o.getJSONArray("segment");
-                        if ("skip".equals(o.optString("actionType", "skip"))) {
-                            out.put(new JSONArray().put(seg.getDouble(0)).put(seg.getDouble(1)));
+                        String cat = o.optString("category", "sponsor");
+                        if ("skip".equals(o.optString("actionType", "skip")) && chosen.contains(cat)) {
+                            out.put(new JSONArray().put(seg.getDouble(0)).put(seg.getDouble(1)).put(cat));
                         }
                     }
                 }
@@ -130,6 +136,18 @@ public class WebAppInterface {
             final String js = "ytl.onSegments(" + JSONObject.quote(videoId) + "," + out + ")";
             main.post(() -> MainActivity.js(js));
         });
+    }
+
+    /** Diagnostic line from the page script (self check, retries, module errors). */
+    @JavascriptInterface
+    public void log(final String tag, final String msg) {
+        if (Diag.allowFromPage()) Diag.log(tag, msg);
+    }
+
+    /** An ad that still reached the player despite the response filtering. */
+    @JavascriptInterface
+    public void logAd(final String videoId, final String type, final String page) {
+        if (Diag.allowFromPage()) Diag.ad(videoId, type, page);
     }
 
     private static String read(InputStream in) throws java.io.IOException {

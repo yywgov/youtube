@@ -26,6 +26,7 @@ public final class AdBlocker {
             "adservice.google.com",
             "app-measurement.com",
             "imasdk.googleapis.com",
+            "2mdn.net",
     };
 
     private static final String[] BLOCKED_YT_PATHS = {

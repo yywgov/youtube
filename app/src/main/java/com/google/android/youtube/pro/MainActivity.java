@@ -21,6 +21,11 @@ import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
@@ -69,6 +74,15 @@ public class MainActivity extends Activity {
     private boolean clearHistoryOnFinish = false;
     private String currentUrl = HOME;
 
+    // native top progress bar + offline / load-failure screen (overlay above the WebView)
+    private ProgressBar topBar;
+    private View errorPanel;
+    private TextView errorText;
+    private String failedUrl;
+    private boolean loadError = false;
+    private Object errNetCallback;
+    private long lastTrim = 0;
+
     // ===================== static helpers =====================
 
     public static boolean isVisible() { return visible; }
@@ -89,6 +103,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Diag.init(this);
         current = new WeakReference<>(this);
         setContentView(R.layout.main);
         swipe = findViewById(R.id.swipe);
@@ -98,6 +113,8 @@ public class MainActivity extends Activity {
         setupWebView();
         setupSwipe();
         setupBack();
+        setupOverlay();
+        Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
         web.loadUrl(urlFromIntent(getIntent()));
         MAIN.postDelayed(this::askPermissionsOnce, 1500);
         Updater.cleanup(this);
@@ -186,6 +203,7 @@ public class MainActivity extends Activity {
             PlaybackService.stop(this);
             current = new WeakReference<>(null);
         }
+        unregisterErrNet();
         destroyWebView();
         super.onDestroy();
     }
@@ -202,7 +220,11 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         s.setDisplayZoomControls(false);
+        // capabilities YouTube never needs (sign-in and playback don't use any of them)
         s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        s.setAllowFileAccessFromFileURLs(false);
+        s.setAllowUniversalAccessFromFileURLs(false);
         s.setGeolocationEnabled(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         // Google blocks sign-in from embedded WebViews ("This browser or app may not be secure")
@@ -275,6 +297,7 @@ public class MainActivity extends Activity {
     }
 
     public void onRendererGone() {
+        unregisterErrNet();
         destroyWebView();
         recreate();
     }
@@ -296,12 +319,16 @@ public class MainActivity extends Activity {
     public void onPageStarted(String url) {
         currentUrl = url;
         pageAtTop = true;
+        loadError = false;
+        showTopBar(10);
     }
 
     public void onPageFinished(String url) {
         currentUrl = url;
         injectFallback();
         swipe.setRefreshing(false);
+        hideTopBar();
+        if (!loadError) hideError();
         if (noCacheLoad) restoreCacheMode();
         if (clearHistoryOnFinish && web != null) {
             clearHistoryOnFinish = false;
@@ -329,7 +356,9 @@ public class MainActivity extends Activity {
      */
     public void refreshFeed() {
         if (web == null) return;
-        swipe.setRefreshing(true);
+        // the pull gesture's spinner goes away at once; the thin top bar shows the reload
+        swipe.setRefreshing(false);
+        showTopBar(5);
         web.evaluateJavascript("(window.ytl&&ytl.refresh)?(ytl.refresh(),1):0", r -> {
             if (!"1".equals(r)) hardReload();
         });
@@ -339,7 +368,7 @@ public class MainActivity extends Activity {
     /** Reload the current page (home by default) bypassing the HTTP cache, with a cache-busting param. */
     public void hardReload() {
         if (web == null) return;
-        swipe.setRefreshing(true);
+        showTopBar(5);
         String base = currentUrl == null || !currentUrl.startsWith("https://") || isPlayerUrl(currentUrl) ? HOME : currentUrl;
         Uri u = Uri.parse(base);
         Uri.Builder b = u.buildUpon().clearQuery();
@@ -378,6 +407,163 @@ public class MainActivity extends Activity {
 
     public void openSettings() {
         new SettingsDialog(this).show();
+    }
+
+    // ===================== top progress bar + offline screen (112/113) =====================
+
+    private void setupOverlay() {
+        try {
+            FrameLayout overlay = new FrameLayout(this);
+            overlay.setFitsSystemWindows(true);
+
+            topBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            topBar.setMax(100);
+            topBar.setIndeterminate(false);
+            if (Build.VERSION.SDK_INT >= 21) {
+                topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xFFFF0033));
+                topBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x00000000));
+            }
+            topBar.setVisibility(View.GONE);
+            FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3));
+            bp.gravity = android.view.Gravity.TOP;
+            overlay.addView(topBar, bp);
+
+            LinearLayout panel = new LinearLayout(this);
+            panel.setOrientation(LinearLayout.VERTICAL);
+            panel.setGravity(android.view.Gravity.CENTER);
+            panel.setBackgroundColor(0xFF0F0F0F);
+            panel.setClickable(true); // swallow touches while shown
+            panel.setPadding(dp(32), dp(32), dp(32), dp(32));
+            TextView title = new TextView(this);
+            title.setText("无法连接到 YouTube");
+            title.setTextColor(0xFFFFFFFF);
+            title.setTextSize(18);
+            title.setGravity(android.view.Gravity.CENTER);
+            panel.addView(title);
+            errorText = new TextView(this);
+            errorText.setTextColor(0xFFAAAAAA);
+            errorText.setTextSize(14);
+            errorText.setGravity(android.view.Gravity.CENTER);
+            errorText.setPadding(0, dp(8), 0, dp(20));
+            panel.addView(errorText);
+            Button retry = new Button(this);
+            retry.setText("重试");
+            retry.setOnClickListener(v -> retryLoad());
+            panel.addView(retry, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            panel.setVisibility(View.GONE);
+            errorPanel = panel;
+            overlay.addView(panel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            addContentView(overlay, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } catch (Throwable t) {
+            topBar = null;
+            errorPanel = null;
+            Diag.log("overlay", "setup failed: " + t);
+        }
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    private void showTopBar(int p) {
+        if (topBar == null) return;
+        topBar.setProgress(Math.max(p, topBar.getVisibility() == View.VISIBLE ? topBar.getProgress() : 0));
+        topBar.setVisibility(View.VISIBLE);
+    }
+
+    private void hideTopBar() {
+        if (topBar != null) topBar.setVisibility(View.GONE);
+    }
+
+    /** From the chrome client: page load progress 0..100. */
+    public void onProgress(int p) {
+        if (topBar == null || topBar.getVisibility() != View.VISIBLE) return;
+        if (p >= 100) hideTopBar();
+        else if (p > topBar.getProgress()) topBar.setProgress(p);
+    }
+
+    /** From the WebView client: the main page could not load (offline, DNS, timeout). */
+    public void onMainFrameError(String url, int code) {
+        loadError = true;
+        failedUrl = url != null ? url : currentUrl;
+        Diag.log("load-error", "code=" + code);
+        hideTopBar();
+        if (swipe != null) swipe.setRefreshing(false);
+        if (errorPanel == null) return;
+        errorText.setText(code == android.webkit.WebViewClient.ERROR_TIMEOUT
+                ? "加载超时。网络恢复后会自动重试。"
+                : "请检查网络连接。网络恢复后会自动重试。");
+        errorPanel.setVisibility(View.VISIBLE);
+        registerErrNet();
+    }
+
+    private void hideError() {
+        if (errorPanel != null && errorPanel.getVisibility() == View.VISIBLE) errorPanel.setVisibility(View.GONE);
+        unregisterErrNet();
+    }
+
+    private void retryLoad() {
+        if (web == null) return;
+        String u = failedUrl;
+        if (u == null || !u.startsWith("https://")) u = HOME;
+        hideError();
+        showTopBar(5);
+        web.loadUrl(u);
+    }
+
+    private void registerErrNet() {
+        if (Build.VERSION.SDK_INT < 24 || errNetCallback != null) return;
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            android.net.ConnectivityManager.NetworkCallback cb = new android.net.ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(android.net.Network network) {
+                    MAIN.postDelayed(() -> {
+                        if (errorPanel != null && errorPanel.getVisibility() == View.VISIBLE) retryLoad();
+                    }, 1200);
+                }
+            };
+            cm.registerDefaultNetworkCallback(cb);
+            errNetCallback = cb;
+        } catch (Throwable ignored) {}
+    }
+
+    private void unregisterErrNet() {
+        if (errNetCallback == null) return;
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            cm.unregisterNetworkCallback((android.net.ConnectivityManager.NetworkCallback) errNetCallback);
+        } catch (Throwable ignored) {}
+        errNetCallback = null;
+    }
+
+    // ===================== memory pressure (52) =====================
+
+    /**
+     * Low memory: drop WebView's in-memory resource cache and the page script's own bookkeeping.
+     * Never the disk cache, cookies or storage, and nothing the playing video needs.
+     */
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        boolean act = level == TRIM_MEMORY_RUNNING_LOW || level == TRIM_MEMORY_RUNNING_CRITICAL || level >= TRIM_MEMORY_BACKGROUND;
+        long now = System.currentTimeMillis();
+        if (!act || web == null || now - lastTrim < 60000) return;
+        lastTrim = now;
+        try {
+            web.clearCache(false);
+            js("ytl.trim&&ytl.trim()");
+            Diag.log("trim", "level=" + level);
+        } catch (Throwable ignored) {}
+    }
+
+    private String appVersion() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "?";
+        }
     }
 
     // ===================== pull to refresh =====================
@@ -454,7 +640,27 @@ public class MainActivity extends Activity {
         return HOME;
     }
 
+    /** Shared links carry tracking parameters (si=, feature=, pp=, utm_*): drop them (68). */
+    static String stripTracking(String url) {
+        try {
+            Uri u = Uri.parse(url);
+            if (u.getQuery() == null) return url;
+            Uri.Builder b = u.buildUpon().clearQuery();
+            boolean changed = false;
+            for (String k : u.getQueryParameterNames()) {
+                String lk = k.toLowerCase(java.util.Locale.ROOT);
+                if (lk.equals("si") || lk.equals("feature") || lk.equals("pp") || lk.startsWith("utm_")
+                        || lk.equals("fbclid") || lk.equals("gclid")) { changed = true; continue; }
+                for (String v : u.getQueryParameters(k)) b.appendQueryParameter(k, v);
+            }
+            return changed ? b.build().toString() : url;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
     private static String normalize(String url) {
+        url = stripTracking(url);
         Uri u = Uri.parse(url);
         String unshort = YTProWebViewClient.unshort(u);
         if (unshort != null) return unshort;

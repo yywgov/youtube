@@ -1,5 +1,5 @@
 /*
- * YT Lite injected script (bundled in the APK, never loaded from a CDN).
+ * YiWei (formerly YT Lite) injected script (bundled in the APK, never loaded from a CDN).
  * Based on ideas from YTPro by Prateek Chaubey (MIT) – rewritten lean:
  *  - no setInterval polling, one throttled MutationObserver on the content root only
  *  - injected once per document (document-start script, guarded)
@@ -28,7 +28,8 @@
   window.__ytl = true;
 
   // cache-busting param added by a pull-to-refresh: drop it before YouTube reads the URL
-  if (/[?&]ytlr=/.test(location.search)) {
+  var wasRefresh = /[?&]ytlr=/.test(location.search);
+  if (wasRefresh) {
     try {
       var u0 = new URL(location.href);
       u0.searchParams.delete('ytlr');
@@ -51,7 +52,29 @@
     noEndWall: true,        // no recommendation wall when a video ends (36)
     normalize: false,       // WebAudio compressor, experimental (20)
     sleepBadge: true,       // sleep time left in the player corner (154)
-    subSize: 'default', subBg: 'default'   // caption style (155)
+    subSize: 'default', subBg: 'default',  // caption style (155)
+    // batch 3 (v1.4.0) – lists, look, interaction; defaults keep the old behaviour
+    seenMin: 80,            // "watched" threshold for hiding on home (62)
+    blockChannels: [],      // local channel blocklist (56)
+    blockWords: [],         // title keyword blocklist (57)
+    minDur: 0,              // hide videos shorter than N minutes, home + up next (58)
+    maxAgeDays: 0,          // hide videos older than N days, home + up next (59)
+    hideLive: false,        // hide live / premiere / upcoming, home + up next (60)
+    hideShelves: false,     // hide home shelves (news, mixes ...) (61)
+    subsOnlyVideos: false,  // subscriptions feed: videos only (63)
+    refreshCount: true,     // "N new videos" after a refresh (64)
+    hideSearchExtras: true, // search: no "related searches" / "people also watched" (70)
+    amoled: false,          // pure black dark theme (91)
+    compact: false,         // compact list layout on home (108)
+    cardStyle: false,       // uniform corners, 2-line titles, clearer badges (106/107/111)
+    dimThumbs: false,       // slightly darker thumbnails in dark mode (110)
+    accent: '',             // accent colour for progress bar / own controls (103/104)
+    longPress: true,        // long-press a video card for a quick menu (123)
+    searchFocus: true,      // keyboard opens with search (124)
+    searchChips: true,      // quick filter chips on search results (125)
+    keepScroll: true,       // back to a list returns to where you were (119)
+    powerSave: false,       // battery saver on: cap quality, no animations (147) – set by Java
+    updateDot: false        // a new version is ready: dot on the settings gear (137) – set by Java
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
@@ -81,6 +104,17 @@
   if (cfg.countMode) countMode = true;
   if (cfg.badge) badgeText = String(cfg.badge);
   delete cfg.stopAtEnd; delete cfg.bg; delete cfg.sleeping; delete cfg.countMode; delete cfg.badge;
+  var sleepMode = !!cfg.sleepMode; delete cfg.sleepMode;   // one-tap sleep mode (97)
+  // remote rules (73): extra hide selectors fetched natively from this app's own repository,
+  // checked there (SHA-256 + schema) and here (each selector parsed on its own); never required
+  var remote = { hide: [] };
+  try {
+    if (B && typeof B.getRemoteRules === 'function') {
+      var rr = JSON.parse(B.getRemoteRules() || '{}');
+      if (rr && rr.hide && Array.isArray(rr.hide)) remote.hide = rr.hide.filter(function (x) { return typeof x === 'string' && x.length < 200; }).slice(0, 200);
+      remote.version = rr.version || 0;
+    }
+  } catch (e) {}
 
   /* ---------- 0. the rule table: every selector the script uses lives here ---------- */
   var RULES = {
@@ -131,12 +165,25 @@
         'ytm-compact-link-renderer:has(a[href*="support.google.com"])', 'ytm-compact-link-renderer:has(a[href*="feedback"])',
         'ytm-compact-link-renderer:has(a[href*="reporthistory"])'
       ],
-      own: ['[data-ytl-hide]', '[data-ytl-seen]']
+      // pivot "create / upload" entry (126), in-player channel watermark (163)
+      pivotExtra: ['ytm-pivot-bar-item-renderer:has(a[href*="/upload"])', 'ytm-pivot-bar-item-renderer:has(.pivot-create)'],
+      watermark: ['.html5-video-player .ytp-watermark', '.html5-video-player .annotation-type-custom.iv-branding'],
+      own: ['[data-ytl-hide]', '[data-ytl-seen]', '[data-ytl-filter]']
     },
     // recommendation wall at the end of a video (36): only the grid, never the autoplay countdown
     endWall: ['.html5-video-player .ytp-endscreen-content', '.html5-video-player .ytp-endscreen-previous',
       '.html5-video-player .ytp-endscreen-next'],
     captionSeg: '.ytp-caption-segment',
+    accentFill: ['.ytp-play-progress', '.ytp-swatch-background-color', '.ytm-progress-bar-played', '.YtProgressBarLineProgressBarPlayed',
+      '.ytProgressBarLineProgressBarPlayed', '.ytp-scrubber-button'],
+    amoledBg: ['body', 'ytm-app', 'ytm-mobile-topbar-renderer', '.mobile-topbar-header', 'ytm-pivot-bar-renderer', '#header-bar',
+      'ytm-browse', 'ytm-watch', 'ytm-single-column-watch-next-results-renderer', 'ytm-engagement-panel'],
+    menuBtn: ['ytm-media-item .media-item-menu button', 'ytm-video-with-context-renderer ytm-menu-renderer button',
+      'ytm-compact-video-renderer ytm-menu-renderer button'],
+    searchExtras: ['ytm-horizontal-card-list-renderer', '[data-ytl-searchx]'],
+    subsPosts: ['ytm-backstage-post-thread-renderer', 'ytm-post-renderer', 'ytm-rich-section-renderer:has(ytm-backstage-post-thread-renderer)',
+      'ytm-rich-item-renderer:has(ytm-backstage-post-thread-renderer)', 'ytm-rich-item-renderer:has(ytm-post-renderer)'],
+    homeShelves: ['ytm-rich-section-renderer'],
     captionWin: '.caption-window',
     // ad fallback: black cover over the picture while an ad still plays (4)
     adCover: ['#movie_player.ad-showing video', '#movie_player.ad-interrupting video', '#movie_player.ytl-ad video'],
@@ -169,6 +216,14 @@
       contentRoot: 'ytm-app',
       relatedItem: 'ytm-video-with-context-renderer, ytm-compact-video-renderer',
       byline: '[class*="byline" i], ytm-badge-and-byline-renderer, .subhead',
+      cardTitle: '.media-item-headline, h3, h4, [class*="title" i]',
+      timeBadge: 'ytm-thumbnail-overlay-time-status-renderer, .badge-shape-wiz__text, badge-shape, [class*="time-status" i]',
+      cardMeta: '.media-item-metadata, [class*="metadata" i], ytm-badge-and-byline-renderer',
+      cardMenuBtn: 'ytm-menu-renderer button, .media-item-menu button',
+      searchInput: 'input.searchbox-input, ytm-searchbox input, input[name="search_query"]',
+      searchList: 'ytm-search ytm-section-list-renderer, ytm-section-list-renderer',
+      searchShelf: 'ytm-shelf-renderer, ytm-horizontal-card-list-renderer, ytm-rich-shelf-renderer',
+      shelfTitle: 'h2, h3, .shelf-header, [class*="title" i]',
       maxresImg: 'img[src*="/maxresdefault"]'
     }
   };
@@ -198,14 +253,53 @@
     out.push('html[data-ytl-subsize="s"] ' + cw + '{transform:scale(.85);transform-origin:50% 100%}');
     out.push('html[data-ytl-subbg="half"] ' + cs + '{background:rgba(8,8,8,.45)!important}');
     out.push('html[data-ytl-subbg="none"] ' + cs + '{background:transparent!important;text-shadow:0 0 3px #000,0 0 2px #000,1px 1px 2px #000}');
+    // ---- batch 3 look (each behind its own html attribute, so a setting off means no rule applies) ----
+    // design tokens for our own controls (164)
+    out.push(':root{--ytl-accent:#3ea6ff;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
+    out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick)}');
+    rule(RULES.accentFill.map(function (x) { return 'html[data-ytl-accent] ' + x; }), 'background:var(--ytl-accent)!important;background-color:var(--ytl-accent)!important');
+    // pure black (91)
+    out.push('html[data-ytl-amoled][dark]{--yt-spec-base-background:#000!important;--yt-spec-brand-background-solid:#000!important;' +
+      '--yt-spec-brand-background-primary:#000!important;--yt-spec-general-background-a:#000!important;--yt-spec-general-background-b:#000!important;' +
+      '--yt-spec-raised-background:#121212!important;--yt-spec-menu-background:#121212!important;background:#000!important}');
+    rule(RULES.amoledBg.map(function (x) { return 'html[data-ytl-amoled][dark] ' + x; }), 'background-color:#000!important');
+    // compact list (108): small thumbnail left, text right
+    out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item{display:flex!important;flex-direction:row!important;align-items:flex-start;padding:6px 12px!important;margin:0!important}');
+    out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>.media-item-thumbnail-container,' +
+      'html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>a:first-child{flex:0 0 42%;max-width:42%;border-radius:8px;overflow:hidden}');
+    out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>.details{flex:1 1 auto;min-width:0;padding:0 0 0 10px!important;margin:0!important}');
+    out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item .media-channel{display:none!important}');
+    out.push('html[data-ytl-compact][data-ytl-perf] ytm-rich-item-renderer{contain-intrinsic-size:auto 120px}');
+    // uniform cards (106/107/111)
+    out.push('html[data-ytl-cards] .media-item-thumbnail-container,html[data-ytl-cards] yt-thumbnail-view-model{border-radius:12px;overflow:hidden}');
+    out.push('html[data-ytl-cards] .media-item-headline,html[data-ytl-cards] ytm-media-item h3{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:500}');
+    out.push('html[data-ytl-cards] ' + RULES.sel.watchedBar.split(',').join(',html[data-ytl-cards] ') + '{min-height:4px}');
+    out.push('html[data-ytl-cards] ytm-thumbnail-overlay-time-status-renderer,html[data-ytl-cards] .badge-shape-wiz--thumbnail-default{font-weight:600}');
+    // dim thumbnails in dark mode (110)
+    out.push('html[dark][data-ytl-dimthumb] .media-item-thumbnail-container img,html[dark][data-ytl-dimthumb] yt-thumbnail-view-model img{filter:brightness(.88)}');
+    // bigger hit area for the card "more" button without moving anything (122)
+    rule(RULES.menuBtn, 'position:relative');
+    rule(RULES.menuBtn.map(function (x) { return x + '::after'; }), "content:'';position:absolute;inset:-8px");
+    // search extras (70), subscriptions videos only (63), home shelves (61)
+    rule(RULES.searchExtras.map(function (x) { return 'html[data-ytl-nosearchx][data-ytl-page="search"] ' + x; }), 'display:none!important');
+    rule(RULES.subsPosts.map(function (x) { return 'html[data-ytl-subsvideos][data-ytl-page="feed"] ' + x; }), 'display:none!important');
+    rule(RULES.homeShelves.map(function (x) { return 'html[data-ytl-noshelves][data-ytl-page="home"] ' + x; }), 'display:none!important');
+    // battery saver (147): animations off even when the smoothness CSS is off
+    rule(RULES.perf.noAnim.map(function (x) { return 'html[data-ytl-lowpower] ' + x; }), 'animation:none!important;transition:none!important');
+    // update ready (137)
+    out.push('html[data-ytl-update] #ytl-gear{position:relative}html[data-ytl-update] #ytl-gear::after{content:"";position:absolute;top:9px;right:9px;width:8px;height:8px;border-radius:50%;background:#ff4e45}');
+    // search quick filters (125)
+    out.push('#ytl-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}#ytl-chips::-webkit-scrollbar{display:none}' +
+      '#ytl-chips a{flex:0 0 auto;padding:6px 12px;border-radius:8px;background:rgba(128,128,128,.18);color:inherit;font:500 13px/18px Roboto,Arial,sans-serif;text-decoration:none;white-space:nowrap}' +
+      '#ytl-chips a[aria-current]{background:var(--ytl-accent);color:#fff}');
     out.push('#ytl-badge{position:absolute;top:8px;left:8px;z-index:70;pointer-events:none;background:rgba(0,0,0,.6);color:#fff;' +
       'font:500 12px/16px Roboto,Arial,sans-serif;padding:3px 8px;border-radius:10px;white-space:nowrap}');
-    out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
-    out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
+    out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
+    out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
       'background:rgba(33,33,33,.96);color:#fff;font:14px/20px Roboto,Arial,sans-serif;padding:10px 14px 10px 16px;border-radius:10px;' +
       'box-shadow:0 2px 10px rgba(0,0,0,.5);max-width:90vw;white-space:nowrap}' +
-      '#ytl-sb button{background:none;border:0;color:#3ea6ff;font:500 14px Roboto,Arial,sans-serif;padding:4px 6px;margin:0}');
+      '#ytl-sb button{background:none;border:0;color:var(--ytl-accent);font:500 14px Roboto,Arial,sans-serif;padding:4px 6px;margin:0}');
     return out.join('\n');
   }
   var CSS = sheet();
@@ -439,10 +533,14 @@
     try { return !!(B && typeof B.isMetered === 'function' && B.isMetered()); } catch (e) { return false; }
   }
   /** Preferred foreground quality name for the player, or 'auto'. */
+  var QORDER = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'highres'];
   function prefQuality() {
+    if (sleepMode) return 'tiny';                       // one-tap sleep mode (97)
     var q = cfg.quality || 'auto';
-    if (q === 'wifiMax') return metered() ? 'hd720' : 'highres';
-    return QMAP[q] || 'auto';
+    q = q === 'wifiMax' ? (metered() ? 'hd720' : 'highres') : (QMAP[q] || 'auto');
+    // battery saver (147): at most 480p
+    if (cfg.powerSave && (q === 'auto' || QORDER.indexOf(q) > QORDER.indexOf('large'))) q = 'large';
+    return q;
   }
   function setQ(p, q) {
     if (p.setPlaybackQualityRange) p.setPlaybackQualityRange(q, q);
@@ -607,7 +705,18 @@
     state: function () { return JSON.stringify(toolState()); },
     sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); },
     countMode: function (b) { countMode = !!b; },
-    badge: function (t) { badgeText = t ? String(t) : ''; updateBadge(); }
+    badge: function (t) { badgeText = t ? String(t) : ''; updateBadge(); },
+    // batch 3
+    watchLater: function (id) { watchLater(id ? String(id) : ''); },
+    hideVideo: function (id) { hideVideo(String(id || '')); },
+    openCardMenu: function () { openCardMenu(); },
+    unhideAll: function () { hiddenList = []; try { localStorage.removeItem(HIDDEN_KEY); } catch (e) {} filterKey = ''; if (started) filterCards(); },
+    sleepMode: function (b) {
+      sleepMode = !!b; qualityFor = ''; autonavFor = '';
+      if (!sleepMode) { var p = player(); if (p && isWatch() && !bg) { try { setQ(p, prefQuality()); } catch (e) {} } }
+      applyQuality();
+      if (started && isWatch()) forceAutonav();
+    }
   };
 
   /* ---------- 7. ad removal ----------
@@ -967,6 +1076,19 @@
     setAttr('data-ytl-noendwall', cfg.noEndWall ? '1' : '');
     setAttr('data-ytl-subsize', SUB_SIZES[cfg.subSize] ? cfg.subSize : '');
     setAttr('data-ytl-subbg', SUB_BGS[cfg.subBg] ? cfg.subBg : '');
+    setAttr('data-ytl-page', pageType());
+    setAttr('data-ytl-amoled', cfg.amoled ? '1' : '');
+    setAttr('data-ytl-compact', cfg.compact ? '1' : '');
+    setAttr('data-ytl-cards', cfg.cardStyle ? '1' : '');
+    setAttr('data-ytl-dimthumb', cfg.dimThumbs ? '1' : '');
+    setAttr('data-ytl-nosearchx', cfg.hideSearchExtras ? '1' : '');
+    setAttr('data-ytl-subsvideos', cfg.subsOnlyVideos ? '1' : '');
+    setAttr('data-ytl-noshelves', cfg.hideShelves ? '1' : '');
+    setAttr('data-ytl-lowpower', cfg.powerSave ? '1' : '');
+    setAttr('data-ytl-update', cfg.updateDot ? '1' : '');
+    var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';
+    setAttr('data-ytl-accent', acc ? '1' : '');
+    if (acc && h.style.getPropertyValue('--ytl-accent-pick') !== acc) h.style.setProperty('--ytl-accent-pick', acc);
   }
   function applyCfg() {
     if (!cfg.sponsorBlock) { segments = []; hideSbPrompt(); }
@@ -984,7 +1106,8 @@
   /* ---------- 8b. home feed: hide videos already watched (>= 80 %) ----------
    * Reads only the inline width of YouTube's red progress bar (no layout), runs inside
    * the throttled DOM pass, home page only. Partly watched videos stay so they can be resumed. */
-  var SEEN_MIN = 80;
+  var SEEN_MIN = 80;   // default; the setting (62) can make it 50 or 95
+  function seenMin() { var n = Number(cfg.seenMin); return n === 50 || n === 95 ? n : SEEN_MIN; }
   var seenCount = 0;
   function watchedPct(el) {
     var w = (el.style && el.style.width) || '';
@@ -996,7 +1119,7 @@
     if (cfg.hideWatched && pageType() === 'home') {
       var bars = document.querySelectorAll(RULES.sel.watchedBar);
       for (var i = 0; i < bars.length; i++) {
-        if (watchedPct(bars[i]) < SEEN_MIN) continue;
+        if (watchedPct(bars[i]) < seenMin()) continue;
         var item = bars[i].closest(RULES.sel.feedItem);
         if (item && hits.indexOf(item) < 0) hits.push(item);
       }
@@ -1224,13 +1347,13 @@
    * while a sleep timer runs) YouTube's autoplay is switched off and the next video is picked here. */
   function ruleMode() {
     if (cfg.nextSource === 'playlist') return 'playlist';
-    if (cfg.nextSource === 'channel' || (cfg.sleepCalm && sleeping)) return 'channel';
+    if (cfg.nextSource === 'channel' || ((cfg.sleepCalm || sleepMode) && sleeping)) return 'channel';
     return 'rec';
   }
   function wantAutonav() { return ruleMode() === 'rec' && !loopOne && !(abA >= 0 && abB > abA); }
   function itemWatched(item) {
     var bars = item.querySelectorAll(RULES.sel.watchedBar);
-    for (var i = 0; i < bars.length; i++) if (watchedPct(bars[i]) >= SEEN_MIN) return true;
+    for (var i = 0; i < bars.length; i++) if (watchedPct(bars[i]) >= seenMin()) return true;
     return false;
   }
   /** First up-next video by the same channel (byline starts with the channel name), not watched. */
@@ -1493,6 +1616,8 @@
 
   document.addEventListener('touchstart', function () { lastInput = Date.now(); }, { capture: true, passive: true });
   on('click', 'click', function (e) {
+    // the click that ends a long press opens the quick menu, not the video (123)
+    if (Date.now() - lp.firedAt < 900) { e.preventDefault(); e.stopImmediatePropagation(); return; }
     lastInput = Date.now();
     var t = e.target;
     if (!t || !t.closest) return;
@@ -1532,13 +1657,14 @@
     ['pushState', 'replaceState'].forEach(function (k) {
       var orig = history[k];
       history[k] = function () {
+        if (k === 'pushState') { try { rememberScroll(); } catch (e) {} }
         var r = orig.apply(this, arguments);
         try { checkRoute(); } catch (e) {}
         if (!bg) queuePass();
         return r;
       };
     });
-    window.addEventListener('popstate', guard('route', checkRoute));
+    window.addEventListener('popstate', guard('route', function () { checkRoute(); restoreScroll(); }));
   } catch (e) { report('history', e); }
 
   /* ---------- 13. scroll position for pull-to-refresh ---------- */
@@ -1551,6 +1677,302 @@
   window.addEventListener('scroll', function () {
     if (!scrollQueued) { scrollQueued = true; requestAnimationFrame(reportScroll); }
   }, { passive: true });
+
+
+  /* ---------- 16. lists: local filters (56-60), refresh count (64), search (70/124/125) ---------- */
+  var DUR_RE = /^(?:(\d+):)?(\d{1,2}):(\d{2})$/;
+  function parseDur(t) {
+    var m = DUR_RE.exec(String(t || '').trim());
+    return m ? (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) : -1;
+  }
+  var AGO = [[/(\d+)\s*(?:秒|second)/i, 1 / 86400], [/(\d+)\s*(?:分钟|分鐘|minute)/i, 1 / 1440], [/(\d+)\s*(?:小时|小時|hour)/i, 1 / 24],
+    [/(\d+)\s*(?:天|day)/i, 1], [/(\d+)\s*(?:周|週|星期|week)/i, 7], [/(\d+)\s*(?:个月|個月|month)/i, 30], [/(\d+)\s*(?:年|year)/i, 365]];
+  /** "3 天前" / "2 years ago" -> days, -1 when there is no age in the text. */
+  function ageDays(t) {
+    t = String(t || '');
+    if (!/前|ago/i.test(t)) return -1;
+    for (var i = 0; i < AGO.length; i++) { var m = AGO[i][0].exec(t); if (m) return (+m[1]) * AGO[i][1]; }
+    return -1;
+  }
+  var LIVE_RE = /^(?:LIVE|直播|直播中|正在直播|PREMIERE|PREMIERES?|首映|首播|UPCOMING|即将|即將|SCHEDULED)/i;
+  function linkId(a) {
+    var m = a && /[?&]v=([\w-]{6,})/.exec(a.getAttribute('href') || '');
+    return m ? m[1] : '';
+  }
+  function cardInfo(it) {
+    var a = it.querySelector('a[href*="/watch?v="]');
+    var tEl = it.querySelector(RULES.sel.cardTitle);
+    var by = it.querySelector(RULES.sel.byline);
+    var bt = by ? textOf(by) : '';
+    var info = { id: linkId(a), title: tEl ? textOf(tEl) : ((a && a.getAttribute('aria-label')) || ''), channel: (bt.split(/\s*[·•]\s*/)[0] || '').trim(), dur: -1, live: false, age: -1 };
+    var badges = it.querySelectorAll(RULES.sel.timeBadge);
+    for (var i = 0; i < badges.length; i++) {
+      var tx = textOf(badges[i]), d = parseDur(tx), ds = badges[i].getAttribute('data-style') || '';
+      if (d >= 0) info.dur = d;
+      else if (LIVE_RE.test(tx) || ds === 'LIVE' || ds === 'UPCOMING') info.live = true;
+    }
+    if (it.querySelector('[data-style="LIVE"], [data-style="UPCOMING"], .badge-shape-wiz--thumbnail-live')) info.live = true;
+    var metas = it.querySelectorAll(RULES.sel.cardMeta);
+    info.age = ageDays(bt);
+    for (var j = 0; j < metas.length && info.age < 0; j++) info.age = ageDays(textOf(metas[j]));
+    return info;
+  }
+  var HIDDEN_KEY = 'ytl_hidden';
+  function hiddenIds() { try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]') || []; } catch (e) { return []; } }
+  var hiddenList = hiddenIds();
+  function lc(x) { return String(x || '').toLowerCase().trim(); }
+  function filterReason(info, deep) {
+    if (info.id && hiddenList.indexOf(info.id) >= 0) return 'hidden';
+    var ch = lc(info.channel), bl = cfg.blockChannels || [];
+    for (var i = 0; i < bl.length; i++) if (ch && lc(bl[i]) === ch) return 'channel';
+    var ti = lc(info.title), bw = cfg.blockWords || [];
+    for (var j = 0; j < bw.length; j++) { var w = lc(bw[j]); if (w && ti.indexOf(w) >= 0) return 'word'; }
+    if (!deep) return '';
+    if (cfg.hideLive && info.live) return 'live';
+    if (cfg.minDur > 0 && info.dur >= 0 && info.dur < cfg.minDur * 60) return 'short';
+    if (cfg.maxAgeDays > 0 && info.age > cfg.maxAgeDays) return 'old';
+    return '';
+  }
+  function anyFilter() {
+    return !!(hiddenList.length || (cfg.blockChannels || []).length || (cfg.blockWords || []).length || cfg.minDur > 0 || cfg.maxAgeDays > 0 || cfg.hideLive);
+  }
+  var filterKey = '', filtered = 0;
+  var filterCards = guard('filter', function () {
+    var pt = pageType();
+    var key = JSON.stringify([cfg.blockChannels, cfg.blockWords, cfg.minDur, cfg.maxAgeDays, cfg.hideLive, hiddenList.length, pt]);
+    var on = anyFilter() && pt !== 'channel' && pt !== 'other';
+    if (key !== filterKey || !on) {
+      filterKey = key;
+      if (filtered) {
+        var old = document.querySelectorAll('[data-ytl-filter]');
+        for (var o = 0; o < old.length; o++) old[o].removeAttribute('data-ytl-filter');
+        filtered = 0;
+      }
+      if (!on) return;
+    }
+    var deep = pt === 'home' || pt === 'watch';
+    var items = document.querySelectorAll(RULES.sel.feedItem);
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var a = it.querySelector('a[href*="/watch?v="]');
+      var mark = key + '|' + (a ? a.getAttribute('href') : '');
+      if (it.__ytlF === mark) continue;   // already judged (recycled nodes get a new href)
+      it.__ytlF = mark;
+      var why = filterReason(cardInfo(it), deep);
+      if (why) { if (it.getAttribute('data-ytl-filter') !== why) { it.setAttribute('data-ytl-filter', why); filtered++; } }
+      else if (it.hasAttribute('data-ytl-filter')) it.removeAttribute('data-ytl-filter');
+    }
+  });
+  function hideVideo(id) {
+    if (!/^[\w-]{6,20}$/.test(id || '')) return;
+    hiddenList = hiddenIds();
+    if (hiddenList.indexOf(id) < 0) hiddenList.unshift(id);
+    if (hiddenList.length > 300) hiddenList.length = 300;
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList)); } catch (e) {}
+    filterKey = '';
+    filterCards();
+  }
+
+  // "N new videos" after a refresh (64): compare the first screen with the last one we saw
+  var countDone = false;
+  var countNew = guard('refresh-count', function () {
+    if (countDone || pageType() !== 'home') return;
+    var links = document.querySelectorAll('ytm-rich-item-renderer a[href*="/watch?v="], ytm-video-with-context-renderer a[href*="/watch?v="]');
+    var ids = [];
+    for (var i = 0; i < links.length && ids.length < 40; i++) { var id = linkId(links[i]); if (id && ids.indexOf(id) < 0) ids.push(id); }
+    if (ids.length < 4) return;   // feed not there yet
+    countDone = true;
+    var prev = [];
+    try { prev = JSON.parse(localStorage.getItem('ytl_home_ids') || '[]') || []; } catch (e) {}
+    try { localStorage.setItem('ytl_home_ids', JSON.stringify(ids)); } catch (e) {}
+    if (!wasRefresh || !cfg.refreshCount || !prev.length) return;
+    var n = ids.filter(function (x) { return prev.indexOf(x) < 0; }).length;
+    call('toast', n ? '更新了 ' + n + ' 个新视频' : '暂时没有新视频，稍后再刷新试试');
+  });
+
+  // search: shelves like "People also watched" (70)
+  var SEARCHX_RE = /people also|also watched|also search|for you|previously watched|related to your search|人们还|大家还|其他人还|为你推荐|為你推薦|相关搜索|相關搜尋|你看过|看過的影片/i;
+  var markSearchExtras = guard('search-extras', function () {
+    if (pageType() !== 'search') return;
+    var l = document.querySelectorAll(RULES.sel.searchShelf);
+    for (var i = 0; i < l.length; i++) {
+      var h = l[i].querySelector(RULES.sel.shelfTitle);
+      var hit = h && SEARCHX_RE.test(textOf(h).slice(0, 80));
+      if (hit) { if (!l[i].hasAttribute('data-ytl-searchx')) l[i].setAttribute('data-ytl-searchx', ''); }
+      else if (l[i].hasAttribute('data-ytl-searchx')) l[i].removeAttribute('data-ytl-searchx');
+    }
+  });
+  // keyboard comes up with the search box (124), only for an empty, visible box
+  var searchFocused = null;
+  var searchFocus = guard('search-focus', function () {
+    var inp = document.querySelector(RULES.sel.searchInput);
+    if (!inp) { searchFocused = null; return; }
+    if (!cfg.searchFocus || inp === searchFocused) return;
+    if (inp.value || !(inp.offsetParent || (inp.getClientRects && inp.getClientRects().length))) return;
+    searchFocused = inp;
+    if (document.activeElement !== inp) { try { inp.focus(); } catch (e) {} }
+    call('showKeyboard');
+  });
+  // quick filters on search results (125): plain links to YouTube's own filter URLs
+  var CHIPS = [['全部', ''], ['最新', 'CAI%3D'], ['只看视频', 'EgIQAQ%3D%3D'], ['本周', 'EgIIAw%3D%3D'], ['4–20 分钟', 'EgIYAw%3D%3D'], ['20 分钟以上', 'EgIYAg%3D%3D']];
+  var ensureChips = guard('chips', function () {
+    var el = document.getElementById('ytl-chips');
+    var params = new URLSearchParams(location.search);
+    var q = params.get('search_query');
+    if (!cfg.searchChips || pageType() !== 'search' || !q) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
+    var host = document.querySelector(RULES.sel.searchList);
+    if (!host || !host.parentNode) return;
+    var sp = params.get('sp') || '';
+    var key = q + '|' + sp;
+    if (el && el.nextSibling === host && el.getAttribute('data-k') === key) return;
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    el = document.createElement('div');
+    el.id = 'ytl-chips';
+    el.setAttribute('data-k', key);
+    el.setAttribute('role', 'toolbar');
+    el.setAttribute('aria-label', '搜索筛选');
+    for (var i = 0; i < CHIPS.length; i++) {
+      var a = document.createElement('a');
+      a.href = '/results?search_query=' + encodeURIComponent(q) + (CHIPS[i][1] ? '&sp=' + CHIPS[i][1] : '');
+      a.textContent = CHIPS[i][0];
+      if (decodeURIComponent(sp) === decodeURIComponent(CHIPS[i][1])) a.setAttribute('aria-current', 'true');
+      el.appendChild(a);
+    }
+    host.parentNode.insertBefore(el, host);
+  });
+
+  /* ---------- 17. back to a list keeps the scroll position (119) ---------- */
+  var scrollMem = {}, restoreTimer = 0;
+  function listPage(pt) { return pt === 'home' || pt === 'feed' || pt === 'search' || pt === 'channel'; }
+  function urlKey() { return location.pathname + location.search; }
+  function rememberScroll() {
+    if (!cfg.keepScroll || !listPage(pageType())) return;
+    var y = window.scrollY || 0;
+    if (y > 200) scrollMem[urlKey()] = y; else delete scrollMem[urlKey()];
+  }
+  var restoreScroll = guard('scroll-restore', function () {
+    clearTimeout(restoreTimer);
+    var y = scrollMem[urlKey()];
+    if (!cfg.keepScroll || !y || !listPage(pageType())) return;
+    var start = Date.now(), t0 = lastInput;
+    (function tryIt() {
+      if (lastInput !== t0) return;              // the user is touching the page: leave it alone
+      if ((window.scrollY || 0) > 100) return;   // YouTube restored it by itself
+      var h = document.documentElement.scrollHeight || 0;
+      if (h >= y + (window.innerHeight || 0) * 0.5) { window.scrollTo(0, y); return; }
+      if (Date.now() - start < 3000) restoreTimer = setTimeout(guard('scroll-try', tryIt), 120);
+    })();
+  });
+
+  /* ---------- 18. long-press a video card: quick menu (123) ---------- */
+  var lp = { timer: 0, x: 0, y: 0, item: null, firedAt: 0 };
+  var menuItem = null;
+  function lpCancel() { clearTimeout(lp.timer); lp.item = null; }
+  document.addEventListener('touchstart', function (e) {
+    if (!cfg.longPress || !e.touches || e.touches.length !== 1) { lpCancel(); return; }
+    var t = e.target;
+    var it = t && t.closest && t.closest(RULES.sel.feedItem);
+    if (!it || t.closest('button, input, textarea, ytm-menu-renderer')) { lpCancel(); return; }
+    lp.item = it; lp.x = e.touches[0].clientX; lp.y = e.touches[0].clientY;
+    clearTimeout(lp.timer);
+    lp.timer = setTimeout(guard('longpress', fireLongPress), 520);
+  }, { capture: true, passive: true });
+  document.addEventListener('touchmove', function (e) {
+    if (!lp.item || !e.touches || !e.touches.length) return;
+    if (Math.abs(e.touches[0].clientX - lp.x) > 10 || Math.abs(e.touches[0].clientY - lp.y) > 10) lpCancel();
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', lpCancel, { capture: true, passive: true });
+  document.addEventListener('touchcancel', lpCancel, { capture: true, passive: true });
+  function fireLongPress() {
+    var it = lp.item;
+    lp.item = null;
+    if (!it || !it.isConnected) return;
+    var info = cardInfo(it);
+    if (!info.id) return;
+    lp.firedAt = Date.now();
+    menuItem = it;
+    call('cardMenu', JSON.stringify({ id: info.id, title: info.title.slice(0, 120), channel: info.channel.slice(0, 80) }));
+  }
+  document.addEventListener('contextmenu', function (e) { if (Date.now() - lp.firedAt < 1500) e.preventDefault(); }, true);
+  function openCardMenu() {
+    var b = menuItem && menuItem.isConnected && menuItem.querySelector(RULES.sel.cardMenuBtn);
+    if (b) b.click();
+  }
+
+  /* ---------- 19. watch later without the hidden action row (100/123) ----------
+   * Same request YouTube's own "Save to Watch later" sends; signed-in only. */
+  function cookieVal(name) {
+    var m = new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()\[\]\\\/+^]/g, '\\$&') + '=([^;]*)').exec(document.cookie || '');
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function sha1Hex(str) {
+    return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    });
+  }
+  function watchLater(id) {
+    id = id || videoId();
+    if (!/^[\w-]{6,20}$/.test(id || '')) return Promise.resolve(false);
+    var yc = window.ytcfg && typeof ytcfg.get === 'function' ? ytcfg : null;
+    var sap = cookieVal('SAPISID') || cookieVal('__Secure-3PAPISID');
+    if (!yc || !sap || !window.crypto || !crypto.subtle || !yc.get('INNERTUBE_CONTEXT')) { call('toast', '登录 YouTube 后才能加入稍后观看'); return Promise.resolve(false); }
+    var ts = Math.floor(Date.now() / 1000), origin = location.origin;
+    return sha1Hex(ts + ' ' + sap + ' ' + origin).then(function (h) {
+      return fetch('/youtubei/v1/browse/edit_playlist?prettyPrint=false', {
+        method: 'POST', credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json', 'Authorization': 'SAPISIDHASH ' + ts + '_' + h, 'X-Origin': origin,
+          'X-Goog-AuthUser': String(yc.get('SESSION_INDEX') || 0),
+          'X-Youtube-Client-Name': String(yc.get('INNERTUBE_CONTEXT_CLIENT_NAME') || 2),
+          'X-Youtube-Client-Version': String(yc.get('INNERTUBE_CLIENT_VERSION') || '')
+        },
+        body: JSON.stringify({ context: yc.get('INNERTUBE_CONTEXT'), playlistId: 'WL', actions: [{ action: 'ACTION_ADD_VIDEO', addedVideoId: id }] })
+      });
+    }).then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+      .then(function (j) {
+        var ok = !!(j && (j.status === 'STATUS_SUCCEEDED' || j.playlistEditResults));
+        call('toast', ok ? '已加入稍后观看' : '加入稍后观看失败');
+        return ok;
+      }, function (e) { log('watch-later', String(e && e.message || e)); call('toast', '加入稍后观看失败'); return false; });
+  }
+
+  /* ---------- 20. page colour for the system bars (92/145), remote CSS (73) ---------- */
+  var lastTheme = '', lastThemeCheck = 0;
+  function rgbDark(c) {
+    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c || '');
+    if (!m || (m[4] !== undefined && +m[4] < 0.5)) return null;
+    return (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) < 128;
+  }
+  var reportTheme = guard('theme', function (force) {
+    var now = Date.now();
+    if (!force && now - lastThemeCheck < 1500) return;
+    lastThemeCheck = now;
+    var dark = null;
+    if (document.body) dark = rgbDark(getComputedStyle(document.body).backgroundColor);
+    if (dark === null && document.documentElement) dark = rgbDark(getComputedStyle(document.documentElement).backgroundColor);
+    if (dark === null) return;   // unknown: keep the app's dark default
+    var t = dark ? (cfg.amoled ? '#000000' : '#0f0f0f') : '#ffffff';
+    if (t !== lastTheme) { lastTheme = t; call('pageTheme', t); }
+  });
+  var BROAD_RE = /^(?:\*|html|body|head|video|div|span|a|img|button|ytm-app|#movie_player|\.html5-video-player|ytm-watch|ytm-browse)$/i;
+  function remoteSelectors() {
+    var ok = [];
+    for (var i = 0; i < remote.hide.length; i++) {
+      var sel = remote.hide[i].trim();
+      if (!sel || /[{}<>;@\\]/.test(sel) || BROAD_RE.test(sel) || !/[-.\[#]/.test(sel)) continue;
+      try { document.querySelector(sel); ok.push(sel); } catch (e) {}
+    }
+    return ok;
+  }
+  var addRemoteCss = guard('remote-css', function () {
+    if (!remote.hide.length || document.getElementById('ytl-css-remote')) return;
+    var ok = remoteSelectors();
+    if (!ok.length) return;
+    var st = document.createElement('style');
+    st.id = 'ytl-css-remote';
+    st.textContent = ok.map(function (x) { return x + '{display:none!important}'; }).join('\n');
+    (document.head || document.documentElement).appendChild(st);
+  });
 
   /* ---------- 14. one throttled observer for the few DOM tasks left ----------
    * Watches the content root (ytm-app) and the top level of <body> for popups only (42).
@@ -1577,7 +1999,7 @@
     if (!logo || !logo.parentNode) return;
     var b = document.createElement('button');
     b.id = 'ytl-gear';
-    b.setAttribute('aria-label', 'YT Lite 设置');
+    b.setAttribute('aria-label', 'YiWei 设置');
     var NS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
@@ -1633,6 +2055,13 @@
       try { checkPlayerError(); } catch (e) { report('player-error', e); }
     }
     if (cfg.perfCss) { try { trimThumbs(); } catch (e) { report('thumbs', e); } }
+    addRemoteCss();
+    filterCards();
+    if (pt === 'home') countNew();
+    if (pt === 'search') { markSearchExtras(); ensureChips(); }
+    else if (document.getElementById('ytl-chips')) ensureChips();
+    searchFocus();
+    reportTheme(false);
     try { checkObserverRoot(); } catch (e) { report('observer-root', e); }
   }
   var passQueued = false, menuQueued = false, dirty = false;
@@ -1741,7 +2170,9 @@
     segments: function () { return segments; },
     prefQuality: prefQuality, ruleMode: ruleMode, wantAutonav: wantAutonav, sameChannelLink: sameChannelLink,
     origAudio: function () { return origAudio; }, posStore: posStore, toolState: toolState,
-    stopAtEnd: function () { return stopAtEnd; }
+    stopAtEnd: function () { return stopAtEnd; },
+    parseDur: parseDur, ageDays: ageDays, cardInfo: cardInfo, filterCards: filterCards, remoteSelectors: remoteSelectors,
+    scrollMem: function () { return scrollMem; }, restoreScroll: restoreScroll, watchLater: watchLater, reportTheme: reportTheme
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });

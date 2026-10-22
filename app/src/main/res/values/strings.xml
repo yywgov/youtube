@@ -1,3 +1,9 @@
 <resources>
-	<string name="app_name" translatable="false">YT Lite</string>
+	<string name="app_name" translatable="false">YiWei</string>
+	<string name="sc_sleep_short">睡眠模式</string>
+	<string name="sc_sleep_long">一键睡眠模式</string>
+	<string name="sc_subs_short">订阅</string>
+	<string name="sc_subs_long">打开订阅</string>
+	<string name="sc_later_short">稍后观看</string>
+	<string name="sc_later_long">打开稍后观看</string>
 </resources>

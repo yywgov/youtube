@@ -39,6 +39,7 @@ public final class AdBlocker {
             "/get_midroll_info",
             "/pcs/activeview",
             "/csi_204",
+            "/error_204",          // client error beacons (69)
     };
 
     private AdBlocker() {}

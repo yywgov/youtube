@@ -23,7 +23,9 @@ async function load(opts) {
     openSettings: rec('openSettings'), mediaState: rec('mediaState'), mediaMeta: rec('mediaMeta'),
     fetchSegments: rec('fetchSegments'), setPortrait: rec('setPortrait'), hardReload: rec('hardReload'),
     sleepFired: rec('sleepFired'), saveRate: rec('saveRate'), savePos: rec('savePos'), videoEnded: rec('videoEnded'),
-    openTools: rec('openTools'), isMetered: () => !!opts.metered
+    openTools: rec('openTools'), isMetered: () => !!opts.metered,
+    cardMenu: rec('cardMenu'), showKeyboard: rec('showKeyboard'), pageTheme: rec('pageTheme'),
+    getRemoteRules: () => (opts.remote ? JSON.stringify(opts.remote) : '')
   };
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };

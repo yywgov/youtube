@@ -53,15 +53,17 @@ jobs:
             --key signer/apkeasytool.pk8 \
             --cert signer/apkeasytool.pem \
             --v4-signing-enabled false \
-            --out "out/YTLite-${VERSION}.apk" \
+            --out "out/YiWei-${VERSION}.apk" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          java -jar signer/apksigner.jar verify "out/YTLite-${VERSION}.apk"
+          java -jar signer/apksigner.jar verify "out/YiWei-${VERSION}.apk"
+          # checksum asset: the in-app updater verifies the download against it (83)
+          (cd out && sha256sum "YiWei-${VERSION}.apk" | cut -d' ' -f1 > "YiWei-${VERSION}.apk.sha256")
           ls -la out
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YTLite-apk
+          name: YiWei-apk
           path: out/*.apk
           if-no-files-found: error
 
@@ -76,6 +78,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*.apk
+          files: |
+            out/*.apk
+            out/*.apk.sha256
           body_path: release-notes.md
           generate_release_notes: true

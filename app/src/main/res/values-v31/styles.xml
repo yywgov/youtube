@@ -1,0 +1,15 @@
+<resources>
+	<!-- Android 12+ system splash (114): dark background like the app, launcher icon in the middle,
+	     then straight into the (dark) page without a white flash. -->
+	<style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+		<item name="android:colorPrimary">@color/background</item>
+		<item name="android:colorPrimaryDark">@color/background</item>
+		<item name="android:colorAccent">@color/accent</item>
+		<item name="android:statusBarColor">@color/background</item>
+		<item name="android:navigationBarColor">@color/background</item>
+		<item name="android:windowBackground">@color/background</item>
+		<item name="android:windowLightStatusBar">false</item>
+		<item name="android:windowSplashScreenBackground">@color/background</item>
+		<item name="android:windowSplashScreenAnimatedIcon">@mipmap/app_icon</item>
+	</style>
+</resources>

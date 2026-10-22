@@ -132,7 +132,7 @@ public final class Diag {
 
     /** Header for an exported log: app + device, so a report is self-contained. */
     public static String header(String version) {
-        return "YT Lite " + version + " · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ") · "
+        return "YiWei " + version + " · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ") · "
                 + Build.MANUFACTURER + " " + Build.MODEL + "\n";
     }
 

@@ -55,6 +55,7 @@ public class PlaybackService extends Service {
     public static final String ACTION_REW = "ytl.REW";
     public static final String ACTION_FWD = "ytl.FWD";
     public static final String ACTION_EXTEND = "ytl.EXTEND";
+    public static final String ACTION_WL = "ytl.WATCH_LATER";
     private static final long SLEEP_DONE_STOP_MS = 2 * 60_000L;
     private static final long MULTI_CLICK_MS = 450L;
 
@@ -112,6 +113,7 @@ public class PlaybackService extends Service {
             sleepDone = false;
             volumeHint(c);
         }
+        trackWatch(c, st == PlaybackState.STATE_PLAYING);
         state = st;
         positionMs = pos;
         rate = r > 0 ? r : 1f;
@@ -123,6 +125,52 @@ public class PlaybackService extends Service {
     public static void refresh() {
         if (instance != null) instance.update();
     }
+
+    // ---- local watch time (159): seconds per day, last 14 days, only ever on this phone ----
+    private static long playingSince = 0;
+
+    private static void trackWatch(Context c, boolean playing) {
+        long now = SystemClock.elapsedRealtime();
+        if (playing) {
+            if (playingSince == 0) playingSince = now;
+            return;
+        }
+        if (playingSince == 0) return;
+        long sec = (now - playingSince) / 1000;
+        playingSince = 0;
+        if (sec <= 0 || sec > 12 * 3600) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(Prefs.str(c, Prefs.WATCH_STATS, "{}"));
+            String day = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(new java.util.Date());
+            o.put(day, o.optLong(day, 0) + sec);
+            java.util.List<String> keys = new java.util.ArrayList<>();
+            java.util.Iterator<String> it = o.keys();
+            while (it.hasNext()) keys.add(it.next());
+            java.util.Collections.sort(keys);
+            for (int i = 0; i < keys.size() - 14; i++) o.remove(keys.get(i));
+            Prefs.put(c, Prefs.WATCH_STATS, o.toString());
+        } catch (Exception ignored) {}
+    }
+
+    private static long statsSum(Context c, int days) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(Prefs.str(c, Prefs.WATCH_STATS, "{}"));
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US);
+            long sum = 0;
+            for (int i = 0; i < days; i++) {
+                sum += o.optLong(f.format(cal.getTime()), 0);
+                cal.add(java.util.Calendar.DAY_OF_MONTH, -1);
+            }
+            if (playingSince > 0) sum += (SystemClock.elapsedRealtime() - playingSince) / 1000;
+            return sum;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public static long weekSeconds(Context c) { return statsSum(c, 7); }
+    public static long todaySeconds(Context c) { return statsSum(c, 1); }
 
     /** Sleep timer ended (paused): release everything that keeps the phone awake (17). */
     public static boolean isPlaying() {
@@ -164,6 +212,7 @@ public class PlaybackService extends Service {
             case ACTION_REW: MainActivity.js("ytl.seekBy(-10)"); break;
             case ACTION_FWD: MainActivity.js("ytl.seekBy(30)"); break;
             case ACTION_EXTEND: SleepTimer.extend(c); break;
+            case ACTION_WL: MainActivity.js("ytl.watchLater()"); break;
             default: break;
         }
     }
@@ -293,7 +342,7 @@ public class PlaybackService extends Service {
     }
 
     private void initSession() {
-        session = new MediaSession(this, "YTLite");
+        session = new MediaSession(this, "YiWei");
         session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
         session.setCallback(new MediaSession.Callback() {
             @Override public void onPlay() { MainActivity.js("ytl.play()"); }
@@ -488,7 +537,7 @@ public class PlaybackService extends Service {
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         String sleep = SleepTimer.status();
 
-        b.setSmallIcon(R.drawable.notification)
+        b.setSmallIcon(R.drawable.ic_stat_yiwei)
                 .setContentTitle(title.isEmpty() ? getString(R.string.app_name) : title)
                 .setContentText(artist)
                 .setContentIntent(PendingIntent.getActivity(this, 11, open, piFlags()))
@@ -512,6 +561,9 @@ public class PlaybackService extends Service {
             // half asleep: one more quarter hour without turning the screen on (14)
             b.addAction(new Notification.Action.Builder(R.drawable.ic_add_time_white,
                     "+" + SleepTimer.EXTEND_MIN + " 分钟", action(ACTION_EXTEND, 8)).build());
+        } else if (Prefs.on(this, Prefs.NOTIF_WL)) {
+            // heard something good: save it for later (100); MediaStyle allows five actions
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_watch_later_white, "稍后观看", action(ACTION_WL, 9)).build());
         }
         b.setStyle(new Notification.MediaStyle()
                         .setMediaSession(session.getSessionToken())

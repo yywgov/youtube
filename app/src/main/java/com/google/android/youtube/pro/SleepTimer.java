@@ -86,6 +86,7 @@ public final class SleepTimer {
         // one-tap restart next time (15)
         if (c != null && Prefs.sleepRemember(c)) Prefs.put(c, Prefs.SLEEP_DEFAULT, minutes);
         toast(c, "睡眠定时：" + optionLabel(minutes));
+        MainActivity.hapticNow();
         pushState();
     }
 
@@ -152,6 +153,7 @@ public final class SleepTimer {
     /** Notification, page badge and "sleeping" flag follow the timer. */
     private static void pushState() {
         PlaybackService.refresh();
+        MainActivity.onSleepState(mode != OFF);
         MainActivity.js("ytl.sleepState&&ytl.sleepState(" + (mode != OFF) + ");ytl.badge&&ytl.badge("
                 + org.json.JSONObject.quote(badge()) + ")");
     }

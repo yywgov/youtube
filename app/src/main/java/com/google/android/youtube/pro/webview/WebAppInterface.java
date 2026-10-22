@@ -46,6 +46,7 @@ public class WebAppInterface {
             o.put("countMode", SleepTimer.countRunning());
             o.put("sleeping", SleepTimer.active());
             o.put("badge", SleepTimer.badge());
+            o.put("sleepMode", MainActivity.sleepModeOn() && SleepTimer.active());
             o.put("bg", !MainActivity.isVisible());
             return o.toString();
         } catch (Exception e) {
@@ -142,6 +143,31 @@ public class WebAppInterface {
         main.post(activity::openTools);
     }
 
+    /** Long-press on a video card (123): native quick menu. */
+    @JavascriptInterface
+    public void cardMenu(final String json) {
+        if (json == null || json.length() > 2000) return;
+        main.post(() -> activity.cardMenu(json));
+    }
+
+    /** Search box opened (124). */
+    @JavascriptInterface
+    public void showKeyboard() {
+        main.post(activity::showKeyboard);
+    }
+
+    /** Page background colour for the system bars (92/145). */
+    @JavascriptInterface
+    public void pageTheme(final String color) {
+        main.post(() -> activity.applyTheme(color));
+    }
+
+    /** Remote rules (73): the cached, already verified rules.json, or "" (built-in rules only). */
+    @JavascriptInterface
+    public String getRemoteRules() {
+        return com.google.android.youtube.pro.RemoteRules.cached(activity);
+    }
+
     @JavascriptInterface
     public void toast(final String text) {
         main.post(() -> Toast.makeText(activity.getApplicationContext(), text, Toast.LENGTH_SHORT).show());
@@ -164,7 +190,7 @@ public class WebAppInterface {
                 c = (HttpURLConnection) u.openConnection();
                 c.setConnectTimeout(6000);
                 c.setReadTimeout(6000);
-                c.setRequestProperty("User-Agent", "YTLite");
+                c.setRequestProperty("User-Agent", "YiWei");
                 if (c.getResponseCode() == 200) {
                     String body = read(c.getInputStream());
                     JSONArray arr = new JSONArray(body);

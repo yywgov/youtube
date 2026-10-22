@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon (94). applicationId stays com.yywgov.ytlite. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="sleep"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_sleep"
+        android:shortcutShortLabel="@string/sc_sleep_short"
+        android:shortcutLongLabel="@string/sc_sleep_long">
+        <intent
+            android:action="com.yywgov.ytlite.SLEEP_MODE"
+            android:targetPackage="com.yywgov.ytlite"
+            android:targetClass="com.google.android.youtube.pro.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="subs"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_subs"
+        android:shortcutShortLabel="@string/sc_subs_short"
+        android:shortcutLongLabel="@string/sc_subs_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://m.youtube.com/feed/subscriptions"
+            android:targetPackage="com.yywgov.ytlite"
+            android:targetClass="com.google.android.youtube.pro.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="later"
+        android:enabled="true"
+        android:icon="@drawable/ic_sc_later"
+        android:shortcutShortLabel="@string/sc_later_short"
+        android:shortcutLongLabel="@string/sc_later_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://m.youtube.com/playlist?list=WL"
+            android:targetPackage="com.yywgov.ytlite"
+            android:targetClass="com.google.android.youtube.pro.MainActivity" />
+    </shortcut>
+</shortcuts>

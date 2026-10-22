@@ -97,6 +97,13 @@ public class MainActivity extends Activity {
     private long lastBackAt = 0;
     private boolean coldStart = false;
 
+    // batch 3
+    private static boolean sleepModeOn = false;     // one-tap sleep mode (97)
+    private float sleepModeSavedBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+    private String pageTheme = "#0f0f0f";
+    private android.content.BroadcastReceiver powerReceiver;
+    public static final String ACTION_SLEEP_MODE = "com.yywgov.ytlite.SLEEP_MODE";
+
     // ===================== static helpers =====================
 
     public static boolean isVisible() { return visible; }
@@ -125,14 +132,21 @@ public class MainActivity extends Activity {
         script = readAsset("ytlite.js");
         requestHighRefreshRate();
         setupWebView();
+        applyTextZoom();
         setupSwipe();
         setupBack();
         setupOverlay();
         Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
         String startUrl = urlFromIntent(getIntent());
         coldStart = savedInstanceState == null && HOME.equals(startUrl);
+        // start page (63): subscriptions instead of home when launched from the icon
+        if (coldStart && "subs".equals(Prefs.str(this, Prefs.START_PAGE, "home"))) startUrl = HOME + "feed/subscriptions";
         web.loadUrl(startUrl);
         if (coldStart) MAIN.postDelayed(this::offerResume, 3000);
+        if (ACTION_SLEEP_MODE.equals(getIntent().getAction())) MAIN.postDelayed(this::startSleepMode, 1500);
+        registerPowerSave();
+        MAIN.postDelayed(this::maybeWhatsNew, 2500);
+        MAIN.postDelayed(() -> { if (!isFinishing()) RemoteRules.autoCheck(this); }, 6000);
         MAIN.postDelayed(this::askPermissionsOnce, 1500);
         Updater.cleanup(this);
         MAIN.postDelayed(() -> { if (!isFinishing()) Updater.autoCheck(this); }, 4000);
@@ -192,6 +206,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (ACTION_SLEEP_MODE.equals(intent.getAction())) { startSleepMode(); return; }
         String url = urlFromIntent(intent);
         boolean external = Intent.ACTION_VIEW.equals(intent.getAction()) || Intent.ACTION_SEND.equals(intent.getAction());
         if (external && web != null) web.loadUrl(url);
@@ -224,6 +239,7 @@ public class MainActivity extends Activity {
         }
         MAIN.removeCallbacks(nightPromptRun);
         MAIN.removeCallbacks(hideSnackRun);
+        if (powerReceiver != null) { try { unregisterReceiver(powerReceiver); } catch (Exception ignored) {} powerReceiver = null; }
         unregisterErrNet();
         destroyWebView();
         super.onDestroy();
@@ -354,6 +370,7 @@ public class MainActivity extends Activity {
         if (clearHistoryOnFinish && web != null) {
             clearHistoryOnFinish = false;
             web.clearHistory(); // refreshed home is the new root: back leaves the app
+            haptic();           // refresh finished (120)
         }
     }
 
@@ -427,7 +444,251 @@ public class MainActivity extends Activity {
     }
 
     public void openSettings() {
-        new SettingsDialog(this).show();
+        new SettingsPage(this).show();
+    }
+
+    /** A setting changed: push it to the page, the notification and the native bits that follow it. */
+    public void applySettings() {
+        js("ytl.cfg(" + Prefs.jsConfig(this) + ")");
+        PlaybackService.refresh();
+        applyTextZoom();
+        applyTheme(pageTheme);
+        if (swipe != null) swipe.setColorSchemeColors(Ui.accent(this));
+    }
+
+    /** Load a YouTube page inside the app (settings links). */
+    public void loadInApp(String url) {
+        if (web != null && url != null && url.startsWith("https://m.youtube.com/")) web.loadUrl(url);
+    }
+
+    // ===================== batch 3: theme bars (92/145), font (93), haptics (120), keyboard (124) =====================
+
+    /** Page background reported by the script: system bars and the area behind them follow it. */
+    @SuppressWarnings("deprecation")
+    public void applyTheme(String color) {
+        if (color == null || !color.matches("#[0-9a-fA-F]{6}")) return;
+        pageTheme = color.toLowerCase(java.util.Locale.ROOT);
+        try {
+            boolean light = "#ffffff".equals(pageTheme);
+            int c = light ? 0xFFFFFFFF : (Prefs.on(this, Prefs.AMOLED) ? 0xFF000000 : android.graphics.Color.parseColor(pageTheme));
+            if (swipe != null) swipe.setBackgroundColor(c);
+            if (web != null) web.setBackgroundColor(c);
+            getWindow().getDecorView().setBackgroundColor(c);
+            if (Build.VERSION.SDK_INT < 35) {
+                getWindow().setStatusBarColor(c);
+                getWindow().setNavigationBarColor(c);
+            }
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsetsController ic = getWindow().getInsetsController();
+                if (ic != null) {
+                    int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                    ic.setSystemBarsAppearance(light ? mask : 0, mask);
+                }
+            } else if (Build.VERSION.SDK_INT >= 23) {
+                View d = getWindow().getDecorView();
+                int f = d.getSystemUiVisibility();
+                f = light ? (f | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) : (f & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+                if (Build.VERSION.SDK_INT >= 26) f = light ? (f | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) : (f & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                d.setSystemUiVisibility(f);
+            }
+        } catch (Throwable t) {
+            Diag.log("theme", String.valueOf(t));
+        }
+    }
+
+    /** Web text follows the system font scale (93), clamped so layouts never overflow (142). */
+    private void applyTextZoom() {
+        if (web == null) return;
+        int z = 100;
+        if (Prefs.on(this, Prefs.FONT_FOLLOW)) {
+            float fs = getResources().getConfiguration().fontScale;
+            z = Math.max(85, Math.min(130, Math.round(fs * 100)));
+        }
+        if (web.getSettings().getTextZoom() != z) web.getSettings().setTextZoom(z);
+    }
+
+    /** Light tap for key actions (120). */
+    public void haptic() {
+        try {
+            if (!Prefs.on(this, Prefs.HAPTIC) || web == null) return;
+            web.performHapticFeedback(Build.VERSION.SDK_INT >= 23 ? android.view.HapticFeedbackConstants.CONTEXT_CLICK
+                    : android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+        } catch (Throwable ignored) {}
+    }
+
+    public static void hapticNow() {
+        MAIN.post(() -> { MainActivity a = current.get(); if (a != null) a.haptic(); });
+    }
+
+    public void showKeyboard() {
+        try {
+            if (web == null) return;
+            web.requestFocus();
+            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(web, 0);
+        } catch (Throwable ignored) {}
+    }
+
+    // ===================== long-press card menu (123) =====================
+
+    public void cardMenu(String json) {
+        final String id, title, channel;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(json);
+            id = o.optString("id", "");
+            title = o.optString("title", "");
+            channel = o.optString("channel", "");
+        } catch (Exception e) {
+            return;
+        }
+        if (!id.matches("[A-Za-z0-9_-]{6,20}") || isFinishing()) return;
+        haptic();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        TextView head = Ui.text(this, title.isEmpty() ? "视频" : title, 14, Ui.TEXT_2);
+        head.setMaxLines(2);
+        head.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        head.setPadding(dp(20), dp(4), dp(20), dp(8));
+        box.addView(head);
+        final android.app.Dialog[] d = new android.app.Dialog[1];
+        box.addView(Ui.sheetRow(this, "稍后观看", "加入 YouTube 的「稍后观看」（需登录）", v -> { d[0].dismiss(); js("ytl.watchLater(" + org.json.JSONObject.quote(id) + ")"); }));
+        box.addView(Ui.sheetRow(this, "不感兴趣 / 更多", "打开 YouTube 自己的菜单", v -> { d[0].dismiss(); js("ytl.openCardMenu()"); }));
+        if (!channel.isEmpty()) {
+            box.addView(Ui.sheetRow(this, "不再显示此频道", channel + " · 只在本机屏蔽，可在设置里撤销", v -> {
+                d[0].dismiss();
+                Prefs.addLine(this, Prefs.BLOCK_CHANNELS, channel);
+                applySettings();
+                Toast.makeText(this, "已屏蔽：" + channel, Toast.LENGTH_SHORT).show();
+            }));
+        }
+        box.addView(Ui.sheetRow(this, "本地隐藏这个视频", "以后在列表里不再出现", v -> { d[0].dismiss(); js("ytl.hideVideo(" + org.json.JSONObject.quote(id) + ")"); }));
+        box.addView(Ui.sheetRow(this, "复制链接", "https://youtu.be/" + id, v -> {
+            d[0].dismiss();
+            try {
+                ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
+                        .setPrimaryClip(android.content.ClipData.newPlainText("YouTube", "https://youtu.be/" + id));
+                Toast.makeText(this, "已复制链接", Toast.LENGTH_SHORT).show();
+            } catch (Exception ignored) {}
+        }));
+        d[0] = Ui.sheet(this, box);
+        d[0].show();
+    }
+
+    // ===================== one-tap sleep mode (97) =====================
+
+    public static boolean sleepModeOn() { return sleepModeOn; }
+
+    /** Timer (default length) + lowest quality + same channel only + dim screen; ends with the timer. */
+    public void startSleepMode() {
+        int m = Prefs.sleepDefault(this);
+        sleepModeOn = true;
+        if (!SleepTimer.active()) SleepTimer.start(this, m);
+        js("ytl.sleepMode(true)");
+        try {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            if (lp.screenBrightness != 0.08f) sleepModeSavedBrightness = lp.screenBrightness;
+            lp.screenBrightness = 0.08f;
+            getWindow().setAttributes(lp);
+        } catch (Throwable ignored) {}
+        haptic();
+    }
+
+    private void stopSleepMode() {
+        if (!sleepModeOn) return;
+        sleepModeOn = false;
+        js("ytl.sleepMode(false)");
+        try {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.screenBrightness = sleepModeSavedBrightness;
+            getWindow().setAttributes(lp);
+        } catch (Throwable ignored) {}
+    }
+
+    /** Sleep timer started / stopped / fired. */
+    public static void onSleepState(final boolean active) {
+        MAIN.post(() -> {
+            MainActivity a = current.get();
+            if (a != null && !active) a.stopSleepMode();
+        });
+    }
+
+    // ===================== battery saver (147), autostart (99), what's new (138), about (140) =====================
+
+    private void registerPowerSave() {
+        if (Build.VERSION.SDK_INT < 21) return;
+        try {
+            powerReceiver = new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context c, Intent i) {
+                    js("ytl.cfg(" + Prefs.jsConfig(MainActivity.this) + ")");
+                }
+            };
+            android.content.IntentFilter f = new android.content.IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(powerReceiver, f, RECEIVER_NOT_EXPORTED);
+            else registerReceiver(powerReceiver, f);
+        } catch (Throwable t) {
+            powerReceiver = null;
+        }
+    }
+
+    /** ColorOS / other vendor auto-start managers, falling back to app details (99). */
+    public void openAutostartSettings() {
+        String[][] targets = {
+                {"com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
+                {"com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"},
+                {"com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity"},
+                {"com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"},
+                {"com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"},
+                {"com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"},
+                {"com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"},
+        };
+        for (String[] t : targets) {
+            try {
+                Intent i = new Intent().setComponent(new android.content.ComponentName(t[0], t[1])).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (getPackageManager().resolveActivity(i, 0) == null) continue;
+                startActivity(i);
+                Toast.makeText(this, "找到 " + getString(R.string.app_name) + " 并允许自启动", Toast.LENGTH_LONG).show();
+                return;
+            } catch (Exception ignored) {}
+        }
+        openAppDetails();
+    }
+
+    /** First start after an upgrade: show this version's notes once (138). */
+    private void maybeWhatsNew() {
+        try {
+            if (isFinishing()) return;
+            String ver = appVersion();
+            String last = Prefs.str(this, Prefs.LAST_RUN_VERSION, "");
+            if (ver.equals(last)) return;
+            Prefs.put(this, Prefs.LAST_RUN_VERSION, ver);
+            if (last.isEmpty() || ver.contains("-dev")) return;   // fresh install or test build: nothing to show
+            Prefs.put(this, Prefs.UPDATE_READY, "");
+            Updater.showWhatsNew(this, ver);
+        } catch (Throwable t) {
+            Diag.log("whatsnew", String.valueOf(t));
+        }
+    }
+
+    public static String webViewVersion(android.content.Context c) {
+        try {
+            android.content.pm.PackageInfo p = WebViewCompat.getCurrentWebViewPackage(c);
+            return p == null ? "未知" : p.packageName + " " + p.versionName;
+        } catch (Throwable t) {
+            return "未知";
+        }
+    }
+
+    public String refreshRateLabel() {
+        try {
+            @SuppressWarnings("deprecation")
+            Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
+            if (d == null) return "未知";
+            float max = 0;
+            if (Build.VERSION.SDK_INT >= 23) for (Display.Mode m : d.getSupportedModes()) max = Math.max(max, m.getRefreshRate());
+            return String.format(java.util.Locale.US, "当前 %.0f Hz · 最高 %.0f Hz", d.getRefreshRate(), Math.max(max, d.getRefreshRate()));
+        } catch (Throwable t) {
+            return "未知";
+        }
     }
 
     /** Moon button: playback tools sheet, with the page's current player state. */
@@ -621,6 +882,7 @@ public class MainActivity extends Activity {
         if (lockView == null) return;
         try { decor().removeView(lockView); } catch (Throwable ignored) {}
         lockView = null;
+        haptic();
         Toast.makeText(this, "已解锁", Toast.LENGTH_SHORT).show();
     }
 
@@ -853,9 +1115,13 @@ public class MainActivity extends Activity {
     }
 
     private void setupSwipe() {
-        swipe.setColorSchemeColors(0xFFFF0033);
+        swipe.setColorSchemeColors(Ui.accent(this));
         swipe.setProgressBackgroundColorSchemeColor(0xFF212121);
-        swipe.setDistanceToTriggerSync(Math.round(120 * getResources().getDisplayMetrics().density));
+        // pull feel (121): trigger a little earlier, spinner travels a bit further, settles 64dp down
+        float dens = getResources().getDisplayMetrics().density;
+        swipe.setDistanceToTriggerSync(Math.round(100 * dens));
+        swipe.setSlingshotDistance(Math.round(140 * dens));
+        swipe.setProgressViewEndTarget(false, Math.round(64 * dens));
         swipe.setOnChildScrollUpCallback((parent, child) -> !(touchStartedAtTop && canPullToRefresh()));
         swipe.setOnRefreshListener(this::refreshFeed);
     }
@@ -969,9 +1235,10 @@ public class MainActivity extends Activity {
         Prefs.put(this, Prefs.ASKED_BATTERY, true);
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("允许后台持续播放")
-                .setMessage("为了熄屏后也能一直播放（听着入睡），请在下一步允许 YT Lite「不受电池优化限制」。\n\n"
-                        + "国产系统（MIUI/HyperOS、ColorOS、EMUI/HarmonyOS 等）还需要在应用详情里开启「自启动」并把耗电策略设为「无限制」。")
+                .setMessage("为了熄屏后也能一直播放（听着入睡），请在下一步允许 " + getString(R.string.app_name) + "「不受电池优化限制」。\n\n"
+                        + "国产系统（ColorOS、MIUI/HyperOS、EMUI/HarmonyOS 等）还需要开启「自启动」并把耗电策略设为「无限制」，可点「自启动」直接跳过去。")
                 .setPositiveButton("去设置", (d, w) -> requestIgnoreBattery())
+                .setNeutralButton("自启动", (d, w) -> openAutostartSettings())
                 .setNegativeButton("以后再说", null)
                 .show();
     }

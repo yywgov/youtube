@@ -63,6 +63,10 @@ public final class PlayerTools {
             if (SleepTimer.active()) SleepTimer.cancel(a);
             else pickSleep(a, "睡眠定时", m -> SleepTimer.start(a, m));
         }));
+        if (!SleepTimer.active()) {
+            box.addView(row("一键睡眠模式", "定时 " + SleepTimer.optionLabel(Prefs.sleepDefault(a)) + " + 最低画质 + 只续播同频道 + 调暗屏幕",
+                    v -> { dismiss(); a.startSleepMode(); }));
+        }
         box.addView(row("黑屏播放", "屏幕全黑不锁屏，OLED 几乎不耗电；轻点恢复", v -> { dismiss(); a.startBlackScreen(); }));
         box.addView(row("触控锁", "睡前看视频防误触；长按屏幕 1.5 秒解锁", v -> { dismiss(); a.startTouchLock(); }));
 
@@ -152,13 +156,20 @@ public final class PlayerTools {
 
     /** Sleep timer options (shared with the settings screen). */
     public static void pickSleep(MainActivity a, String title, IntPick cb) {
-        int[] opts = SleepTimer.OPTIONS;
-        String[] labels = new String[opts.length];
-        for (int i = 0; i < opts.length; i++) labels[i] = SleepTimer.optionLabel(opts[i]);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle(title)
-                .setItems(labels, (d, which) -> cb.pick(opts[which]))
-                .show();
+        // native bottom sheet (165)
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        TextView head = Ui.text(a, title, 18, Ui.TEXT);
+        head.setPadding(Ui.dp(a, 20), Ui.dp(a, 4), Ui.dp(a, 20), Ui.dp(a, 8));
+        box.addView(head);
+        final Dialog[] d = new Dialog[1];
+        int def = Prefs.sleepDefault(a);
+        for (final int m : SleepTimer.OPTIONS) {
+            String sub = m == def ? "默认" : null;
+            box.addView(Ui.sheetRow(a, SleepTimer.optionLabel(m), sub, v -> { d[0].dismiss(); cb.pick(m); }));
+        }
+        d[0] = Ui.sheet(a, box);
+        d[0].show();
     }
 
     private void pickSpeed(double current) {
@@ -249,7 +260,7 @@ public final class PlayerTools {
     }
 
     private TextView header(String label) {
-        TextView t = text(label, 13, 0xFFFF4E45);
+        TextView t = text(label, 13, Ui.accent(a));
         t.setTypeface(Typeface.DEFAULT_BOLD);
         t.setPadding(dp(20), dp(12), dp(20), dp(2));
         return t;

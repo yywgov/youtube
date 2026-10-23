@@ -1,5 +1,5 @@
 <resources>
-	<string name="app_name" translatable="false">YiWei</string>
+	<string name="app_name" translatable="false">一维视频</string>
 	<string name="sc_sleep_short">睡眠模式</string>
 	<string name="sc_sleep_long">一键睡眠模式</string>
 	<string name="sc_subs_short">订阅</string>

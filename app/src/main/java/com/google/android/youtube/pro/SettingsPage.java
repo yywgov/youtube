@@ -37,7 +37,7 @@ public class SettingsPage {
     }
 
     public void show() {
-        page("YiWei 设置", box -> {
+        page(a.getString(R.string.app_name) + " 设置", box -> {
             String ready = Updater.readyTag(a);
             if (ready != null) {
                 LinearLayout card = card(box);
@@ -228,7 +228,7 @@ public class SettingsPage {
     private void aboutPage() {
         page("关于", box -> {
             LinearLayout c = card(box);
-            c.addView(row("YiWei " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
+            c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
             c.addView(row("WebView", MainActivity.webViewVersion(a), null));
             c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
             c.addView(dyn("本机观看统计", () -> "近 7 天 " + fmtDuration(PlaybackService.weekSeconds(a)) + " · 今天 " + fmtDuration(PlaybackService.todaySeconds(a)), null));
@@ -509,7 +509,7 @@ public class SettingsPage {
     }
 
     private void exportSettings() {
-        copy("YiWei 设置备份", Prefs.exportJson(a));
+        copy(a.getString(R.string.app_name) + " 设置备份", Prefs.exportJson(a));
         toastShort("已复制设置备份");
     }
 
@@ -521,7 +521,7 @@ public class SettingsPage {
             if (d != null && d.getItemCount() > 0 && d.getItemAt(0).getText() != null) clip = d.getItemAt(0).getText().toString();
         } catch (Exception ignored) {}
         int n = clip.isEmpty() ? -1 : Prefs.importJson(a, clip);
-        if (n < 0) { toastShort("剪贴板里没有 YiWei 的设置备份"); return; }
+        if (n < 0) { toastShort("剪贴板里没有 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
         a.applySettings();
         refreshAll();
         Toast.makeText(a, "已恢复 " + n + " 项设置（部分页面需重新打开设置才显示新值）", Toast.LENGTH_LONG).show();
@@ -559,14 +559,14 @@ public class SettingsPage {
             b.append("—— 漏网广告 ——\n");
             for (int i = Math.max(0, al.length - 30); i < al.length; i++) b.append(al[i]).append('\n');
         }
-        copy("YiWei 问题报告", b.toString());
+        copy(a.getString(R.string.app_name) + " 问题报告", b.toString());
         toastShort("已复制问题报告，粘贴发给我即可");
     }
 
     private void copyLog(String file, String label) {
         String body = Diag.read(a, file);
         if (body.isEmpty()) { toastShort(label + "为空"); return; }
-        copy("YiWei " + label, Diag.header(version()) + body);
+        copy(a.getString(R.string.app_name) + " " + label, Diag.header(version()) + body);
         toastShort("已复制" + label);
     }
 
@@ -582,7 +582,7 @@ public class SettingsPage {
     private void licenses() {
         new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("开源许可")
-                .setMessage("YTPro — Copyright (c) Prateek Chaubey, MIT License。YiWei 在其基础上精简改写，同样以 MIT 许可发布。\n\n"
+                .setMessage("YTPro — Copyright (c) Prateek Chaubey, MIT License。" + a.getString(R.string.app_name) + " 在其基础上精简改写，同样以 MIT 许可发布。\n\n"
                         + "AndroidX（webkit、swiperefreshlayout、core）— Apache License 2.0。\n\n"
                         + "SponsorBlock 片段数据来自 sponsor.ajay.app，CC BY-NC-SA 4.0。\n\n"
                         + "YouTube 是 Google LLC 的商标；本应用与 Google 无关，仅供个人使用。")

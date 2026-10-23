@@ -552,7 +552,7 @@ public final class Updater {
             PackageManager pm = a.getPackageManager();
             PackageInfo arch = pm.getPackageArchiveInfo(apk.getAbsolutePath(), 0);
             if (arch != null && !a.getPackageName().equals(arch.packageName)) {
-                Toast.makeText(a, "安装包不是 YiWei，已取消", Toast.LENGTH_LONG).show();
+                Toast.makeText(a, "安装包不是 " + a.getString(R.string.app_name) + "，已取消", Toast.LENGTH_LONG).show();
                 return;
             }
         } catch (Exception ignored) {}
@@ -561,7 +561,7 @@ public final class Updater {
             Prefs.put(a, Prefs.PENDING_APK, apk.getAbsolutePath());
             new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                     .setTitle("需要允许安装应用")
-                    .setMessage("请在下一页为 YiWei 打开「允许安装未知应用 / 允许来自此来源的应用」，返回后会自动继续安装。")
+                    .setMessage("请在下一页为 " + a.getString(R.string.app_name) + " 打开「允许安装未知应用 / 允许来自此来源的应用」，返回后会自动继续安装。")
                     .setPositiveButton("去开启", (d, w) -> {
                         try {
                             a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,

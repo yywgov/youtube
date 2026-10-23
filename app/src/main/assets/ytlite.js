@@ -128,7 +128,7 @@
         'ytm-video-masthead-ad-v3-renderer', 'ytm-brand-video-singleton-renderer', 'ytm-brand-video-shelf-renderer',
         'ytm-primetime-promo-renderer', 'ytm-merch-shelf-renderer', 'ytm-product-list-renderer', 'ytm-shopping-carousel-renderer',
         'ytm-offer-module-renderer', 'ytm-ticket-shelf-renderer', 'ytm-ad-badge-renderer',
-        '.ytp-ad-overlay-container', '.ytp-ad-text-overlay', '.ytp-ad-image-overlay', 'a[href^="intent:"]', 'ytm-open-app-promo-renderer',
+        '.ytp-ad-overlay-container', '.ytp-ad-player-overlay-layout', '.ytp-ad-persistent-progress-bar-container', '.ytp-ad-action-interstitial', '.ytp-ad-text-overlay', '.ytp-ad-image-overlay', 'a[href^="intent:"]', 'ytm-open-app-promo-renderer',
         'ytm-rich-item-renderer:has(> ad-slot-renderer)', 'ytm-rich-item-renderer:has(> ytm-ad-slot-renderer)',
         'ytm-item-section-renderer:has(> lazy-list > ad-slot-renderer:only-child)',
         'ytm-rich-item-renderer:has(ytm-ad-badge-renderer)', 'ytm-compact-video-renderer:has(ytm-ad-badge-renderer)'

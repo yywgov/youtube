@@ -26,6 +26,16 @@ public final class SleepTimer {
     private static boolean fading = false;
     private static int countLeft = 0;
     private static long fadeMs = 60_000L;
+    // notification button undo (300): what the button just switched off, and until when it can come back
+    private static final long UNDO_MS = 5_000L;
+    private static int undoMode = OFF;
+    private static long undoLeftMs = 0L;
+    private static int undoCount = 0;
+    private static long undoUntil = 0L;
+    private static Context appCtx;
+    private static String lastPushed = "";
+    /** Count / end-of-video timers restored after a restart only if saved this recently (244). */
+    private static final long RESTORE_MAX_AGE_MS = 2 * 3600_000L;
 
     private SleepTimer() {}
 
@@ -70,29 +80,88 @@ public final class SleepTimer {
     }
 
     public static void start(Context c, int minutes) {
+        startInternal(c, minutes, -1L, -1, false);
+    }
+
+    /** Start (or bring back, 244/300) a timer; leftMs / count >= 0 resume a previous one. */
+    private static void startInternal(Context c, int minutes, long leftMs, int count, boolean quiet) {
         reset();
+        if (c != null) appCtx = c.getApplicationContext();
         if (c != null) fadeMs = Prefs.sleepFade(c) * 1000L;
         mode = minutes;
         if (minutes == END_OF_VIDEO) {
             MainActivity.js("ytl.stopAtEnd(true)");
         } else if (isCount(minutes)) {
-            countLeft = Math.max(1, countOf(minutes));
+            countLeft = count > 0 ? count : Math.max(1, countOf(minutes));
             if (countLeft <= 1) MainActivity.js("ytl.stopAtEnd(true)");
             else MainActivity.js("ytl.countMode(true)");
         } else {
-            endAt = SystemClock.elapsedRealtime() + minutes * 60_000L;
+            endAt = SystemClock.elapsedRealtime() + (leftMs > 0 ? leftMs : minutes * 60_000L);
             H.post(TICK);
         }
-        // one-tap restart next time (15)
-        if (c != null && Prefs.sleepRemember(c)) Prefs.put(c, Prefs.SLEEP_DEFAULT, minutes);
-        toast(c, "睡眠定时：" + optionLabel(minutes));
-        MainActivity.hapticNow();
+        if (!quiet) {
+            // one-tap restart next time (15); the settings row decides whether this is on (228)
+            if (c != null && Prefs.sleepRemember(c)) Prefs.put(c, Prefs.SLEEP_DEFAULT, minutes);
+            toast(c, "睡眠定时：" + optionLabel(minutes));
+            MainActivity.hapticNow();
+        }
+        persist();
         pushState();
+    }
+
+    // ---------- persistence (244): a restarted process keeps the timer ----------
+
+    private static void persist() {
+        Context c = appCtx;
+        if (c == null) return;
+        try {
+            if (mode == OFF) {
+                Prefs.get(c).edit().remove(Prefs.SLEEP_STATE).apply();
+                return;
+            }
+            long now = System.currentTimeMillis();
+            long endWall = mode > 0 ? now + Math.max(0, endAt - SystemClock.elapsedRealtime()) : 0;
+            Prefs.put(c, Prefs.SLEEP_STATE, mode + "|" + endWall + "|" + countLeft + "|" + now);
+        } catch (Throwable ignored) {}
+    }
+
+    /** Process start: bring back a timer the system killed with the app (only if it has not run out). */
+    public static void restore(Context c) {
+        if (c == null || mode != OFF) return;
+        appCtx = c.getApplicationContext();
+        String s = Prefs.str(c, Prefs.SLEEP_STATE, "");
+        if (s.isEmpty()) return;
+        try {
+            String[] p = s.split("\\|");
+            int m = Integer.parseInt(p[0]);
+            long endWall = Long.parseLong(p[1]);
+            int count = Integer.parseInt(p[2]);
+            long savedAt = Long.parseLong(p[3]);
+            long now = System.currentTimeMillis();
+            boolean ok;
+            long left = 0;
+            if (m > 0) {
+                left = endWall - now;
+                ok = left > 5_000L && left <= m * 60_000L + 60_000L;
+            } else {
+                ok = (m == END_OF_VIDEO || isCount(m)) && now - savedAt >= 0 && now - savedAt < RESTORE_MAX_AGE_MS;
+            }
+            if (!ok || !PrefsModel.validSleepMode(m)) {
+                Prefs.get(c).edit().remove(Prefs.SLEEP_STATE).apply();
+                return;
+            }
+            startInternal(c, m, left, count, true);
+            Diag.log("sleep", "restored " + optionLabel(m) + (m > 0 ? " left=" + (left / 1000) + "s" : " count=" + count));
+            toast(c, "已恢复睡眠定时：" + (m > 0 ? "剩余 " + minutesLeft() + " 分钟" : optionLabel(m)));
+        } catch (Throwable t) {
+            Prefs.get(c).edit().remove(Prefs.SLEEP_STATE).apply();
+        }
     }
 
     public static void cancel(Context c) {
         boolean was = mode != OFF;
         reset();
+        persist();
         MainActivity.js("ytl.stopAtEnd(false);ytl.countMode&&ytl.countMode(false);ytl.restoreVolume()");
         if (was && c != null) toast(c, "已关闭睡眠定时");
         pushState();
@@ -110,25 +179,56 @@ public final class SleepTimer {
         H.removeCallbacks(TICK);
         H.post(TICK);
         toast(c, "睡眠定时：+" + EXTEND_MIN + " 分钟（剩余 " + minutesLeft() + " 分钟）");
+        persist();
         pushState();
     }
 
-    /** Notification / media-control button: off -> default -> next option ... -> off. */
+    /**
+     * Notification / media-control button (300): off -> the default timer; running -> off.
+     * Pressed again within 5 s after switching off, the timer that was running comes back as it was.
+     * Changing the length is done in the app (moon button), not by cycling through options.
+     */
     public static void cycle(Context c) {
+        long now = SystemClock.elapsedRealtime();
         if (mode == OFF) {
+            if (undoMode != OFF && now < undoUntil) {
+                int m = undoMode;
+                long left = undoLeftMs;
+                int cnt = undoCount;
+                undoMode = OFF;
+                startInternal(c, m, left, cnt, true);
+                toast(c, "已恢复睡眠定时：" + (m > 0 ? "剩余 " + minutesLeft() + " 分钟" : optionLabel(m)));
+                return;
+            }
+            undoMode = OFF;
             start(c, Prefs.sleepDefault(c));
             return;
         }
-        int idx = -1;
-        for (int i = 0; i < OPTIONS.length; i++) if (OPTIONS[i] == mode) idx = i;
-        if (idx < 0 || idx == OPTIONS.length - 1) cancel(c);
-        else start(c, OPTIONS[idx + 1]);
+        undoMode = mode;
+        undoLeftMs = mode > 0 ? Math.max(60_000L, endAt - now) : 0L;
+        undoCount = countLeft;
+        undoUntil = now + UNDO_MS;
+        reset();
+        persist();
+        MainActivity.js("ytl.stopAtEnd(false);ytl.countMode&&ytl.countMode(false);ytl.restoreVolume()");
+        toast(c, "已关闭睡眠定时 · 5 秒内再按一次可撤销");
+        pushState();
+        H.postDelayed(SleepTimer::pushState, UNDO_MS + 100);
+    }
+
+    /** Label of the notification sleep button. */
+    public static String buttonLabel() {
+        String s = status();
+        if (s != null) return s;
+        if (undoMode != OFF && SystemClock.elapsedRealtime() < undoUntil) return "撤销关闭定时";
+        return "睡眠定时";
     }
 
     /** Called from JS when "end of current video" mode paused playback. */
     public static void onEndOfVideoFired() {
         boolean was = mode != OFF;
         reset();
+        persist();
         MainActivity.js("ytl.countMode&&ytl.countMode(false)");
         pushState();
         if (was) PlaybackService.onSleepEnded();
@@ -139,6 +239,7 @@ public final class SleepTimer {
         if (!isCount(mode) || countLeft <= 1) return;
         countLeft--;
         if (countLeft <= 1) MainActivity.js("ytl.countMode(false);ytl.stopAtEndNext()");
+        persist();
         pushState();
     }
 
@@ -152,10 +253,13 @@ public final class SleepTimer {
 
     /** Notification, page badge and "sleeping" flag follow the timer. */
     private static void pushState() {
-        PlaybackService.refresh();
+        PlaybackService.refresh();   // re-renders only what changed (263)
         MainActivity.onSleepState(mode != OFF);
-        MainActivity.js("ytl.sleepState&&ytl.sleepState(" + (mode != OFF) + ");ytl.badge&&ytl.badge("
-                + org.json.JSONObject.quote(badge()) + ")");
+        String js = "ytl.sleepState&&ytl.sleepState(" + (mode != OFF) + ");ytl.badge&&ytl.badge("
+                + org.json.JSONObject.quote(badge()) + ")";
+        if (js.equals(lastPushed) && fading) return;   // the badge text did not change during the fade
+        lastPushed = js;
+        MainActivity.js(js);
     }
 
     private static final Runnable TICK = new Runnable() {
@@ -166,13 +270,14 @@ public final class SleepTimer {
             if (left <= 0) {
                 MainActivity.js("ytl.sleepPause()");
                 reset();
+                persist();
                 pushState();
                 PlaybackService.onSleepEnded();
                 return;
             }
             if (left <= fadeMs) {
                 fading = true;
-                double vol = (double) left / fadeMs;
+                double vol = Logic.fadeVolume(left, fadeMs);   // audible from the start, no cliff at the end (298)
                 MainActivity.js("ytl.setVolume(" + String.format(java.util.Locale.US, "%.3f", vol) + ")");
                 H.postDelayed(this, 1000);
             } else {

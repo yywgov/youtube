@@ -56,10 +56,18 @@ public class PlaybackService extends Service {
     public static final String ACTION_FWD = "ytl.FWD";
     public static final String ACTION_EXTEND = "ytl.EXTEND";
     public static final String ACTION_WL = "ytl.WATCH_LATER";
+    public static final String ACTION_CLOSE = "ytl.CLOSE";       // paused: stop and remove the notification (290)
+    public static final String ACTION_DISMISS = "ytl.DISMISS";   // notification swiped away (290)
+    /** Content intent extra: open the app and continue the last video (243). */
+    public static final String EXTRA_RESUME = "ytl.resume";
     private static final long SLEEP_DONE_STOP_MS = 2 * 60_000L;
     private static final long MULTI_CLICK_MS = 450L;
 
     private static final long IDLE_STOP_MS = 30 * 60_000L;
+    /** Paused in the background this long: leave the foreground, notification becomes dismissible (290). */
+    private static final long IDLE_DETACH_MS = 5 * 60_000L;
+    /** Buffering this long (network gone at night): let go of the wake / Wi-Fi locks (272). */
+    private static final long LONG_BUFFER_MS = 10 * 60_000L;
     private static final long WAKE_LOCK_MS = 4 * 60 * 60_000L;
 
     // ---- now playing (static: survives service restarts, written on main thread) ----
@@ -76,6 +84,10 @@ public class PlaybackService extends Service {
     /** The sleep timer paused playback: drop foreground + locks and stop soon (17). */
     private static boolean sleepDone = false;
     private static long lastVolHint = 0;
+    /** The activity (and with it the WebView) was destroyed by the system while playing (243). */
+    private static boolean interrupted = false;
+    private static boolean longBuffer = false;
+    private static long lastDeniedLog = 0;
 
     private static PlaybackService instance;
     private static boolean starting = false;
@@ -113,6 +125,8 @@ public class PlaybackService extends Service {
             sleepDone = false;
             volumeHint(c);
         }
+        if (st != PlaybackState.STATE_BUFFERING) longBuffer = false;
+        if (st == PlaybackState.STATE_PLAYING) interrupted = false;
         trackWatch(c, st == PlaybackState.STATE_PLAYING);
         state = st;
         positionMs = pos;
@@ -124,6 +138,30 @@ public class PlaybackService extends Service {
 
     public static void refresh() {
         if (instance != null) instance.update();
+    }
+
+    /**
+     * The system destroyed the activity while something was playing (243): the WebView is gone, so
+     * playback stopped. Keep a paused, dismissible "tap to continue" notification instead of
+     * stopping everything; the sleep timer state is kept (and persisted, 244).
+     */
+    public static void onActivityGone() {
+        interrupted = true;
+        state = PlaybackState.STATE_PAUSED;
+        positionAt = SystemClock.elapsedRealtime();
+        if (instance != null) instance.update();
+    }
+
+    public static boolean isForeground() {
+        return instance != null && instance.foreground;
+    }
+
+    /** App back on screen after a refused foreground start (291): try again while it is allowed. */
+    public static void retryForeground() {
+        if (instance != null && !instance.foreground && isPlaying()) {
+            instance.lastNotifKey = "";
+            instance.goForeground(instance.buildNotification());
+        }
     }
 
     // ---- local watch time (159): seconds per day, last 14 days, only ever on this phone ----
@@ -213,6 +251,13 @@ public class PlaybackService extends Service {
             case ACTION_FWD: MainActivity.js("ytl.seekBy(30)"); break;
             case ACTION_EXTEND: SleepTimer.extend(c); break;
             case ACTION_WL: MainActivity.js("ytl.watchLater()"); break;
+            case ACTION_CLOSE:
+                MainActivity.js("ytl.pause()");
+                stop(c);
+                break;
+            case ACTION_DISMISS:
+                if (!isPlaying()) stop(c);
+                break;
             default: break;
         }
     }
@@ -303,6 +348,8 @@ public class PlaybackService extends Service {
     @Override
     public void onDestroy() {
         MAIN.removeCallbacks(idleStop);
+        MAIN.removeCallbacks(idleDetach);
+        MAIN.removeCallbacks(longBufferRun);
         MAIN.removeCallbacks(clickDone);
         releaseLocks();
         try { if (noisyReceiver != null) unregisterReceiver(noisyReceiver); } catch (Exception ignored) {}
@@ -356,6 +403,9 @@ public class PlaybackService extends Service {
             @Override public void onCustomAction(String action, android.os.Bundle extras) {
                 if (ACTION_SLEEP.equals(action)) SleepTimer.cycle(PlaybackService.this);
                 else if (ACTION_EXTEND.equals(action)) SleepTimer.extend(PlaybackService.this);
+                else if (ACTION_REW.equals(action)) MainActivity.js("ytl.seekBy(-10)");
+                else if (ACTION_FWD.equals(action)) MainActivity.js("ytl.seekBy(30)");
+                else if (ACTION_WL.equals(action)) MainActivity.js("ytl.watchLater()");
             }
             @Override public boolean onMediaButtonEvent(Intent mediaButtonIntent) {
                 if (handleMultiClick(mediaButtonIntent)) return true;
@@ -440,7 +490,16 @@ public class PlaybackService extends Service {
             netCallback = new ConnectivityManager.NetworkCallback() {
                 @Override
                 public void onAvailable(Network network) {
-                    MAIN.postDelayed(() -> MainActivity.js("ytl.onNet()"), 1500);
+                    MAIN.postDelayed(() -> {
+                        if (longBuffer) {
+                            // network is back after a long stall (272): locks again, then resume
+                            longBuffer = false;
+                            Diag.log("net", "back after long buffering");
+                            if (isPlaying()) acquireLocks();
+                            update();
+                        }
+                        MainActivity.js("ytl.onNet()");
+                    }, 1500);
                 }
             };
             cm.registerDefaultNetworkCallback(netCallback);
@@ -449,54 +508,138 @@ public class PlaybackService extends Service {
         }
     }
 
-    /** Re-render session + notification from the static state. */
+    // what was last handed to the session / notification (263): unchanged values are not re-sent
+    private String lastMetaKey = "";
+    private String lastStateKey = "";
+    private String lastNotifKey = "";
+    private long bufferingSince = 0;
+
+    /** Re-render session + notification from the static state; only the parts that changed (263). */
     private void update() {
         boolean playing = state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
+        boolean hasArt = art != null && artUrl.equals(artLoadedFor);
 
-        MediaMetadata.Builder mb = new MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
-                .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
-        if (art != null && artUrl.equals(artLoadedFor)) {
-            mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
-            mb.putBitmap(MediaMetadata.METADATA_KEY_ART, art); // lock screen (117)
+        String metaKey = title + "\u0001" + artist + "\u0001" + durationMs + "\u0001" + (hasArt ? artLoadedFor : "");
+        if (!metaKey.equals(lastMetaKey)) {
+            lastMetaKey = metaKey;
+            MediaMetadata.Builder mb = new MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+            if (hasArt) {
+                mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+                mb.putBitmap(MediaMetadata.METADATA_KEY_ART, art); // lock screen (117)
+            }
+            session.setMetadata(mb.build());
         }
-        session.setMetadata(mb.build());
 
-        String sleep = SleepTimer.status();
-        PlaybackState.Builder pb = new PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
-                        | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                        | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
-                        | PlaybackState.ACTION_REWIND | PlaybackState.ACTION_FAST_FORWARD)
-                .setState(state == PlaybackState.STATE_NONE ? PlaybackState.STATE_PAUSED : state,
-                        positionMs, state == PlaybackState.STATE_PLAYING ? rate : 0f, positionAt)
-                .addCustomAction(new PlaybackState.CustomAction.Builder(
-                        ACTION_SLEEP, sleep != null ? sleep : "睡眠定时", R.drawable.ic_timer_white).build());
-        if (SleepTimer.timed()) {
-            pb.addCustomAction(new PlaybackState.CustomAction.Builder(
-                    ACTION_EXTEND, "+" + SleepTimer.EXTEND_MIN + " 分钟", R.drawable.ic_add_time_white).build());
+        boolean seekButtons = Prefs.on(this, Prefs.NOTIF_SEEK);
+        boolean wl = Prefs.on(this, Prefs.NOTIF_WL) && !SleepTimer.timed();
+        String sleepLabel = SleepTimer.buttonLabel();
+        String stateKey = state + "|" + positionMs + "|" + rate + "|" + positionAt + "|" + sleepLabel + "|" + SleepTimer.timed()
+                + "|" + seekButtons + "|" + wl;
+        if (!stateKey.equals(lastStateKey)) {
+            lastStateKey = stateKey;
+            session.setPlaybackState(buildState(seekButtons, wl, sleepLabel));
         }
-        session.setPlaybackState(pb.build());
 
-        Notification n = buildNotification();
+        // long buffering (272): after 10 minutes stop holding the CPU / Wi-Fi awake
+        if (state == PlaybackState.STATE_BUFFERING) {
+            if (bufferingSince == 0) {
+                bufferingSince = SystemClock.elapsedRealtime();
+                MAIN.removeCallbacks(longBufferRun);
+                MAIN.postDelayed(longBufferRun, LONG_BUFFER_MS);
+            }
+        } else {
+            bufferingSince = 0;
+            MAIN.removeCallbacks(longBufferRun);
+        }
+
         if (playing) {
             MAIN.removeCallbacks(idleStop);
-            acquireLocks();
-            if (!foreground) goForeground(n);
-            else nm.notify(NOTIFICATION_ID, n);
+            MAIN.removeCallbacks(idleDetach);
+            if (longBuffer) releaseLocks(); else acquireLocks();
+            if (!foreground) { lastNotifKey = ""; goForeground(notification()); }
+            else notifyIfChanged();
         } else {
             releaseLocks();
-            // dismissible while paused in the app, and always once the sleep timer has stopped playback
-            if (foreground && (MainActivity.isVisible() || sleepDone)) stopFg(false);
-            nm.notify(NOTIFICATION_ID, n);
+            // dismissible while paused in the app, once the sleep timer has stopped playback,
+            // and when the system took the activity away (243)
+            if (foreground && (MainActivity.isVisible() || sleepDone || interrupted)) stopFg(false);
+            notifyIfChanged();
             MAIN.removeCallbacks(idleStop);
             MAIN.postDelayed(idleStop, sleepDone ? SLEEP_DONE_STOP_MS : IDLE_STOP_MS);
+            MAIN.removeCallbacks(idleDetach);
+            if (foreground) MAIN.postDelayed(idleDetach, IDLE_DETACH_MS);
         }
     }
 
+    private String notifKey() {
+        return title + "|" + artist + "|" + isPlaying() + "|" + SleepTimer.buttonLabel() + "|" + SleepTimer.timed() + "|"
+                + Prefs.on(this, Prefs.NOTIF_SEEK) + "|" + Prefs.on(this, Prefs.NOTIF_WL) + "|" + (art != null && artUrl.equals(artLoadedFor) ? artLoadedFor : "")
+                + "|" + interrupted + "|" + longBuffer + "|" + foreground;
+    }
+
+    private Notification notification() {
+        lastNotifKey = notifKey();
+        return buildNotification();
+    }
+
+    private void notifyIfChanged() {
+        String k = notifKey();
+        if (k.equals(lastNotifKey)) return;
+        lastNotifKey = k;
+        try { nm.notify(NOTIFICATION_ID, buildNotification()); } catch (Exception ignored) {}
+    }
+
+    /**
+     * Media session buttons (289). Android 13+ (ColorOS media card, lock screen) draws its buttons
+     * from the PlaybackState, not from the notification: with "-10 s / +30 s" the skip actions are
+     * left out so their slots take the custom rewind / forward actions, and "watch later" becomes
+     * a custom action too. Older systems keep the notification buttons as before.
+     */
+    private PlaybackState buildState(boolean seekButtons, boolean wl, String sleepLabel) {
+        boolean cards = Build.VERSION.SDK_INT >= 33;
+        long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
+                | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
+                | PlaybackState.ACTION_REWIND | PlaybackState.ACTION_FAST_FORWARD;
+        if (!(cards && seekButtons)) actions |= PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS;
+        PlaybackState.Builder pb = new PlaybackState.Builder()
+                .setActions(actions)
+                .setState(state == PlaybackState.STATE_NONE ? PlaybackState.STATE_PAUSED : state,
+                        positionMs, state == PlaybackState.STATE_PLAYING ? rate : 0f, positionAt);
+        if (cards && seekButtons) {
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_REW, "快退 10 秒", R.drawable.ic_replay_10_white).build());
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_FWD, "快进 30 秒", R.drawable.ic_forward_30_white).build());
+        }
+        pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_SLEEP, sleepLabel, R.drawable.ic_timer_white).build());
+        if (SleepTimer.timed()) {
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                    ACTION_EXTEND, "+" + SleepTimer.EXTEND_MIN + " 分钟", R.drawable.ic_add_time_white).build());
+        } else if (cards && wl) {
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_WL, "稍后观看", R.drawable.ic_watch_later_white).build());
+        }
+        return pb.build();
+    }
+
+    private final Runnable longBufferRun = () -> {
+        if (state != PlaybackState.STATE_BUFFERING) return;
+        longBuffer = true;
+        Diag.log("net", "buffering > 10 min: locks released");
+        releaseLocks();
+        update();
+    };
+
     private final Runnable idleStop = () -> {
         if (state != PlaybackState.STATE_PLAYING && state != PlaybackState.STATE_BUFFERING) stopSelfNow();
+    };
+
+    private final Runnable idleDetach = () -> {
+        if (!isPlaying() && foreground) {
+            stopFg(false);
+            lastNotifKey = "";
+            notifyIfChanged();
+        }
     };
 
     private void goForeground(Notification n) {
@@ -505,7 +648,14 @@ public class PlaybackService extends Service {
             else startForeground(NOTIFICATION_ID, n);
             foreground = true;
         } catch (Exception e) {
-            // e.g. ForegroundServiceStartNotAllowedException when resumed from the background
+            // e.g. ForegroundServiceStartNotAllowedException when resumed from the background (291):
+            // remember it, retried when the app comes to the front, shown in the keep-alive card
+            long now = System.currentTimeMillis();
+            if (now - lastDeniedLog > 10 * 60_000L) {   // once per 10 minutes, not on every update
+                lastDeniedLog = now;
+                Diag.log("fgs-denied", String.valueOf(e));
+                try { Prefs.put(this, Prefs.FGS_DENIED_AT, now); } catch (Exception ignored) {}
+            }
             try { nm.notify(NOTIFICATION_ID, n); } catch (Exception ignored) {}
         }
     }
@@ -516,6 +666,7 @@ public class PlaybackService extends Service {
         if (Build.VERSION.SDK_INT >= 24) stopForeground(remove ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
         else stopForeground(remove);
         foreground = false;
+        lastNotifKey = "";
     }
 
     private static int piFlags() {
@@ -535,12 +686,15 @@ public class PlaybackService extends Service {
                 : new Notification.Builder(this).setPriority(Notification.PRIORITY_LOW);
 
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (interrupted) open.putExtra(EXTRA_RESUME, true);
         String sleep = SleepTimer.status();
+        String text = interrupted ? "播放被系统中断 · 点此继续" : longBuffer ? "网络中断，等待恢复后继续" : artist;
 
         b.setSmallIcon(R.drawable.ic_stat_yiwei)
                 .setContentTitle(title.isEmpty() ? getString(R.string.app_name) : title)
-                .setContentText(artist)
-                .setContentIntent(PendingIntent.getActivity(this, 11, open, piFlags()))
+                .setContentText(text)
+                .setContentIntent(PendingIntent.getActivity(this, interrupted ? 12 : 11, open, piFlags()))
+                .setDeleteIntent(action(ACTION_DISMISS, 13))
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setShowWhen(false)
                 .setOngoing(playing)
@@ -556,8 +710,11 @@ public class PlaybackService extends Service {
                         ? new Notification.Action.Builder(R.drawable.ic_forward_30_white, "快进 30 秒", action(ACTION_FWD, 7)).build()
                         : new Notification.Action.Builder(R.drawable.ic_skip_next_white, "下一个", action(ACTION_NEXT, 4)).build())
                 .addAction(new Notification.Action.Builder(R.drawable.ic_timer_white,
-                        sleep != null ? sleep : "睡眠定时", action(ACTION_SLEEP, 5)).build());
-        if (SleepTimer.timed()) {
+                        SleepTimer.buttonLabel(), action(ACTION_SLEEP, 5)).build());
+        if (!playing && !SleepTimer.timed()) {
+            // paused: the fifth button closes playback and the notification (290)
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_close_white, "关闭", action(ACTION_CLOSE, 14)).build());
+        } else if (SleepTimer.timed()) {
             // half asleep: one more quarter hour without turning the screen on (14)
             b.addAction(new Notification.Action.Builder(R.drawable.ic_add_time_white,
                     "+" + SleepTimer.EXTEND_MIN + " 分钟", action(ACTION_EXTEND, 8)).build());

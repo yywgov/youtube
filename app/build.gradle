@@ -36,6 +36,11 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    // JVM unit tests (417): plain-Java logic only; Android stubs return defaults instead of throwing
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
     lint {
         abortOnError false
         checkReleaseBuilds false
@@ -46,4 +51,5 @@ dependencies {
     implementation 'androidx.webkit:webkit:1.12.0'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     implementation 'androidx.core:core:1.13.1' // FileProvider for the updater
+    testImplementation 'junit:junit:4.13.2'
 }

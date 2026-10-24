@@ -276,18 +276,9 @@ public final class Updater {
         b.show();
     }
 
-    /** Release notes are markdown; keep them readable as plain text. */
+    /** Release notes are markdown; keep them readable as plain text (shared with tests, 397). */
     static String cleanNotes(String md) {
-        if (md == null) return "";
-        String s = md.replace("\r", "")
-                .replaceAll("(?m)^#{1,6}\\s*", "")
-                .replaceAll("\\*\\*(.+?)\\*\\*", "$1")
-                .replaceAll("(?m)^\\s*[-*]\\s+", "• ")
-                .replaceAll("\\[([^\\]]+)\\]\\((https?://[^)]+)\\)", "$1")
-                .replaceAll("\n{3,}", "\n\n")
-                .trim();
-        if (s.length() > 2500) s = s.substring(0, 2500) + "…";
-        return s;
+        return Logic.cleanNotes(md);
     }
 
     // ===================== download =====================
@@ -609,40 +600,9 @@ public final class Updater {
         }
     }
 
-    /**
-     * Semantic-ish comparison: numeric dotted core, then a pre-release suffix
-     * ("1.1.0-dev.12") sorts before the plain release ("1.1.0"). Leading v ignored.
-     */
+    /** See {@link Logic#compareVersions}. */
     public static int compareVersions(String a, String b) {
-        a = a == null ? "" : a.trim();
-        b = b == null ? "" : b.trim();
-        if (a.startsWith("v") || a.startsWith("V")) a = a.substring(1);
-        if (b.startsWith("v") || b.startsWith("V")) b = b.substring(1);
-        String[] pa = splitPre(a), pb = splitPre(b);
-        String[] na = pa[0].split("\\."), nb = pb[0].split("\\.");
-        for (int i = 0; i < Math.max(na.length, nb.length); i++) {
-            long x = i < na.length ? num(na[i]) : 0, y = i < nb.length ? num(nb[i]) : 0;
-            if (x != y) return x < y ? -1 : 1;
-        }
-        boolean preA = !pa[1].isEmpty(), preB = !pb[1].isEmpty();
-        if (preA != preB) return preA ? -1 : 1;
-        return 0;
-    }
-
-    private static String[] splitPre(String v) {
-        int i = v.indexOf('-');
-        int j = v.indexOf('+');
-        if (j >= 0 && (i < 0 || j < i)) i = j;
-        return i < 0 ? new String[]{v, ""} : new String[]{v.substring(0, i), v.substring(i + 1)};
-    }
-
-    private static long num(String s) {
-        StringBuilder d = new StringBuilder();
-        for (char ch : s.toCharArray()) {
-            if (ch >= '0' && ch <= '9') d.append(ch);
-            else break;
-        }
-        try { return d.length() == 0 ? 0 : Long.parseLong(d.toString()); } catch (Exception e) { return 0; }
+        return Logic.compareVersions(a, b);
     }
 
     private static String readAll(InputStream in) throws java.io.IOException {

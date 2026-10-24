@@ -99,6 +99,11 @@ public final class Prefs {
     public static final String LAST_UPDATE_CHECK = "lastUpdateCheck";
     public static final String SKIP_VERSION = "skipVersion";
     public static final String PENDING_APK = "pendingApk";
+    // batch 4 (v1.6.0) state – never part of a backup
+    /** Running sleep timer "mode|endWallMs|countLeft|savedAtMs" so a restarted process keeps it (244). */
+    public static final String SLEEP_STATE = "sleepState";
+    /** Wall time the last foreground-service start was refused (291); 0 = fine. */
+    public static final String FGS_DENIED_AT = "fgsDeniedAt";
 
     private Prefs() {}
 
@@ -112,10 +117,11 @@ public final class Prefs {
     public static boolean perfCss(Context c) { return get(c).getBoolean(PERF_CSS, true); }
 
     /** All SponsorBlock categories offered in settings, with their labels. */
-    public static final String[] SB_CATS = {"sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "music_offtopic", "filler"};
+    public static final String[] SB_CATS = PrefsModel.SB_CATS;
     public static final String[] SB_LABELS = {"赞助", "自我推广", "求订阅/互动", "片头", "片尾", "预告/回顾", "非音乐部分", "离题闲聊"};
 
     public static java.util.List<String> sponsorCats(Context c) {
+        // SB_CATS here and in PrefsModel are the same list (contract test)
         java.util.List<String> out = new java.util.ArrayList<>();
         String v = get(c).getString(SPONSOR_CATS, "sponsor");
         if (v == null) v = "sponsor";
@@ -151,65 +157,127 @@ public final class Prefs {
     }
 
     // defaults for every boolean setting, in one place (also used by "restore defaults")
-    public static boolean def(String key) {
-        switch (key) {
-            case NORMALIZE: case REMEMBER_RATE: case SLEEP_CALM: case NOTIF_SEEK:
-            case HIDE_LIVE: case HIDE_SHELVES: case SUBS_ONLY_VIDEOS: case UPDATE_MIRROR: case AMOLED:
-            case COMPACT: case CARD_STYLE: case DIM_THUMBS:
-                return false;
-            default: return true;
-        }
-    }
+    public static boolean def(String key) { return PrefsModel.defBool(key); }
     public static boolean on(Context c, String key) { return get(c).getBoolean(key, def(key)); }
 
-    /** Every user setting (not state): backup / restore (98) and "restore defaults" (136). */
-    public static final String[] BOOL_KEYS = {SPONSOR_BLOCK, LOW_QUALITY_BG, HIDE_WATCHED, PERF_CSS, SLEEP_REMEMBER, SLEEP_BADGE,
-            NIGHT_PROMPT, SLEEP_CALM, NOTIF_SEEK, HEADSET_MULTI, RESUME_PROMPT, RESUME_LOCAL, REMEMBER_RATE, ORIG_AUDIO,
-            NO_END_WALL, NORMALIZE, HIDE_LIVE, HIDE_SHELVES, SUBS_ONLY_VIDEOS, REFRESH_COUNT, HIDE_SEARCH_EXTRAS, REMOTE_RULES,
-            UPDATE_MIRROR, AMOLED, FONT_FOLLOW, COMPACT, CARD_STYLE, DIM_THUMBS, LONG_PRESS, SEARCH_FOCUS, SEARCH_CHIPS,
-            KEEP_SCROLL, HAPTIC, POWER_SAVE_AUTO, NOTIF_WL};
-    public static final String[] INT_KEYS = {SLEEP_DEFAULT, SLEEP_FADE, SEEN_MIN, MIN_DUR, MAX_AGE};
-    public static final String[] STR_KEYS = {SPONSOR_CATS, NEXT_SOURCE, QUALITY, RATE, CAPTIONS, SUB_SIZE, SUB_BG,
-            BLOCK_CHANNELS, BLOCK_WORDS, START_PAGE, ACCENT};
+    /** Every user setting (not state): backup / restore (98) and "restore defaults" (136); the lists live in {@link PrefsModel}. */
+    public static final String[] BOOL_KEYS = PrefsModel.BOOL_KEYS;
+    public static final String[] INT_KEYS = PrefsModel.INT_KEYS;
+    public static final String[] STR_KEYS = PrefsModel.STR_KEYS;
 
-    public static String exportJson(Context c) {
+    /** SharedPreferences seen through the model's store interface; writes go out with one apply(). */
+    static final class PrefStore implements PrefsModel.Store {
+        private final java.util.Map<String, ?> all;
+        private final SharedPreferences.Editor e;
+        private final java.util.Map<String, Object> pending = new java.util.HashMap<>();
+        private final java.util.Set<String> removed = new java.util.HashSet<>();
+        PrefStore(SharedPreferences p) { all = p.getAll(); e = p.edit(); }
+        @Override public Object get(String k) {
+            if (removed.contains(k)) return null;
+            if (pending.containsKey(k)) return pending.get(k);
+            return all.get(k);
+        }
+        @Override public void put(String k, Object v) {
+            removed.remove(k);
+            pending.put(k, v);
+            if (v instanceof Boolean) e.putBoolean(k, (Boolean) v);
+            else if (v instanceof Integer) e.putInt(k, (Integer) v);
+            else if (v instanceof Long) e.putLong(k, (Long) v);
+            else if (v instanceof Number) e.putInt(k, ((Number) v).intValue());
+            else if (v != null) e.putString(k, String.valueOf(v));
+        }
+        @Override public void remove(String k) { pending.remove(k); removed.add(k); e.remove(k); }
+        void apply() { e.apply(); }
+    }
+
+    /**
+     * Settings schema migration (226): first thing in MainActivity.onCreate. Idempotent; a failure is
+     * only logged and never blocks the start. Key names / types / meanings are never changed by it.
+     */
+    public static void migrate(Context c) {
+        try {
+            PrefStore s = new PrefStore(get(c));
+            if (PrefsModel.migrate(s)) {
+                s.apply();
+                Diag.log("prefs", "schema -> " + PrefsModel.SCHEMA);
+            }
+        } catch (Throwable t) {
+            try { Diag.log("prefs", "migrate failed: " + t); } catch (Throwable ignored) {}
+        }
+    }
+
+    /** Backup v2 (241): {"app":"YiWei","v":2,"schema":2,"exportedAt":…,"appVersion":…, keys…}. */
+    public static String exportJson(Context c) { return exportJson(c, null); }
+
+    public static String exportJson(Context c, String appVersion) {
         try {
             JSONObject o = new JSONObject();
-            o.put("app", "YiWei");
-            o.put("v", 1);
-            SharedPreferences p = get(c);
-            for (String k : BOOL_KEYS) if (p.contains(k)) o.put(k, p.getBoolean(k, def(k)));
-            for (String k : INT_KEYS) if (p.contains(k)) o.put(k, p.getInt(k, 0));
-            for (String k : STR_KEYS) if (p.contains(k)) o.put(k, p.getString(k, ""));
+            o.put("app", "YiWei");   // ASCII name: v1.5.1 and older only accept "YiWei" / "YT Lite"
+            o.put("v", 2);
+            o.put("schema", PrefsModel.SCHEMA);
+            o.put("exportedAt", System.currentTimeMillis());
+            if (appVersion != null) o.put("appVersion", appVersion);
+            for (java.util.Map.Entry<String, Object> en : PrefsModel.exportMap(new PrefStore(get(c))).entrySet()) o.put(en.getKey(), en.getValue());
             return o.toString(1);
         } catch (Exception e) {
             return "{}";
         }
     }
 
-    /** Import a backup; only known keys with the right type are taken. Returns how many were applied, -1 if not a backup. */
-    public static int importJson(Context c, String json) {
+    private static java.util.Map<String, Object> toMap(JSONObject o) {
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        java.util.Iterator<String> it = o.keys();
+        while (it.hasNext()) {
+            String k = it.next();
+            Object v = o.opt(k);
+            if (v != null && v != JSONObject.NULL) m.put(k, v);
+        }
+        return m;
+    }
+
+    /**
+     * Import a backup (v1 or v2); every value is checked against the options this version offers,
+     * the rest is skipped and counted. Returns null when the text is not a backup of this app.
+     */
+    public static PrefsModel.ImportResult importJson(Context c, String json) { return importJson(c, json, false); }
+
+    public static PrefsModel.ImportResult importJson(Context c, String json, boolean replace) {
         try {
             JSONObject o = new JSONObject(json.trim());
-            if (!"YiWei".equals(o.optString("app")) && !"YT Lite".equals(o.optString("app"))) return -1;
-            SharedPreferences.Editor e = get(c).edit();
-            int n = 0;
-            for (String k : BOOL_KEYS) if (o.has(k) && o.get(k) instanceof Boolean) { e.putBoolean(k, o.getBoolean(k)); n++; }
-            for (String k : INT_KEYS) if (o.has(k) && o.get(k) instanceof Number) { e.putInt(k, o.getInt(k)); n++; }
-            for (String k : STR_KEYS) if (o.has(k) && o.get(k) instanceof String && o.getString(k).length() < 4000) { e.putString(k, o.getString(k)); n++; }
-            e.apply();
-            return n;
+            PrefStore s = new PrefStore(get(c));
+            PrefsModel.ImportResult r = PrefsModel.importMap(toMap(o), s, replace);
+            if (r.notBackup) return null;
+            s.apply();
+            return r;
         } catch (Exception ex) {
-            return -1;
+            return null;
         }
     }
 
+    /** "Restore defaults" (136): block lists are kept (240), see {@link #clearBlockLists}. */
     public static void restoreDefaults(Context c) {
-        SharedPreferences.Editor e = get(c).edit();
-        for (String k : BOOL_KEYS) e.remove(k);
-        for (String k : INT_KEYS) e.remove(k);
-        for (String k : STR_KEYS) e.remove(k);
-        e.apply();
+        PrefStore s = new PrefStore(get(c));
+        PrefsModel.restoreDefaults(s);
+        s.apply();
+    }
+
+    public static void clearBlockLists(Context c) {
+        get(c).edit().remove(BLOCK_CHANNELS).remove(BLOCK_WORDS).apply();
+    }
+
+    /** Snapshot before "restore defaults" / import, kept for undo (406). */
+    public static void saveSnapshot(Context c) {
+        put(c, PrefsModel.SNAPSHOT, exportJson(c));
+    }
+
+    /** Put the settings back exactly as in the last snapshot. False when there is none. */
+    public static boolean undoSnapshot(Context c) {
+        String snap = str(c, PrefsModel.SNAPSHOT, "");
+        if (snap.isEmpty()) return false;
+        PrefsModel.ImportResult r = importJson(c, snap, true);
+        if (r == null) return false;
+        get(c).edit().remove(PrefsModel.SNAPSHOT).apply();
+        return true;
     }
 
     static java.util.List<String> lines(Context c, String key) {

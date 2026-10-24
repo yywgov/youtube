@@ -141,7 +141,7 @@ test('length mismatch is treated as an ad: cover, mute, 16x, logged once; restor
   env.tick(400);
   fire(w, v, 'timeupdate');
   assert.equal(calls.filter((c) => c[0] === 'logAd').length, 1);
-  assert.equal(JSON.stringify(calls.find((c) => c[0] === 'logAd').slice(1)), JSON.stringify([VID, 'length-mismatch', 'watch']));
+  assert.equal(JSON.stringify(calls.find((c) => c[0] === 'logAd').slice(1, 4)), JSON.stringify([VID, 'length-mismatch', 'watch']));
   // the real video arrives
   st.duration = 600; st.currentTime = 0;
   fire(w, v, 'loadedmetadata');
@@ -285,7 +285,9 @@ test('page types', async () => {
   const { w } = await load({ path: '/' });
   const t = w.ytl._.pageType;
   assert.equal(t('/'), 'home'); assert.equal(t('/watch'), 'watch'); assert.equal(t('/live/x'), 'watch');
-  assert.equal(t('/results'), 'search'); assert.equal(t('/feed/subscriptions'), 'feed');
+  assert.equal(t('/results'), 'search'); assert.equal(t('/feed/subscriptions'), 'subs');
+  assert.equal(t('/feed/history'), 'history'); assert.equal(t('/feed/trending'), 'feed'); assert.equal(t('/playlist'), 'playlist');
+  assert.equal(t('/feed/library'), 'library');
   assert.equal(t('/@chan/videos'), 'channel'); assert.equal(t('/account'), 'other');
 });
 

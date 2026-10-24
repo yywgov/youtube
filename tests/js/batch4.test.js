@@ -241,14 +241,20 @@ function listOf(name) {
 }
 const BOOL = listOf('BOOL_KEYS'), INT = listOf('INT_KEYS'), STR = listOf('STR_KEYS');
 const STATE = ['nightShown', 'lastVideo', 'lastPos', 'lastTitle', 'lastAt', 'updateReady', 'lastRunVersion', 'notesFor', 'notes',
-  'watchStats', 'askedBattery', 'askedNotif', 'lastUpdateCheck', 'skipVersion', 'pendingApk', 'sleepState', 'fgsDeniedAt'];
+  'watchStats', 'askedBattery', 'askedNotif', 'lastUpdateCheck', 'skipVersion', 'pendingApk', 'sleepState', 'fgsDeniedAt',
+  // batch 5 (v1.7.0)
+  'selfCheckWarned', 'updateLastResult', 'chUaFix'];
+// keys added after v1.5.1 (new names only; never a rename of an old one)
+const ADDED = { bool: ['wifiSaver', 'idleGuard', 'skipWatchedNext', 'fontLarge', 'orientRemember'], int: ['nightStart', 'nightEnd', 'orientLock'], str: [] };
 
-test('contract: the 51 setting keys are unchanged and each is in exactly one backup list', async () => {
+test('contract: the 51 v1.5.1 setting keys are unchanged, new ones only added, each in exactly one backup list', async () => {
   const all = BOOL.concat(INT, STR);
-  assert.equal(BOOL.length, 35);
-  assert.equal(INT.length, 5);
-  assert.equal(STR.length, 11);
-  assert.equal(new Set(all).size, 51, 'no duplicates');
+  assert.equal(BOOL.length, 35 + ADDED.bool.length);
+  assert.equal(INT.length, 5 + ADDED.int.length);
+  assert.equal(STR.length, 11 + ADDED.str.length);
+  for (const k of ADDED.bool) assert.ok(BOOL.includes(k), k);
+  for (const k of ADDED.int) assert.ok(INT.includes(k), k);
+  assert.equal(new Set(all).size, all.length, 'no duplicates');
   // the exact names shipped up to v1.5.1 (renaming any would lose the user's value on upgrade)
   const V151 = ['sponsorBlock', 'lowQualityBg', 'hideWatched', 'perfCss', 'sleepRemember', 'sleepBadge', 'nightPrompt', 'sleepCalm',
     'notifSeek', 'headsetMulti', 'resumePrompt', 'resumeLocal', 'rememberRate', 'origAudio', 'noEndWall', 'normalize', 'hideLive',
@@ -256,7 +262,9 @@ test('contract: the 51 setting keys are unchanged and each is in exactly one bac
     'compact', 'cardStyle', 'dimThumbs', 'longPress', 'searchFocus', 'searchChips', 'keepScroll', 'haptic', 'powerSaveAuto',
     'notifWatchLater', 'sleepDefault', 'sleepFade', 'seenMin', 'minDur', 'maxAgeDays', 'sponsorCats', 'nextSource', 'quality',
     'rate', 'captions', 'subSize', 'subBg', 'blockChannels', 'blockWords', 'startPage', 'accent'];
-  assert.deepEqual([...all].sort(), [...V151].sort());
+  const added = ADDED.bool.concat(ADDED.int, ADDED.str);
+  assert.deepEqual([...all].filter((k) => !added.includes(k)).sort(), [...V151].sort());
+  for (const k of added) assert.ok(!V151.includes(k), k + ' is new');
   // every constant in Prefs is either a setting in a backup list or a known state key
   for (const [n, v] of Object.entries(consts)) {
     if (n === 'FILE') continue;

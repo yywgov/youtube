@@ -1,0 +1,1 @@
+{"note":"Player-response keys that only carry ads. One list for the native watch-page filter (WatchPageFilter) and the page script (ytlite.js); the contract test keeps both built-in copies equal to this file.","keys":["adPlacements","playerAds","adSlots","adBreakHeartbeatParams"]}

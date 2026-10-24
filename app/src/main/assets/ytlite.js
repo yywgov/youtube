@@ -47,7 +47,7 @@
     resumeLocal: true,      // signed out: remember where each video was left (28)
     quality: 'auto',        // auto | wifiMax | 1080 | 720 | 480 (29)
     rememberRate: false, rate: 1,   // (30)
-    captions: 'yt',         // yt | off | zh (31)
+    captions: 'yt',         // yt | off | zh | zhHans | zhHant | en (31/341)
     origAudio: true,        // prefer the original audio track over auto-dubs (32)
     noEndWall: true,        // no recommendation wall when a video ends (36)
     normalize: false,       // WebAudio compressor, experimental (20)
@@ -74,7 +74,12 @@
     searchChips: true,      // quick filter chips on search results (125)
     keepScroll: true,       // back to a list returns to where you were (119)
     powerSave: false,       // battery saver on: cap quality, no animations (147) – set by Java
-    updateDot: false        // a new version is ready: dot on the settings gear (137) – set by Java
+    updateDot: false,       // a new version is ready: dot on the settings gear (137) – set by Java
+    // batch 5 (v1.7.0)
+    lowMotion: false,       // system "remove animations" is on (367) – set by Java
+    fontLarge: false,       // text zoom may go up to 160 %: titles get a third line (378)
+    skipWatchedNext: false, // recommended autoplay: skip a target already watched (311)
+    appName: '一维视频'      // display name for the gear's screen-reader label (374)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
@@ -105,6 +110,9 @@
   if (cfg.badge) badgeText = String(cfg.badge);
   delete cfg.stopAtEnd; delete cfg.bg; delete cfg.sleeping; delete cfg.countMode; delete cfg.badge;
   var sleepMode = !!cfg.sleepMode; delete cfg.sleepMode;   // one-tap sleep mode (97)
+  // ad keys shared with the native watch-page filter (279): assets/adkeys.json, handed over by getConfig
+  var extraAdKeys = Array.isArray(cfg.adKeys) ? cfg.adKeys.filter(function (k) { return typeof k === 'string' && /^[A-Za-z][A-Za-z0-9]{2,40}$/.test(k); }) : [];
+  delete cfg.adKeys;
   // remote rules (73): extra hide selectors fetched natively from this app's own repository,
   // checked there (SHA-256 + schema) and here (each selector parsed on its own); never required
   var remote = { hide: [] };
@@ -113,6 +121,8 @@
       var rr = JSON.parse(B.getRemoteRules() || '{}');
       if (rr && rr.hide && Array.isArray(rr.hide)) remote.hide = rr.hide.filter(function (x) { return typeof x === 'string' && x.length < 200; }).slice(0, 200);
       remote.version = rr.version || 0;
+      // sponsored-card labels the text fallback should also match (285), short exact texts only
+      if (rr && Array.isArray(rr.adText)) remote.adText = rr.adText.filter(function (x) { return typeof x === 'string' && x.trim().length > 0 && x.length <= 20; }).slice(0, 20);
     }
   } catch (e) {}
 
@@ -201,7 +211,9 @@
         ' .ytp-ad-skip-button-slot button, button[id^="skip-button"], .ytm-skip-ad-button, ytm-skip-ad-button button',
       watchedBar: '.ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment, .thumbnail-overlay-resume-playback-progress,' +
         ' ytm-thumbnail-overlay-resume-playback-renderer [style*="width"]',
-      feedItem: 'ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer',
+      feedItem: 'ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-playlist-video-renderer',
+      // short labels on a card that mark it as sponsored (285): matched by exact text only
+      adLabel: 'badge-shape, .badge-shape-wiz__text, ytm-badge, ytm-badge-supported-renderer, [class*="ad-badge" i], [class*="AdBadge"]',
       menu: 'ytm-menu-service-item-renderer, ytm-menu-navigation-item-renderer, ytm-menu-item, ytm-compact-link-renderer,' +
         ' [role="menuitem"], .menu-item, ytm-bottom-sheet-renderer yt-list-item-view-model,' +
         ' bottom-sheet-container yt-list-item-view-model, ytm-multi-page-menu-renderer yt-list-item-view-model,' +
@@ -283,10 +295,15 @@
     rule(RULES.menuBtn.map(function (x) { return x + '::after'; }), "content:'';position:absolute;inset:-8px");
     // search extras (70), subscriptions videos only (63), home shelves (61)
     rule(RULES.searchExtras.map(function (x) { return 'html[data-ytl-nosearchx][data-ytl-page="search"] ' + x; }), 'display:none!important');
-    rule(RULES.subsPosts.map(function (x) { return 'html[data-ytl-subsvideos][data-ytl-page="feed"] ' + x; }), 'display:none!important');
+    rule(RULES.subsPosts.map(function (x) { return 'html[data-ytl-subsvideos][data-ytl-page="subs"] ' + x; }), 'display:none!important');
     rule(RULES.homeShelves.map(function (x) { return 'html[data-ytl-noshelves][data-ytl-page="home"] ' + x; }), 'display:none!important');
     // battery saver (147): animations off even when the smoothness CSS is off
     rule(RULES.perf.noAnim.map(function (x) { return 'html[data-ytl-lowpower] ' + x; }), 'animation:none!important;transition:none!important');
+    // system "remove animations" (367): page transitions and our own fades off
+    rule(RULES.perf.noAnim.map(function (x) { return 'html[data-ytl-lowmotion] ' + x; }), 'animation:none!important;transition:none!important');
+    out.push('html[data-ytl-lowmotion] #ytl-sb,html[data-ytl-lowmotion] #ytl-chips a{transition:none!important;animation:none!important}');
+    // very large text (378): card titles get a third line instead of being cut after two
+    out.push('html[data-ytl-bigfont] .media-item-headline,html[data-ytl-bigfont] ytm-media-item h3{-webkit-line-clamp:3!important}');
     // update ready (137)
     out.push('html[data-ytl-update] #ytl-gear{position:relative}html[data-ytl-update] #ytl-gear::after{content:"";position:absolute;top:9px;right:9px;width:8px;height:8px;border-radius:50%;background:#ff4e45}');
     // search quick filters (125)
@@ -341,6 +358,12 @@
     if (p === '/watch' || p.indexOf('/live/') === 0) return 'watch';
     if (p === '/' || p === '') return 'home';
     if (p === '/results') return 'search';
+    // finer list pages (325): rules for the subscriptions feed no longer reach history, and the
+    // playlist page (watch later) gets the list features
+    if (p === '/feed/subscriptions') return 'subs';
+    if (p === '/feed/history') return 'history';
+    if (p === '/feed/library' || p === '/feed/you' || p === '/feed/playlists') return 'library';
+    if (p === '/playlist') return 'playlist';
     if (p.indexOf('/feed/') === 0) return 'feed';
     if (/^\/(?:@|channel\/|c\/|user\/)/.test(p)) return 'channel';
     return 'other';
@@ -390,12 +413,15 @@
   };
   try { Object.defineProperty(navigator, 'mediaSession', { value: ms, configurable: true }); } catch (e) { report('mediaSession', e); }
 
-  var metaTimer = 0, lastMetaKey = '';
+  var metaTimer = 0, lastMetaKey = '', metaHeld = false;
   function scheduleMeta() { clearTimeout(metaTimer); metaTimer = setTimeout(sendMeta, 150); }
   var sendMeta = guard('meta', function () {
     var v = video();
     var id = videoId();
     if (!v || !id) return;
+    // an ad still playing (283): its title / picture never reach the notification or lock screen;
+    // the real metadata goes out once the ad is over (skipAd)
+    if (adNow()) { metaHeld = true; return; }
     var title = '', artist = '', art = '';
     if (meta && meta.title) {
       title = meta.title; artist = meta.artist || '';
@@ -450,11 +476,32 @@
     v.volume = Math.max(0, Math.min(1, x)) * savedVolume;
   }
   function restoreVolume() {
+    fadeStop();
     var v = video();
     if (v && savedVolume >= 0) v.volume = savedVolume;
     savedVolume = -1;
   }
-  function sleepPause() { pause(); setTimeout(restoreVolume, 400); }
+  /* Sleep fade driven here (299): Java says once "the fade ends in leftMs, it lasts fadeMs" and the
+   * page steps the volume every 250 ms on that curve (setTimeout: rAF does not run with the screen
+   * off). Java sends it again every few seconds, which also covers a reload in the middle. */
+  var fade = { timer: 0, end: 0, len: 0 };
+  function fadeStop() { clearTimeout(fade.timer); fade.timer = 0; fade.end = 0; }
+  function fadeStep() {
+    fade.timer = 0;
+    if (!fade.end) return;
+    var left = fade.end - Date.now();
+    setVolume(fadeVolume(Math.max(0, left), fade.len));
+    if (left > 0) fade.timer = setTimeout(guard('fade', fadeStep), 250);
+  }
+  function fadeStart(leftMs, fadeMs) {
+    leftMs = Number(leftMs); fadeMs = Number(fadeMs);
+    if (!(fadeMs > 0) || !isFinite(leftMs)) return;
+    fade.end = Date.now() + Math.max(0, leftMs);
+    fade.len = fadeMs;
+    clearTimeout(fade.timer);
+    fadeStep();
+  }
+  function sleepPause() { fadeStop(); pause(); setTimeout(restoreVolume, 400); }
   /** Sleep fade (298): (left / fade)², same curve as the Java timer (Logic.fadeVolume). */
   function fadeVolume(left, fade) {
     if (!(fade > 0)) return left > 0 ? 1 : 0;
@@ -505,7 +552,8 @@
   function toolState() {
     var v = video();
     return {
-      watch: isWatch(), id: curId, rate: v ? (v.playbackRate || 1) : 1, loop: loopOne,
+      // a loaded video counts, also in the mini player while browsing (338)
+      watch: !!(curId && v) || isWatch(), id: curId, rate: v ? (v.playbackRate || 1) : 1, loop: loopOne,
       a: abA, b: abB, list: hasList(), shuffle: !!(player() && typeof player().setShuffle === 'function')
     };
   }
@@ -626,8 +674,8 @@
     var v = video();
     if (!v || userPaused) { netTries = 0; return; }
     if (!v.paused && v.readyState >= 3) { netTries = 0; return; }
-    if (!navigator.onLine) { stalled = true; return; } // wait for the next 'online'
-    if (++netTries >= 3) { netTries = 0; reloadAt('net-retry'); return; }
+    if (!navigator.onLine) { stalled = true; call('netStalled', true); return; } // wait for the next 'online'
+    if (++netTries >= 3) { netTries = 0; call('netStalled', true); reloadAt('net-retry'); return; }
     stalled = true;
     onNet();
   });
@@ -635,7 +683,7 @@
     var v = video();
     if (!v || v.paused || userPaused || adNow()) return;
     if (v.readyState >= 3) return;
-    if (!navigator.onLine) { stalled = true; return; }
+    if (!navigator.onLine) { stalled = true; call('netStalled', true); return; }
     retryOnce('stuck');
   });
   // "An error occurred, please try again (playback id …)": retry once. Unavailable / private /
@@ -661,28 +709,35 @@
     var el = document.getElementById('ytl-sb');
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
-  function showSbPrompt(idx, seg) {
+  /** Small bar at the bottom of the page with one action (SponsorBlock undo, hide undo 324). */
+  function snackBar(text, action, fn, ms) {
     hideSbPrompt();
     var host = document.body || document.documentElement;
     if (!host) return;
     var el = document.createElement('div');
     el.id = 'ytl-sb';
+    el.setAttribute('role', 'status');
     var span = document.createElement('span');
-    span.textContent = '已跳过' + (SB_LABEL[seg[2]] || '赞助片段');
+    span.textContent = text;
     var btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = '撤销';
-    btn.addEventListener('click', guard('sb-undo', function (ev) {
+    btn.textContent = action;
+    btn.addEventListener('click', guard('snack-action', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
-      segSkipped[idx] = true;
-      var v = video();
-      if (v) v.currentTime = seg[0];
       hideSbPrompt();
+      fn();
     }), true);
     el.appendChild(span);
     el.appendChild(btn);
     host.appendChild(el);
-    sbTimer = setTimeout(hideSbPrompt, 2000);
+    sbTimer = setTimeout(hideSbPrompt, ms);
+  }
+  function showSbPrompt(idx, seg) {
+    snackBar('已跳过' + (SB_LABEL[seg[2]] || '赞助片段'), '撤销', function () {
+      segSkipped[idx] = true;
+      var v = video();
+      if (v) v.currentTime = seg[0];
+    }, 2000);
   }
   function sbTick(v, now) {
     if (!segments.length || now - lastSkip <= 1000 || adNow()) return;
@@ -702,9 +757,13 @@
   window.ytl = {
     play: play, pause: pause, next: next, prev: prev, seek: seek,
     setVolume: setVolume, restoreVolume: restoreVolume, sleepPause: sleepPause,
+    fadeStart: function (l, f) { fadeStart(l, f); },
+    // a native command threw inside the page (247): goes to the diagnostics log instead of nowhere
+    report: function (name, e) { report('java:' + String(name || '').slice(0, 40), e); },
     stopAtEnd: function (b) { stopAtEnd = !!b; if (!b) { pendingStop = false; restoreVolume(); } },
     // "after N videos" reached its last one (16). Looping (312): the repeat now playing is that one.
-    stopAtEndNext: function () { if (looping()) stopAtEnd = true; else pendingStop = true; },
+    // Counted on an early switch (301): the video that just started is the last one.
+    stopAtEndNext: function () { if (looping() || Date.now() - countedOnChange < 5000) stopAtEnd = true; else pendingStop = true; },
     bg: function (b) { setBg(!!b); },
     cfg: function (o) { cfg = Object.assign(cfg, o || {}); applyCfg(); },
     onSegments: function (id, arr) {
@@ -749,9 +808,14 @@
    *   - fetch() + Response.text()/json() for /youtubei/v1/player|next|reel and pbj
    *   - XMLHttpRequest responseText/response (m.youtube.com uses XHR for /player)
    * This script is a document-start script, so all hooks exist before YouTube's code. */
-  var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
-  var AD_TEST = /"(?:adPlacements|playerAds|adSlots|adBreakHeartbeatParams)"/;
-  var AD_SUB = /"(adPlacements|playerAds|adSlots|adBreakHeartbeatParams)"/g;
+  // built-in list == assets/adkeys.json == WatchPageFilter's fallback (279, contract test);
+  // keys added to adkeys.json reach both layers from one place
+  var AD_KEYS_BUILTIN = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+  var AD_KEYS = AD_KEYS_BUILTIN.slice();
+  for (var ak = 0; ak < extraAdKeys.length; ak++) if (AD_KEYS.indexOf(extraAdKeys[ak]) < 0) AD_KEYS.push(extraAdKeys[ak]);
+  var AD_ALT = AD_KEYS.join('|');
+  var AD_TEST = new RegExp('"(?:' + AD_ALT + ')"');
+  var AD_SUB = new RegExp('"(' + AD_ALT + ')"', 'g');
   var PRUNE_URL = /\/youtubei\/v1\/(?:player|next|reel\/)|[?&]pbj=1/;
   function toSet(a) { var o = {}; for (var i = 0; i < a.length; i++) o[a[i]] = true; return o; }
   // fields a player response keeps (playback, captions, storyboards, history/watch time, sign-in, end screen)
@@ -764,8 +828,8 @@
     'botguardData', 'playerOverlays', 'captionTracks', 'audioTracks', 'storyboard', 'thumbnail'
   ]);
   // fields that only carry ads / paid-promotion strip / Premium upsell
-  var PR_DROP = toSet(AD_KEYS.concat(['paidContentOverlay', 'videoQualityPromoSupportedRenderers',
-    'adPlacements_ytl', 'playerAds_ytl', 'adSlots_ytl', 'adBreakHeartbeatParams_ytl']));
+  var PR_DROP = toSet(AD_KEYS.concat(['paidContentOverlay', 'videoQualityPromoSupportedRenderers'],
+    AD_KEYS.map(function (k) { return k + '_ytl'; })));
   var AD_LIKE_KEY = /^ads?$|^ad[A-Z_]|[a-z]Ads?(?:_ytl)?$|Ad(?:Placement|Slot|Break)|^paidContent|Promo(?:Supported)?Renderers?$|^promo[A-Z]/;
   var unknownSeen = {};
   var lenById = {}, lenIds = [];   // videoId -> {len, live}  (3)
@@ -792,7 +856,12 @@
     if (vd && vd.videoId) {
       var len = parseInt(vd.lengthSeconds, 10);
       if (!lenById[vd.videoId]) { lenIds.push(vd.videoId); if (lenIds.length > 40) delete lenById[lenIds.shift()]; }
-      lenById[vd.videoId] = { len: isFinite(len) ? len : 0, live: !!(vd.isLive || vd.isLiveContent || vd.isUpcoming || vd.isPostLiveDvr) };
+      // live, upcoming, premieres and their replays never use the length check (282): their
+      // lengthSeconds is often not what the element ends up playing
+      var pmr = o.microformat && o.microformat.playerMicroformatRenderer;
+      var liveish = !!(vd.isLive || vd.isLiveContent || vd.isUpcoming || vd.isPostLiveDvr ||
+        (pmr && (pmr.liveBroadcastDetails || pmr.isLiveContent)));
+      lenById[vd.videoId] = { len: isFinite(len) ? len : 0, live: liveish };
       noteChannel(vd.videoId, vd.channelId, o.microformat);
     }
     preconnectStream(o.streamingData);
@@ -1024,7 +1093,15 @@
     var k = id + '|' + type;
     if (adLogged[k]) return;
     adLogged[k] = true;
-    call('logAd', id, type, pageType());
+    call('logAd', id, type, pageType(), adContext());
+  }
+  /** What a missed-ad line needs to tell which layer failed (280); Java adds WebView / native rewrite. */
+  function adContext() {
+    var sc = selfCheck(true), bad = Object.keys(sc).filter(function (k) { return !sc[k]; });
+    var li = '';
+    try { li = window.ytcfg && typeof ytcfg.get === 'function' ? String(ytcfg.get('LOGGED_IN')) : ''; } catch (e) {}
+    return 'sc=' + (bad.length ? 'FAIL:' + bad.join('+') : 'ok') + ' login=' + (li || '?') + ' rules=' + (remote.version || 0) +
+      ' keys=' + AD_KEYS.length;
   }
   /** Ad detection by length: main video element plays something far shorter than the video. */
   function lenMismatch(v) {
@@ -1060,6 +1137,7 @@
     if (!adNow()) {
       if (v && adMuted) { adMuted = false; v.muted = false; }
       if (v && adRate) { try { v.playbackRate = adRate; } catch (e) {} adRate = 0; }
+      if (metaHeld) { metaHeld = false; lastMetaKey = ''; scheduleMeta(); }   // the real metadata now (283)
       return;
     }
     logAdOnce(adByLen ? 'length-mismatch' : 'ad-showing');
@@ -1118,11 +1196,16 @@
     setAttr('data-ytl-noshelves', cfg.hideShelves ? '1' : '');
     setAttr('data-ytl-lowpower', cfg.powerSave ? '1' : '');
     setAttr('data-ytl-update', cfg.updateDot ? '1' : '');
+    setAttr('data-ytl-lowmotion', cfg.lowMotion ? '1' : '');
+    setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
+    var gear = document.getElementById('ytl-gear');
+    if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';
     setAttr('data-ytl-accent', acc ? '1' : '');
     if (acc && h.style.getPropertyValue('--ytl-accent-pick') !== acc) h.style.setProperty('--ytl-accent-pick', acc);
   }
   function applyCfg() {
+    fullNeeded = true;   // settings changed: the next pass looks at every card (256)
     if (!cfg.sponsorBlock) { segments = []; hideSbPrompt(); }
     applyQuality();
     applyPerfAttr();
@@ -1147,7 +1230,18 @@
     var m = /^([\d.]+)%$/.exec(w.trim());
     return m ? parseFloat(m[1]) : -1;
   }
-  var markWatched = guard('watched', function () {
+  var markWatched = guard('watched', function (items) {
+    if (items) {   // incremental pass (256): only the cards that changed
+      var homeOn = cfg.hideWatched && pageType() === 'home';
+      for (var x = 0; x < items.length; x++) {
+        var it = items[x];
+        if (!it.isConnected) continue;
+        var w = homeOn && itemWatched(it);
+        if (w) { if (!it.hasAttribute('data-ytl-seen')) it.setAttribute('data-ytl-seen', ''); seenCount = Math.max(seenCount, 1); }
+        else if (it.hasAttribute('data-ytl-seen')) it.removeAttribute('data-ytl-seen');
+      }
+      return;
+    }
     var hits = [];
     if (cfg.hideWatched && pageType() === 'home') {
       var bars = document.querySelectorAll(RULES.sel.watchedBar);
@@ -1168,8 +1262,16 @@
   try { addCss(); applyCfg(); } catch (e) { report('css-init', e); }
 
   /* thumbnails (47): never the maxres image in lists, hqdefault is what the card shows anyway */
-  function trimThumbs() {
-    var l = document.querySelectorAll(RULES.sel.maxresImg);
+  function trimThumbs(roots) {
+    var l = [];
+    if (roots) {
+      for (var r = 0; r < roots.length; r++) {
+        var n = roots[r];
+        if (!n.isConnected) continue;
+        if (n.matches && n.matches(RULES.sel.maxresImg)) l.push(n);
+        else if (n.querySelectorAll) l = l.concat(Array.prototype.slice.call(n.querySelectorAll(RULES.sel.maxresImg)));
+      }
+    } else l = document.querySelectorAll(RULES.sel.maxresImg);
     for (var i = 0; i < l.length; i++) {
       var s = l[i].getAttribute('src') || '';
       if (/^https:\/\/i\d?\.ytimg\.com\/vi(?:_webp)?\//.test(s)) l[i].setAttribute('src', s.replace('/maxresdefault', '/hqdefault'));
@@ -1251,19 +1353,38 @@
     var r = clampRate(cfg.rate || 1);
     if (r !== 1 && v.playbackRate !== r) { ourRate = r; try { v.playbackRate = r; } catch (e) {} }
   }
-  // captions default (31): follow YouTube / always off / Chinese when the video has it
+  // captions default (31/341): follow YouTube / always off / turn on when the video has Chinese
+  // (any, simplified first or traditional first) or English; human captions before auto ones
+  var CAP_LANGS = {
+    zh: [/^zh/i],
+    zhHans: [/^zh-(?:hans|cn|sg|my)\b/i, /^zh$/i, /^zh/i],
+    zhHant: [/^zh-(?:hant|tw|hk|mo)\b/i, /^zh/i],
+    en: [/^en\b/i, /^en/i]
+  };
+  function pickCaption(list, mode) {
+    var order = CAP_LANGS[mode];
+    if (!order || !list || !list.length) return null;
+    for (var asr = 0; asr < 2; asr++) {
+      for (var o = 0; o < order.length; o++) {
+        for (var i = 0; i < list.length; i++) {
+          var t = list[i], code = (t && (t.languageCode || t.vss_id || '')) || '';
+          if (!t || (asr === 0 && t.kind === 'asr') || (asr === 1 && t.kind !== 'asr')) continue;
+          if (order[o].test(code)) return t;
+        }
+      }
+    }
+    return null;
+  }
   function applyCaptions() {
     var p = player(); if (!p || cfg.captions === 'yt' || !cfg.captions) return;
     if (cfg.captions === 'off') { if (typeof p.unloadModule === 'function') p.unloadModule('captions'); return; }
-    if (cfg.captions !== 'zh' || typeof p.getOption !== 'function' || typeof p.setOption !== 'function') return;
-    var id = curId;
+    if (!CAP_LANGS[cfg.captions] || typeof p.getOption !== 'function' || typeof p.setOption !== 'function') return;
+    var id = curId, mode = cfg.captions;
     setTimeout(guard('captions', function () {
       if (videoId() !== id) return;
       var list = p.getOption('captions', 'tracklist') || [];
       if (!list.length && typeof p.loadModule === 'function') { p.loadModule('captions'); list = p.getOption('captions', 'tracklist') || []; }
-      var pick = null;
-      for (var i = 0; i < list.length && !pick; i++) if (/^zh/i.test((list[i] && list[i].languageCode) || '') && list[i].kind !== 'asr') pick = list[i];
-      for (var j = 0; j < list.length && !pick; j++) if (/^zh/i.test((list[j] && list[j].languageCode) || '')) pick = list[j];
+      var pick = pickCaption(list, mode);
       if (pick) { if (typeof p.loadModule === 'function') p.loadModule('captions'); p.setOption('captions', 'track', pick); }
     }), 1500);
   }
@@ -1383,7 +1504,13 @@
     if (cfg.nextSource === 'channel' || ((cfg.sleepCalm || sleepMode) && sleeping)) return 'channel';
     return 'rec';
   }
-  function wantAutonav() { return ruleMode() === 'rec' && !loopOne && !(abA >= 0 && abB > abA); }
+  function wantAutonav() {
+    if (ruleMode() !== 'rec' || loopOne || (abA >= 0 && abB > abA)) return false;
+    // skip watched autoplay targets (311, off by default): YouTube's autoplay stays off while its
+    // target is one already watched, the ended handler picks the next one
+    if (cfg.skipWatchedNext && upNextWatched()) return false;
+    return true;
+  }
   function itemWatched(item) {
     var bars = item.querySelectorAll(RULES.sel.watchedBar);
     for (var i = 0; i < bars.length; i++) if (watchedPct(bars[i]) >= seenMin()) return true;
@@ -1461,7 +1588,30 @@
       if (a) { log('next', 'same channel'); a.click(); return; }
       log('next', 'no same-channel video, recommended');
     }
+    if (mode === 'unseen') {
+      var u = firstUnwatchedLink(id);
+      if (u) { log('next', 'skipped a watched autoplay target'); u.click(); return; }
+    }
     next();
+  }
+  /** Up next (311): the first related video, i.e. what YouTube's autoplay would play. */
+  function upNextItem() {
+    return document.querySelector('ytm-compact-autoplay-renderer') || document.querySelector(RULES.sel.relatedItem);
+  }
+  function upNextWatched() {
+    var it = upNextItem();
+    return !!(it && (it.hasAttribute('data-ytl-seen') || itemWatched(it)));
+  }
+  function firstUnwatchedLink(id) {
+    var items = document.querySelectorAll(RULES.sel.relatedItem);
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var a = it.querySelector('a[href*="/watch?v="]');
+      var m = a && /[?&]v=([\w-]{6,})/.exec(a.getAttribute('href') || '');
+      if (!m || m[1] === id || it.hasAttribute('data-ytl-seen') || it.hasAttribute('data-ytl-filter') || itemWatched(it)) continue;
+      return a;
+    }
+    return null;
   }
 
   /* ---------- 10. player events (capture on document: no element polling) ---------- */
@@ -1475,11 +1625,18 @@
   var unmutedFor = '';
 
   var pendingStop = false;    // sleep "after N videos": stop at the end of the next video (16)
+  var bgFallbacks = 0;
   var endedFor = '';
+  var curProgress = 0;        // share of the current video played, for "after N videos" (301)
+  var countedOnChange = 0;
   function onVideoChange() {
     var id = videoId();
     if (!id || id === curId) return;
     var had = !!curId;
+    // "after N videos" (301): moving on by hand, a SponsorBlock jump to the end or YouTube switching
+    // early still counts the previous video when more than 90 % of it was played
+    if (had && countMode && endedFor !== curId && curProgress >= 0.9) { endedFor = curId; countedOnChange = Date.now(); call('videoEnded', curId); }
+    curProgress = 0;
     curId = id;
     if (had) { loopOne = false; abA = abB = -1; }
     if (pendingStop) { pendingStop = false; stopAtEnd = true; }
@@ -1492,6 +1649,10 @@
     hideSbPrompt();
     if (cfg.sponsorBlock) call('fetchSegments', id);
     applyQuality();
+    // the observer is off with the screen off, so the per-page pass that keeps autoplay right does
+    // not run: set it here for the new video as well (249)
+    autonavFor = '';
+    forceAutonav();
   }
 
   function pos(v) { return Math.round((v.currentTime || 0) * 1000); }
@@ -1576,8 +1737,14 @@
     var v = e.target;
     clearTimeout(stuckTimer);
     call('mediaState', 'paused', pos(v), 1);
-    if (adNow()) return;
     var id = curId;
+    // the length check took the video itself for an ad and jumped to its end (282): never again
+    // for this video, and note it (a real ad shows ad-showing and is left alone here)
+    if (adByLen && !adShowing() && lenMis.id === videoId()) {
+      lenMis.gaveUp = lenMis.id; adByLen = false; skipAd();
+      log('len-misjudge', lenMis.id + ' d=' + Math.round(v.duration || 0));
+    }
+    if (adNow()) return;
     // single-video / A-B loop (152): start over instead of moving on
     if ((loopOne || (abA >= 0 && abB > abA)) && !stopAtEnd && !userPaused) {
       v.currentTime = abB > abA && abA >= 0 ? abA : 0;
@@ -1589,6 +1756,8 @@
     if (stopAtEnd || userPaused) return;
     clearTimeout(endTimer);
     var mode = ruleMode();
+    // recommended, but the autoplay target was already watched (311): pick the first unwatched one
+    if (mode === 'rec' && cfg.skipWatchedNext && !looping() && upNextWatched()) mode = 'unseen';
     if (mode !== 'rec') {
       endTimer = setTimeout(guard('next-rule', function () {
         if (videoId() === id && !userPaused) nextByRule(mode, id);
@@ -1597,7 +1766,10 @@
     }
     // Auto-continue fallback: if YouTube's own autoplay didn't move on, do it ourselves.
     endTimer = setTimeout(function () {
-      if (videoId() === id && !userPaused) next();
+      if (videoId() === id && !userPaused) {
+        if (bg) { bgFallbacks++; log('next', 'fallback next() with the screen off #' + bgFallbacks); }   // (249) data
+        next();
+      }
     }, 3500);
   });
 
@@ -1615,6 +1787,7 @@
     sbTick(v, now);
     loopTick(v);
     posTick(v, now, false);
+    if (isFinite(v.duration) && v.duration > 0 && !adNow()) curProgress = Math.max(curProgress, (v.currentTime || 0) / v.duration);
     // sleep timer: end of current video (fade over the last N s, then pause)
     if (stopAtEnd && isFinite(v.duration) && v.duration > 0) {
       var left = v.duration - v.currentTime;
@@ -1827,10 +2000,26 @@
   function hiddenIds() { try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]') || []; } catch (e) { return []; } }
   var hiddenList = hiddenIds();
   function lc(x) { return String(x || '').toLowerCase().trim(); }
-  function filterReason(info, deep) {
+  /** Block-list line (322): "@handle|Name" / "UC…|Name" from the long-press menu, or a plain name. */
+  function blockEntry(e) {
+    e = String(e || '').trim();
+    var bar = e.indexOf('|'), key = '', name = e;
+    if (bar > 0) { key = e.slice(0, bar).trim(); name = e.slice(bar + 1); }
+    else if (/^@[^\s|]{2,}$/.test(e) || /^UC[\w-]{10,}$/.test(e)) { key = e; name = ''; }
+    if (key.charAt(0) === '@') key = key.toLowerCase();
+    return { key: key, name: lc(name) };
+  }
+  function filterReason(info, deep, it) {
     if (info.id && hiddenList.indexOf(info.id) >= 0) return 'hidden';
-    var ch = lc(info.channel), bl = cfg.blockChannels || [];
-    for (var i = 0; i < bl.length; i++) if (ch && lc(bl[i]) === ch) return 'channel';
+    var ch = lc(info.channel), bl = cfg.blockChannels || [], keys = null;
+    for (var i = 0; i < bl.length; i++) {
+      var be = blockEntry(bl[i]);
+      if (be.name && ch && be.name === ch) return 'channel';
+      if (be.key && it) {
+        if (keys === null) keys = cardChannelKeys(it);
+        if (keys.indexOf(be.key) >= 0) return 'channel';
+      }
+    }
     var ti = lc(info.title), bw = cfg.blockWords || [];
     for (var j = 0; j < bw.length; j++) { var w = lc(bw[j]); if (w && ti.indexOf(w) >= 0) return 'word'; }
     if (!deep) return '';
@@ -1842,45 +2031,85 @@
   function anyFilter() {
     return !!(hiddenList.length || (cfg.blockChannels || []).length || (cfg.blockWords || []).length || cfg.minDur > 0 || cfg.maxAgeDays > 0 || cfg.hideLive);
   }
+  /* sponsored cards by their label (285): when YouTube renames its ad components the element rules
+   * miss them, the short "Sponsored / 广告" label stays. Exact match of a short text only. */
+  var AD_LABEL_RE = /^(?:赞助|贊助|广告|廣告|赞助商广告|贊助商廣告|sponsored|ad|ads)$/i;
+  function adLabelHit(it) {
+    var l = it.querySelectorAll(RULES.sel.adLabel);
+    var extra = remote.adText || [];
+    for (var i = 0; i < l.length; i++) {
+      var t = textOf(l[i]);
+      if (!t || t.length > 20) continue;
+      if (AD_LABEL_RE.test(t)) return true;
+      for (var j = 0; j < extra.length; j++) if (lc(extra[j]) === lc(t)) return true;
+    }
+    return false;
+  }
   var filterKey = '', filtered = 0;
-  var filterCards = guard('filter', function () {
+  /** items: only these cards (incremental pass, 256); none: every card on the page. */
+  var filterCards = guard('filter', function (items) {
     var pt = pageType();
-    var key = JSON.stringify([cfg.blockChannels, cfg.blockWords, cfg.minDur, cfg.maxAgeDays, cfg.hideLive, hiddenList.length, pt]);
-    var on = anyFilter() && pt !== 'channel' && pt !== 'other';
-    if (key !== filterKey || !on) {
+    var userOn = anyFilter() && pt !== 'channel' && pt !== 'other' && pt !== 'playlist';
+    var key = JSON.stringify([cfg.blockChannels, cfg.blockWords, cfg.minDur, cfg.maxAgeDays, cfg.hideLive, hiddenList.length, pt, userOn,
+      (remote.adText || []).length]);
+    if (key !== filterKey) {
       filterKey = key;
+      items = null;   // something changed: judge every card again
       if (filtered) {
         var old = document.querySelectorAll('[data-ytl-filter]');
         for (var o = 0; o < old.length; o++) old[o].removeAttribute('data-ytl-filter');
         filtered = 0;
       }
-      if (!on) return;
     }
     var deep = pt === 'home' || pt === 'watch';
-    var items = document.querySelectorAll(RULES.sel.feedItem);
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i];
+    var list = items || document.querySelectorAll(RULES.sel.feedItem);
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      if (!it.isConnected) continue;
       var a = it.querySelector('a[href*="/watch?v="]');
       var mark = key + '|' + (a ? a.getAttribute('href') : '');
       if (it.__ytlF === mark) continue;   // already judged (recycled nodes get a new href)
       it.__ytlF = mark;
-      var why = filterReason(cardInfo(it), deep);
+      var why = adLabelHit(it) ? 'ad' : (userOn ? filterReason(cardInfo(it), deep, it) : '');
       if (why) { if (it.getAttribute('data-ytl-filter') !== why) { it.setAttribute('data-ytl-filter', why); filtered++; } }
       else if (it.hasAttribute('data-ytl-filter')) it.removeAttribute('data-ytl-filter');
     }
   });
+  function saveHidden() { try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList)); } catch (e) {} }
   function hideVideo(id) {
     if (!/^[\w-]{6,20}$/.test(id || '')) return;
     hiddenList = hiddenIds();
     if (hiddenList.indexOf(id) < 0) hiddenList.unshift(id);
     if (hiddenList.length > 300) hiddenList.length = 300;
-    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList)); } catch (e) {}
+    saveHidden();
+    filterKey = '';
+    filterCards();
+    // a slip of the finger costs nothing (324): 4 s to take it back
+    snackBar('已隐藏这个视频', '撤销', function () { unhideVideo(id); }, 4000);
+  }
+  function unhideVideo(id) {
+    hiddenList = hiddenIds().filter(function (x) { return x !== id; });
+    saveHidden();
     filterKey = '';
     filterCards();
   }
 
-  // "N new videos" after a refresh (64): compare the first screen with the last one we saw
+  // "N new videos" after a refresh (64): compared with the first screens of the last 3 refreshes (320)
   var countDone = false;
+  var HOME_HIST = 'ytl_home_hist';
+  function homeHistory() {
+    var h = null;
+    try { h = JSON.parse(localStorage.getItem(HOME_HIST) || 'null'); } catch (e) {}
+    if (Array.isArray(h)) return h.filter(Array.isArray).slice(-3);
+    var prev = [];
+    try { prev = JSON.parse(localStorage.getItem('ytl_home_ids') || '[]') || []; } catch (e) {}   // v1.6 and older
+    return Array.isArray(prev) && prev.length ? [prev] : [];
+  }
+  function newCount(ids, hist) {
+    var seen = {};
+    for (var i = 0; i < hist.length; i++) for (var j = 0; j < hist[i].length; j++) seen[hist[i][j]] = true;
+    return ids.filter(function (x) { return !seen[x]; }).length;
+  }
   var countNew = guard('refresh-count', function () {
     if (countDone || pageType() !== 'home') return;
     var links = document.querySelectorAll('ytm-rich-item-renderer a[href*="/watch?v="], ytm-video-with-context-renderer a[href*="/watch?v="]');
@@ -1888,12 +2117,14 @@
     for (var i = 0; i < links.length && ids.length < 40; i++) { var id = linkId(links[i]); if (id && ids.indexOf(id) < 0) ids.push(id); }
     if (ids.length < 4) return;   // feed not there yet
     countDone = true;
-    var prev = [];
-    try { prev = JSON.parse(localStorage.getItem('ytl_home_ids') || '[]') || []; } catch (e) {}
-    try { localStorage.setItem('ytl_home_ids', JSON.stringify(ids)); } catch (e) {}
-    if (!wasRefresh || !cfg.refreshCount || !prev.length) return;
-    var n = ids.filter(function (x) { return prev.indexOf(x) < 0; }).length;
-    call('toast', n ? '更新了 ' + n + ' 个新视频' : '暂时没有新视频，稍后再刷新试试');
+    var hist = homeHistory();
+    var nh = hist.concat([ids]).slice(-3);
+    try { localStorage.setItem(HOME_HIST, JSON.stringify(nh)); localStorage.setItem('ytl_home_ids', JSON.stringify(ids)); } catch (e) {}
+    if (!wasRefresh || !cfg.refreshCount || !hist.length) return;
+    var n = newCount(ids, hist);
+    // how many cards the filters took away (321), so a short feed is not a mystery
+    var gone = document.querySelectorAll('[data-ytl-filter]:not([data-ytl-filter="ad"]), [data-ytl-seen]').length;
+    call('toast', (n ? '更新了 ' + n + ' 个新视频' : '暂时没有新视频，稍后再刷新试试') + (gone ? ' · 已过滤 ' + gone + ' 个' : ''));
   });
 
   // search: shelves like "People also watched" (70)
@@ -1949,7 +2180,8 @@
 
   /* ---------- 17. back to a list keeps the scroll position (119) ---------- */
   var scrollMem = {}, restoreTimer = 0;
-  function listPage(pt) { return pt === 'home' || pt === 'feed' || pt === 'search' || pt === 'channel'; }
+  function feedPage(pt) { return pt === 'feed' || pt === 'subs' || pt === 'history' || pt === 'library'; }
+  function listPage(pt) { return pt === 'home' || feedPage(pt) || pt === 'playlist' || pt === 'search' || pt === 'channel'; }
   function urlKey() { return location.pathname + location.search; }
   function rememberScroll() {
     if (!cfg.keepScroll || !listPage(pageType())) return;
@@ -1997,7 +2229,9 @@
     if (!info.id) return;
     lp.firedAt = Date.now();
     menuItem = it;
-    call('cardMenu', JSON.stringify({ id: info.id, title: info.title.slice(0, 120), channel: info.channel.slice(0, 80) }));
+    // channel link (322) so a block survives renames; watch-later list (331) gets fitting menu rows
+    call('cardMenu', JSON.stringify({ id: info.id, title: info.title.slice(0, 120), channel: info.channel.slice(0, 80),
+      key: (cardChannelKeys(it)[0] || '').slice(0, 60), wl: pageType() === 'playlist' && /[?&]list=WL(?:&|$)/.test(location.search) }));
   }
   document.addEventListener('contextmenu', function (e) { if (Date.now() - lp.firedAt < 1500) e.preventDefault(); }, true);
   function openCardMenu() {
@@ -2128,13 +2362,15 @@
     }
   }
   var hideMenus = guard('menus', function () { hideByText(RULES.sel.menu, FEEDBACK_RE); });
+  /** Screen-reader name of the gear (374): the app's display name, and the update dot said in words. */
+  function gearLabel() { return (cfg.appName || '一维视频') + ' 设置' + (cfg.updateDot ? '，有新版本' : ''); }
   var ensureGear = guard('gear', function () {
     if (document.getElementById('ytl-gear')) return;
     var logo = document.querySelector('ytm-home-logo');
     if (!logo || !logo.parentNode) return;
     var b = document.createElement('button');
     b.id = 'ytl-gear';
-    b.setAttribute('aria-label', 'YiWei 设置');
+    b.setAttribute('aria-label', gearLabel());
     var NS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
@@ -2175,13 +2411,53 @@
       if ((want && pressed === 'false') || (!want && pressed === 'true')) tg.click();
     }
   });
-  function domPass() {
+  /* incremental pass (256): mutations collect the cards and subtrees they touched; the list tasks
+   * (filters, watched, thumbnails) then only look at those. A full pass still runs on navigation,
+   * after a settings change, every 5 s at most, and always when the smoothness switch is off. */
+  var dirtyItems = [], dirtyRoots = [], fullNeeded = true, lastFull = 0, lastRouteKey = '';
+  var FULL_EVERY = 5000, DIRTY_MAX = 300;
+  function noteDirtyItem(it) {
+    if (!it || it.__ytlQ) return;
+    it.__ytlQ = true;
+    dirtyItems.push(it);
+  }
+  function collectDirty(recs) {
+    if (fullNeeded) return;
+    for (var i = 0; i < recs.length && !fullNeeded; i++) {
+      var rec = recs[i], t = rec.target;
+      if (t && t.nodeType === 1 && t.closest) noteDirtyItem(t.closest(RULES.sel.feedItem));
+      var add = rec.addedNodes;
+      for (var j = 0; j < add.length; j++) {
+        var n = add[j];
+        if (n.nodeType !== 1) continue;
+        if (dirtyRoots.length < DIRTY_MAX) dirtyRoots.push(n);
+        if (n.matches && n.matches(RULES.sel.feedItem)) noteDirtyItem(n);
+        else if (n.querySelectorAll) {
+          var inner = n.querySelectorAll(RULES.sel.feedItem);
+          for (var k = 0; k < inner.length; k++) noteDirtyItem(inner[k]);
+        }
+      }
+      if (dirtyItems.length > DIRTY_MAX || dirtyRoots.length >= DIRTY_MAX) fullNeeded = true;
+    }
+  }
+  function takeDirty() {
+    var items = dirtyItems, roots = dirtyRoots;
+    for (var i = 0; i < items.length; i++) items[i].__ytlQ = false;
+    dirtyItems = []; dirtyRoots = [];
+    return { items: items, roots: roots };
+  }
+  function domPass(forceFull) {
     var pt = pageType();
+    var routeKey = location.pathname + location.search;
+    var now = Date.now();
+    var full = forceFull === true || fullNeeded || !cfg.perfCss || routeKey !== lastRouteKey || now - lastFull > FULL_EVERY;
+    var dirty = takeDirty();
+    if (full) { fullNeeded = false; lastFull = now; lastRouteKey = routeKey; }
     try { addCss(); applyPerfAttr(); } catch (e) { report('css', e); }
     try { watchPlayer(); if (player()) skipAd(); } catch (e) { report('player', e); }
     hideMenus();
     try { hideByText(RULES.sel.shortsText, /^shorts$/i); } catch (e) { report('shorts', e); }
-    if (pt === 'home' || seenCount) markWatched();
+    if (pt === 'home' || seenCount) markWatched(full ? undefined : dirty.items);
     ensureGear();
     ensureTools();
     if (pt === 'watch' || badgeText) updateBadge();
@@ -2189,9 +2465,9 @@
       forceAutonav();
       try { checkPlayerError(); } catch (e) { report('player-error', e); }
     }
-    if (cfg.perfCss) { try { trimThumbs(); } catch (e) { report('thumbs', e); } }
+    if (cfg.perfCss) { try { trimThumbs(full ? undefined : dirty.roots); } catch (e) { report('thumbs', e); } }
     addRemoteCss();
-    filterCards();
+    filterCards(full ? undefined : dirty.items);
     if (pt === 'home') countNew();
     if (pt === 'search') { markSearchExtras(); ensureChips(); }
     else if (document.getElementById('ytl-chips')) ensureChips();
@@ -2220,6 +2496,7 @@
   var mo = null, moRoot = null;
   function contentRoot() { return document.querySelector(RULES.sel.contentRoot) || document.body || document.documentElement; }
   var onMutations = guard('observer', function (recs) {
+    collectDirty(recs);
     queuePass();
     var body = document.body;
     for (var i = 0; i < recs.length; i++) {
@@ -2264,6 +2541,7 @@
     } else if (started) {
       connectObserver();
       dirty = false;
+      fullNeeded = true;   // nothing was collected while the observer was off (256)
       queuePass();
     }
   }
@@ -2290,8 +2568,10 @@
       var bad = Object.keys(r).filter(function (k) { return !r[k]; });
       var once = false;
       try { once = sessionStorage.getItem('ytl_selfcheck') === '1'; sessionStorage.setItem('ytl_selfcheck', '1'); } catch (e) {}
-      if (bad.length) log('selfcheck', 'FAIL ' + bad.join(',') + ' @' + pageType());
-      else if (!once) log('selfcheck', 'ok');
+      if (bad.length) {
+        log('selfcheck', 'FAIL ' + bad.join(',') + ' @' + pageType());
+        call('selfCheckFailed', bad.join(','));   // Java tells the user once per version (254)
+      } else if (!once) log('selfcheck', 'ok');
     }
     return r;
   }
@@ -2311,7 +2591,14 @@
     scrollMem: function () { return scrollMem; }, restoreScroll: restoreScroll, watchLater: watchLater, reportTheme: reportTheme,
     // batch 4 (v1.6.0)
     fadeVolume: fadeVolume, dismissStillWatching: dismissStillWatching, checkLogin: checkLogin,
-    playingNow: playingNow, chanById: function () { return chanById; }, cfg: function () { return cfg; }
+    playingNow: playingNow, chanById: function () { return chanById; }, cfg: function () { return cfg; },
+    // batch 5 (v1.7.0)
+    adKeys: function () { return AD_KEYS.slice(); }, adKeysBuiltin: AD_KEYS_BUILTIN, adLabelHit: adLabelHit,
+    blockEntry: blockEntry, filterReason: filterReason, newCount: newCount, homeHistory: homeHistory,
+    pickCaption: pickCaption, gearLabel: gearLabel, upNextWatched: upNextWatched, firstUnwatchedLink: firstUnwatchedLink,
+    fullPending: function () { return fullNeeded; }, dirtyCount: function () { return dirtyItems.length; },
+    curProgress: function () { return curProgress; }, adContext: adContext, sendMeta: function () { sendMeta(); },
+    fadeState: function () { return { end: fade.end, len: fade.len, running: !!fade.timer }; }
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });

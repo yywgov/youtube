@@ -26,7 +26,8 @@ async function load(opts) {
     openTools: rec('openTools'), isMetered: () => !!opts.metered,
     cardMenu: rec('cardMenu'), showKeyboard: rec('showKeyboard'), pageTheme: rec('pageTheme'),
     getRemoteRules: () => (opts.remote ? JSON.stringify(opts.remote) : ''),
-    confirmRefresh: rec('confirmRefresh'), loginChanged: rec('loginChanged'), isOnline: () => opts.online !== false
+    confirmRefresh: rec('confirmRefresh'), loginChanged: rec('loginChanged'), isOnline: () => opts.online !== false,
+    netStalled: rec('netStalled'), selfCheckFailed: rec('selfCheckFailed')
   };
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };

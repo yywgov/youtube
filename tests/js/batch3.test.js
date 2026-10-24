@@ -127,7 +127,7 @@ test('long press on a card opens the quick menu and swallows the click; a scroll
   touch('touchend');
   const m = calls.filter((c) => c[0] === 'cardMenu');
   assert.equal(m.length, 1);
-  assert.deepEqual(JSON.parse(m[0][1]), { id: 'aaaaaaaaaa1', title: 'Normal video', channel: 'Good Channel' });
+  assert.deepEqual(JSON.parse(m[0][1]), { id: 'aaaaaaaaaa1', title: 'Normal video', channel: 'Good Channel', key: '', wl: false });
   let reached = false;
   w.document.body.addEventListener('click', () => { reached = true; });
   target.click();

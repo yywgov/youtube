@@ -43,7 +43,7 @@ test('end-of-video fade follows the fade length setting', async () => {
   assert.equal(st.volume, 1, 'no fade 20 s before the end');
   st.currentTime = 95;
   fire(env.w, env.v, 'timeupdate');
-  assert.ok(Math.abs(st.volume - 4 / 9) < 0.01, 'fading: ' + st.volume);
+  assert.ok(Math.abs(st.volume - (4 / 9) * (4 / 9)) < 0.01, 'fading (squared curve, 298): ' + st.volume);
   st.currentTime = 99.2;
   fire(env.w, env.v, 'timeupdate');
   assert.ok(env.calls.some((c) => c[0] === 'sleepFired'));

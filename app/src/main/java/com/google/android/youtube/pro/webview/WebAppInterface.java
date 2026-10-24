@@ -168,6 +168,27 @@ public class WebAppInterface {
         return com.google.android.youtube.pro.RemoteRules.cached(activity);
     }
 
+    /** Pull / Home tap while something plays in the mini player (317). */
+    @JavascriptInterface
+    public void confirmRefresh() {
+        main.post(activity::confirmRefresh);
+    }
+
+    /** The page saw the sign-in state or the account change (343): flush cookies now. */
+    @JavascriptInterface
+    public void loginChanged(final boolean signedIn) {
+        main.post(() -> {
+            activity.flushCookies();
+            Diag.log("login", signedIn ? "signed in / account changed: cookies flushed" : "signed out");
+        });
+    }
+
+    /** Offline check for the refresh (318); unknown counts as online. */
+    @JavascriptInterface
+    public boolean isOnline() {
+        return activity.isOnline();
+    }
+
     @JavascriptInterface
     public void toast(final String text) {
         main.post(() -> Toast.makeText(activity.getApplicationContext(), text, Toast.LENGTH_SHORT).show());

@@ -125,6 +125,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Diag.init(this);
+        Prefs.migrate(this);   // settings schema (226): idempotent, never blocks the start
         current = new WeakReference<>(this);
         setContentView(R.layout.main);
         swipe = findViewById(R.id.swipe);
@@ -141,8 +142,14 @@ public class MainActivity extends Activity {
         coldStart = savedInstanceState == null && HOME.equals(startUrl);
         // start page (63): subscriptions instead of home when launched from the icon
         if (coldStart && "subs".equals(Prefs.str(this, Prefs.START_PAGE, "home"))) startUrl = HOME + "feed/subscriptions";
+        if (getIntent() != null && getIntent().getBooleanExtra(PlaybackService.EXTRA_RESUME, false)) {
+            String resume = lastVideoUrl();
+            if (resume != null) { startUrl = resume; coldStart = false; }
+        }
         web.loadUrl(startUrl);
+        SleepTimer.restore(this);   // a timer the system killed with the process comes back (244)
         if (coldStart) MAIN.postDelayed(this::offerResume, 3000);
+        MAIN.postDelayed(this::checkNotifications, 5000);
         if (ACTION_SLEEP_MODE.equals(getIntent().getAction())) MAIN.postDelayed(this::startSleepMode, 1500);
         registerPowerSave();
         MAIN.postDelayed(this::maybeWhatsNew, 2500);
@@ -157,6 +164,7 @@ public class MainActivity extends Activity {
         super.onResume();
         requestHighRefreshRate();
         Updater.onResume(this);
+        PlaybackService.retryForeground();   // a refused foreground start gets another try now (291)
         MAIN.removeCallbacks(nightPromptRun);
         MAIN.postDelayed(nightPromptRun, coldStart ? 7000 : 2500);
     }
@@ -207,6 +215,10 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (ACTION_SLEEP_MODE.equals(intent.getAction())) { startSleepMode(); return; }
+        if (intent.getBooleanExtra(PlaybackService.EXTRA_RESUME, false)) {
+            String resume = lastVideoUrl();
+            if (resume != null && web != null) { web.loadUrl(resume); return; }
+        }
         String url = urlFromIntent(intent);
         boolean external = Intent.ACTION_VIEW.equals(intent.getAction()) || Intent.ACTION_SEND.equals(intent.getAction());
         if (external && web != null) web.loadUrl(url);
@@ -233,10 +245,20 @@ public class MainActivity extends Activity {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
         }
         if (current.get() == this) {
-            SleepTimer.cancel(null);
-            PlaybackService.stop(this);
+            if (isFinishing()) {
+                // the user left the app (double back / finish): everything stops as before
+                SleepTimer.cancel(null);
+                PlaybackService.stop(this);
+            } else {
+                // destroyed by the system (243): don't cancel the timer or kill the service; the
+                // notification turns into "tap to continue" (the WebView itself is gone)
+                Diag.log("lifecycle", "activity destroyed by the system, playing=" + PlaybackService.isPlaying()
+                        + " config=" + isChangingConfigurations());
+                if (PlaybackService.isPlaying() && !isChangingConfigurations()) PlaybackService.onActivityGone();
+            }
             current = new WeakReference<>(null);
         }
+        MAIN.removeCallbacks(blackWatch);
         MAIN.removeCallbacks(nightPromptRun);
         MAIN.removeCallbacks(hideSnackRun);
         if (powerReceiver != null) { try { unregisterReceiver(powerReceiver); } catch (Exception ignored) {} powerReceiver = null; }
@@ -362,6 +384,8 @@ public class MainActivity extends Activity {
 
     public void onPageFinished(String url) {
         currentUrl = url;
+        // Google sign-in pages: store the cookies as soon as each step finishes (343)
+        if (url != null && url.startsWith("https://accounts.google.")) flushCookies();
         injectFallback();
         swipe.setRefreshing(false);
         hideTopBar();
@@ -394,11 +418,18 @@ public class MainActivity extends Activity {
      */
     public void refreshFeed() {
         if (web == null) return;
+        if (!isOnline()) {
+            // offline (318): keep the list that is on screen instead of reloading into an error page
+            swipe.setRefreshing(false);
+            Toast.makeText(this, "当前离线，已保留列表", Toast.LENGTH_SHORT).show();
+            return;
+        }
         // the pull gesture's spinner goes away at once; the thin top bar shows the reload
         swipe.setRefreshing(false);
         showTopBar(5);
-        web.evaluateJavascript("(window.ytl&&ytl.refresh)?(ytl.refresh(),1):0", r -> {
-            if (!"1".equals(r)) hardReload();
+        web.evaluateJavascript("(window.ytl&&ytl.refresh)?(ytl.refresh()===false?2:1):0", r -> {
+            if ("2".equals(r)) hideTopBar();          // offline or asking first (317/318): nothing reloads
+            else if (!"1".equals(r)) hardReload();
         });
         MAIN.postDelayed(() -> { if (swipe != null) swipe.setRefreshing(false); }, 10000);
     }
@@ -429,6 +460,103 @@ public class MainActivity extends Activity {
     }
 
     private final Runnable restoreCache = this::restoreCacheMode;
+
+    public boolean isOnline() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            @SuppressWarnings("deprecation")
+            android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+            return ni == null || ni.isConnected();   // unknown counts as online
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    /** Pull / Home tap while a video plays in the mini player (317): ask before stopping it. */
+    public void confirmRefresh() {
+        swipe.setRefreshing(false);
+        hideTopBar();
+        showSnack("刷新会停止正在播放的视频", "仍要刷新", () -> js("ytl.refresh(true)"), 6000);
+    }
+
+    /** Signed in / account switched (343): write the cookies to disk now, not only in onStop. */
+    public void flushCookies() {
+        try { CookieManager.getInstance().flush(); } catch (Throwable ignored) {}
+    }
+
+    /** Evaluate an expression in the page and get its JSON result (settings: hidden video count). */
+    public void evalJs(String expr, android.webkit.ValueCallback<String> cb) {
+        if (web == null) { cb.onReceiveValue(null); return; }
+        try { web.evaluateJavascript("(function(){try{return " + expr + "}catch(e){return null}})()", cb); }
+        catch (Throwable t) { cb.onReceiveValue(null); }
+    }
+
+    private String lastVideoUrl() {
+        android.content.SharedPreferences p = Prefs.get(this);
+        String id = p.getString(Prefs.LAST_VIDEO, null);
+        if (id == null || !id.matches("[A-Za-z0-9_-]{6,20}")) return null;
+        long pos = p.getLong(Prefs.LAST_POS, 0);
+        return HOME + "watch?v=" + id + (pos > 5 ? "&t=" + pos + "s" : "");
+    }
+
+    // ===================== keep-alive checks (291/292) =====================
+
+    /** Notifications allowed and the playback channel not switched off (292). */
+    public boolean notificationsOk() {
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm == null) return true;
+            if (Build.VERSION.SDK_INT >= 24 && !nm.areNotificationsEnabled()) return false;
+            if (Build.VERSION.SDK_INT >= 26) {
+                android.app.NotificationChannel ch = nm.getNotificationChannel(PlaybackService.CHANNEL_ID);
+                if (ch != null && ch.getImportance() == android.app.NotificationManager.IMPORTANCE_NONE) return false;
+            }
+            return true;
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    private void checkNotifications() {
+        if (!isFinishing() && !notificationsOk()) Diag.log("notif", "notifications or playback channel off");
+    }
+
+    public void openNotificationSettings() {
+        try {
+            Intent i;
+            if (Build.VERSION.SDK_INT >= 26) {
+                i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            } else {
+                i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+            }
+            startActivity(i);
+        } catch (Exception e) {
+            openAppDetails();
+        }
+    }
+
+    /** Last refused foreground start within 3 days (291), 0 if none. */
+    public long fgsDeniedAt() {
+        long at = Prefs.get(this).getLong(Prefs.FGS_DENIED_AT, 0);
+        return at > 0 && System.currentTimeMillis() - at < 3 * 24 * 3600_000L ? at : 0;
+    }
+
+    public void clearFgsDenied() {
+        Prefs.get(this).edit().remove(Prefs.FGS_DENIED_AT).apply();
+    }
+
+    // ===================== keep the screen on: fullscreen and black screen share one flag (337) =====================
+
+    private final Set<String> screenOnHolders = new HashSet<>();
+
+    public void keepScreenOn(String who, boolean on) {
+        if (on) screenOnHolders.add(who); else screenOnHolders.remove(who);
+        try {
+            if (screenOnHolders.isEmpty()) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } catch (Throwable ignored) {}
+    }
 
     private void restoreCacheMode() {
         noCacheLoad = false;
@@ -653,6 +781,34 @@ public class MainActivity extends Activity {
         openAppDetails();
     }
 
+    /**
+     * ColorOS 14/15 "耗电管理 → 允许后台运行" page for this app (390), tried component by component;
+     * falls back to the app details page.
+     */
+    public void openBatterySettings() {
+        String[][] targets = {
+                {"com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerAppsBgSetting"},
+                {"com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerConsumptionActivity"},
+                {"com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerUsageModelActivity"},
+                {"com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerAppsBgSetting"},
+                {"com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerConsumptionActivity"},
+                {"com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerUsageModelActivity"},
+        };
+        for (String[] t : targets) {
+            try {
+                Intent i = new Intent().setComponent(new android.content.ComponentName(t[0], t[1]))
+                        .putExtra("pkgName", getPackageName()).putExtra("package_name", getPackageName())
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                if (getPackageManager().resolveActivity(i, 0) == null) continue;
+                startActivity(i);
+                Toast.makeText(this, "找到 " + getString(R.string.app_name) + "，设为「允许后台运行」", Toast.LENGTH_LONG).show();
+                return;
+            } catch (Exception ignored) {}
+        }
+        Toast.makeText(this, "耗电管理 → 允许后台运行", Toast.LENGTH_LONG).show();
+        openAppDetails();
+    }
+
     /** First start after an upgrade: show this version's notes once (138). */
     private void maybeWhatsNew() {
         try {
@@ -783,6 +939,34 @@ public class MainActivity extends Activity {
         return (FrameLayout) getWindow().getDecorView();
     }
 
+    // black screen without a sleep timer (274): leave after 5 min paused or 2 h, so the screen can sleep
+    private static final long BLACK_PAUSED_MS = 5 * 60_000L;
+    private static final long BLACK_MAX_MS = 2 * 3600_000L;
+    private long blackSince = 0, blackPausedSince = 0, lastBlackTap = 0;
+    private TextView blackHint;
+    private final Runnable blackWatch = new Runnable() {
+        @Override public void run() {
+            if (blackView == null) return;
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (SleepTimer.active()) {
+                blackPausedSince = 0;
+            } else if (now - blackSince > BLACK_MAX_MS) {
+                Diag.log("black", "no timer: left after 2 h");
+                stopBlackScreen();
+                return;
+            } else if (PlaybackService.isPlaying()) {
+                blackPausedSince = 0;
+            } else if (blackPausedSince == 0) {
+                blackPausedSince = now;
+            } else if (now - blackPausedSince > BLACK_PAUSED_MS) {
+                Diag.log("black", "no timer: left after 5 min paused");
+                stopBlackScreen();
+                return;
+            }
+            MAIN.postDelayed(this, 60_000L);
+        }
+    };
+
     @SuppressWarnings("deprecation")
     public void startBlackScreen() {
         if (blackView != null) return;
@@ -790,14 +974,25 @@ public class MainActivity extends Activity {
             FrameLayout v = new FrameLayout(this);
             v.setBackgroundColor(0xFF000000);
             v.setClickable(true);
-            v.setOnClickListener(x -> stopBlackScreen());
+            // double tap leaves (370): turning over in bed and brushing the screen does not light it up
+            v.setOnClickListener(x -> {
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (now - lastBlackTap < 400) { stopBlackScreen(); return; }
+                lastBlackTap = now;
+                if (blackHint != null) {
+                    blackHint.animate().cancel();
+                    blackHint.setAlpha(1f);
+                    blackHint.animate().alpha(0f).setStartDelay(1500).setDuration(600).start();
+                }
+            });
             TextView hint = new TextView(this);
-            hint.setText("黑屏播放中 · 轻点恢复");
+            hint.setText("黑屏播放中 · 双击恢复");
             hint.setTextColor(0xFF555555);
             hint.setTextSize(14);
             FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER);
             v.addView(hint, hp);
             hint.animate().alpha(0f).setStartDelay(2500).setDuration(800).start();
+            blackHint = hint;
             decor().addView(v, new FrameLayout.LayoutParams(-1, -1));
             v.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                     | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -806,23 +1001,32 @@ public class MainActivity extends Activity {
             savedBrightness = lp.screenBrightness;
             lp.screenBrightness = 0.01f;
             getWindow().setAttributes(lp);
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            keepScreenOn("black", true);
             blackView = v;
+            blackSince = android.os.SystemClock.elapsedRealtime();
+            blackPausedSince = 0;
+            MAIN.removeCallbacks(blackWatch);
+            MAIN.postDelayed(blackWatch, 60_000L);
+            if (!SleepTimer.active()) {
+                Toast.makeText(this, "建议同时开睡眠定时；没开时暂停 5 分钟或播放 2 小时后自动退出黑屏", Toast.LENGTH_LONG).show();
+            }
         } catch (Throwable t) {
             Diag.log("black", String.valueOf(t));
         }
     }
 
     public void stopBlackScreen() {
+        MAIN.removeCallbacks(blackWatch);
         if (blackView == null) return;
         try {
             decor().removeView(blackView);
             WindowManager.LayoutParams lp = getWindow().getAttributes();
             lp.screenBrightness = savedBrightness;
             getWindow().setAttributes(lp);
-            if (chrome == null || !chrome.isFullscreen()) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         } catch (Throwable ignored) {}
+        keepScreenOn("black", false);
         blackView = null;
+        blackHint = null;
     }
 
     /** Sleep timer finished: leave black screen so the display can time out normally. */
@@ -1074,14 +1278,16 @@ public class MainActivity extends Activity {
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        boolean act = level == TRIM_MEMORY_RUNNING_LOW || level == TRIM_MEMORY_RUNNING_CRITICAL || level >= TRIM_MEMORY_BACKGROUND;
+        // only real pressure (252): going to the background is not a reason to throw caches away
+        boolean act = level == TRIM_MEMORY_RUNNING_CRITICAL || level >= TRIM_MEMORY_COMPLETE;
         long now = System.currentTimeMillis();
         if (!act || web == null || now - lastTrim < 60000) return;
         lastTrim = now;
         try {
-            web.clearCache(false);
+            // playing with the screen off: only the script's own small caches; the WebView's stay
+            if (!PlaybackService.isPlaying()) web.clearCache(false);
             js("ytl.trim&&ytl.trim()");
-            Diag.log("trim", "level=" + level);
+            Diag.log("trim", "level=" + level + " playing=" + PlaybackService.isPlaying());
         } catch (Throwable ignored) {}
     }
 
@@ -1100,7 +1306,7 @@ public class MainActivity extends Activity {
     }
 
     private boolean canPullToRefresh() {
-        return web != null && pageAtTop && web.getScrollY() == 0
+        return web != null && pageAtTop && web.getScrollY() == 0 && Logic.isYouTubeHost(currentUrl)   // never on sign-in pages (349)
                 && !isPlayerUrl(currentUrl) && chrome != null && !chrome.isFullscreen();
     }
 

@@ -216,6 +216,7 @@
       contentRoot: 'ytm-app',
       relatedItem: 'ytm-video-with-context-renderer, ytm-compact-video-renderer',
       byline: '[class*="byline" i], ytm-badge-and-byline-renderer, .subhead',
+      ownerLink: 'ytm-slim-owner-renderer a[href], .slim-owner-icon-and-title[href], ytm-video-owner-renderer a[href]',
       cardTitle: '.media-item-headline, h3, h4, [class*="title" i]',
       timeBadge: 'ytm-thumbnail-overlay-time-status-renderer, .badge-shape-wiz__text, badge-shape, [class*="time-status" i]',
       cardMeta: '.media-item-metadata, [class*="metadata" i], ytm-badge-and-byline-renderer',
@@ -454,6 +455,14 @@
     savedVolume = -1;
   }
   function sleepPause() { pause(); setTimeout(restoreVolume, 400); }
+  /** Sleep fade (298): (left / fade)², same curve as the Java timer (Logic.fadeVolume). */
+  function fadeVolume(left, fade) {
+    if (!(fade > 0)) return left > 0 ? 1 : 0;
+    var x = left / fade;
+    if (x >= 1) return 1;
+    if (x <= 0) return 0;
+    return x * x;
+  }
 
   /* ---------- 3b. playback tools: seek by, fine speed, loop / A-B, shuffle (26/151/152/153) ---------- */
   var loopOne = false;
@@ -500,15 +509,23 @@
       a: abA, b: abB, list: hasList(), shuffle: !!(player() && typeof player().setShuffle === 'function')
     };
   }
+  function looping() { return loopOne || (abA >= 0 && abB > abA); }
+  /** A loop came round (312): with an "after N videos" timer every repeat counts as one video. */
+  var loopRound = 0;
+  function loopWrapped() {
+    loopRound++;
+    if (countMode) call('videoEnded', curId + '#' + loopRound);
+  }
   /** Loop / A-B check on every timeupdate; jumps back before the end so YouTube never moves on. */
   function loopTick(v) {
     if (adNow() || stopAtEnd) return;
     var t = v.currentTime || 0, rate = v.playbackRate || 1;
     if (abA >= 0 && abB > abA) {
-      if (t >= abB || t < abA - 2) v.currentTime = abA;
+      if (t >= abB) { v.currentTime = abA; loopWrapped(); }
+      else if (t < abA - 2) v.currentTime = abA;
       return;
     }
-    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) v.currentTime = 0;
+    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) { v.currentTime = 0; loopWrapped(); }
   }
 
   /* ---------- 3c. keyboard (133): space / k pause, arrows / j l seek ---------- */
@@ -686,7 +703,8 @@
     play: play, pause: pause, next: next, prev: prev, seek: seek,
     setVolume: setVolume, restoreVolume: restoreVolume, sleepPause: sleepPause,
     stopAtEnd: function (b) { stopAtEnd = !!b; if (!b) { pendingStop = false; restoreVolume(); } },
-    stopAtEndNext: function () { pendingStop = true; },
+    // "after N videos" reached its last one (16). Looping (312): the repeat now playing is that one.
+    stopAtEndNext: function () { if (looping()) stopAtEnd = true; else pendingStop = true; },
     bg: function (b) { setBg(!!b); },
     cfg: function (o) { cfg = Object.assign(cfg, o || {}); applyCfg(); },
     onSegments: function (id, arr) {
@@ -710,6 +728,7 @@
     watchLater: function (id) { watchLater(id ? String(id) : ''); },
     hideVideo: function (id) { hideVideo(String(id || '')); },
     openCardMenu: function () { openCardMenu(); },
+    hiddenCount: function () { return hiddenIds().length; },   // settings: "N hidden videos" (235)
     unhideAll: function () { hiddenList = []; try { localStorage.removeItem(HIDDEN_KEY); } catch (e) {} filterKey = ''; if (started) filterCards(); },
     sleepMode: function (b) {
       sleepMode = !!b; qualityFor = ''; autonavFor = '';
@@ -774,10 +793,23 @@
       var len = parseInt(vd.lengthSeconds, 10);
       if (!lenById[vd.videoId]) { lenIds.push(vd.videoId); if (lenIds.length > 40) delete lenById[lenIds.shift()]; }
       lenById[vd.videoId] = { len: isFinite(len) ? len : 0, live: !!(vd.isLive || vd.isLiveContent || vd.isUpcoming || vd.isPostLiveDvr) };
+      noteChannel(vd.videoId, vd.channelId, o.microformat);
     }
     preconnectStream(o.streamingData);
     if (vd && vd.videoId) noteAudioTracks(vd.videoId, o.streamingData);
     return o;
+  }
+  /* channel of each video (310): from videoDetails.channelId and the microformat's owner URL */
+  var chanById = {}, chanIds = [];
+  function noteChannel(id, channelId, mf) {
+    try {
+      var url = mf && mf.playerMicroformatRenderer && mf.playerMicroformatRenderer.ownerProfileUrl;
+      var h = /\/(@[^\/?#]+)/.exec(url || '');
+      var ci = { id: typeof channelId === 'string' ? channelId : '', handle: h ? decodeURIComponent(h[1]).toLowerCase() : '' };
+      if (!ci.id && !ci.handle) return;
+      if (!chanById[id]) { chanIds.push(id); if (chanIds.length > 40) delete chanById[chanIds.shift()]; }
+      chanById[id] = ci;
+    } catch (e) {}
   }
   /* original audio track per video (32): "… original" track, else the one marked default */
   var origAudio = {}, origIds = [];
@@ -1098,6 +1130,7 @@
     autonavFor = '';
     if (started) {   // the helpers below are defined further down; first run is at start-up
       updateBadge();
+      reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
       if (isWatch() && (cfg.normalize || audioFx.ctx)) applyNormalize(video());
     }
@@ -1356,11 +1389,39 @@
     for (var i = 0; i < bars.length; i++) if (watchedPct(bars[i]) >= seenMin()) return true;
     return false;
   }
-  /** First up-next video by the same channel (byline starts with the channel name), not watched. */
+  /** Channel identifiers of the playing video (310): channel id, @handle, owner link on the page. */
+  var CH_LINK_RE = /^\/(?:(@[^\/?#]+)|channel\/(UC[\w-]{10,}))/;
+  function chKey(href) {
+    try {
+      var u = new URL(href, location.href);
+      var m = CH_LINK_RE.exec(u.pathname);
+      if (!m) return '';
+      return m[1] ? decodeURIComponent(m[1]).toLowerCase() : m[2];
+    } catch (e) { return ''; }
+  }
+  function currentChannelKeys(id) {
+    var keys = [];
+    var add = function (k) { if (k && keys.indexOf(k) < 0) keys.push(k); };
+    var ci = chanById[id];
+    if (ci) { add(ci.id); add(ci.handle); }
+    try {
+      var owner = document.querySelectorAll(RULES.sel.ownerLink);
+      for (var i = 0; i < owner.length; i++) add(chKey(owner[i].getAttribute('href') || ''));
+    } catch (e) {}
+    return keys;
+  }
+  function cardChannelKeys(it) {
+    var out = [];
+    var links = it.querySelectorAll('a[href^="/@"], a[href^="/channel/"], a[href*="youtube.com/@"], a[href*="youtube.com/channel/"]');
+    for (var i = 0; i < links.length; i++) { var k = chKey(links[i].getAttribute('href') || ''); if (k && out.indexOf(k) < 0) out.push(k); }
+    return out;
+  }
+  /** First up-next video by the same channel, not watched: by channel link, the byline text as a fallback. */
   function sameChannelLink(id) {
     var author = '';
     try { var p = player(), d = p && p.getVideoData && p.getVideoData(); author = ((d && d.author) || '').trim(); } catch (e) {}
-    if (author.length < 2) return null;
+    var mine = currentChannelKeys(id);
+    if (author.length < 2 && !mine.length) return null;
     var items = document.querySelectorAll(RULES.sel.relatedItem);
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
@@ -1368,6 +1429,14 @@
       if (!a) continue;
       var m = /[?&]v=([\w-]{6,})/.exec(a.getAttribute('href') || '');
       if (!m || m[1] === id || it.hasAttribute('data-ytl-seen') || itemWatched(it)) continue;
+      var theirs = mine.length ? cardChannelKeys(it) : [];
+      if (theirs.length) {
+        var hit = false;
+        for (var k = 0; k < theirs.length && !hit; k++) if (mine.indexOf(theirs[k]) >= 0) hit = true;
+        if (hit) return a;
+        continue;   // both sides have a channel link and they differ: another channel
+      }
+      if (author.length < 2) continue;
       var by = it.querySelector(RULES.sel.byline);
       if (!by) continue;
       var t = textOf(by);
@@ -1513,6 +1582,7 @@
     if ((loopOne || (abA >= 0 && abB > abA)) && !stopAtEnd && !userPaused) {
       v.currentTime = abB > abA && abA >= 0 ? abA : 0;
       play();
+      loopWrapped();
       return;
     }
     if (countMode && endedFor !== id) { endedFor = id; call('videoEnded', id); }
@@ -1549,7 +1619,7 @@
     if (stopAtEnd && isFinite(v.duration) && v.duration > 0) {
       var left = v.duration - v.currentTime;
       var F = Math.max(5, Math.min(120, Number(cfg.fadeSec) || 60));
-      if (left <= F) setVolume(Math.max(0, (left - 1) / (F - 1)));
+      if (left <= F) setVolume(fadeVolume(left - 1, F - 1));
       if (left <= 1.2) {
         stopAtEnd = false;
         sleepPause();
@@ -1560,6 +1630,8 @@
 
   /* ---------- 11. "Video paused. Continue watching?" ---------- */
   var STILL_RE = /continue watching|still watching|still there|are you there|video paused|还在看吗|你还在吗|继续观看|仍在观看|视频已暂停|繼續觀看|仍在觀看|影片已暫停/i;
+  var STILL_YES_RE = /^(?:是|是的|继续|继续观看|继续播放|繼續|繼續觀看|繼續播放|yes|continue|continue watching|keep watching|i'm still here|still watching)$/i;
+  var STILL_NO_RE = /^(?:否|不|取消|退出|停止|no|cancel|exit|stop|dismiss)$/i;
   var dismissStillWatching = guard('still', function () {
     if (userPaused) return;
     var dlg = document.querySelector(RULES.sel.stillDialog);
@@ -1570,7 +1642,21 @@
     if (!dlg) return;
     var btns = dlg.querySelectorAll('button, [role="button"]');
     if (!btns.length) return;
-    btns[btns.length - 1].click();
+    // the "yes / continue" button by its text first (248); the last button only as a fallback
+    var pickBtn = null, how = 'last';
+    for (var b = 0; b < btns.length && !pickBtn; b++) {
+      var label = (btns[b].getAttribute('aria-label') || '') + ' ' + textOf(btns[b]);
+      if (STILL_YES_RE.test(label.trim())) { pickBtn = btns[b]; how = 'text'; }
+    }
+    if (!pickBtn) {
+      for (var c = btns.length - 1; c >= 0 && !pickBtn; c--) {
+        var l2 = (btns[c].getAttribute('aria-label') || '') + ' ' + textOf(btns[c]);
+        if (!STILL_NO_RE.test(l2.trim())) pickBtn = btns[c];
+      }
+    }
+    if (!pickBtn) return;
+    log('still', 'dismissed by ' + how);
+    pickBtn.click();
     setTimeout(function () { var v = video(); if (v && v.paused && !userPaused) play(); }, 300);
   });
 
@@ -1579,8 +1665,23 @@
   // then Java reloads with the HTTP cache bypassed (LOAD_NO_CACHE + cache-busting param).
   // Cookies and localStorage are never touched (66): that is the sign-in and the settings.
   var refreshing = false;
-  function refresh() {
-    if (refreshing) return;
+  /** A video is playing in the mini player (or anywhere) right now. */
+  function playingNow() {
+    var v = video();
+    return !!(v && !v.paused && !v.ended && !adNow());
+  }
+  function offline() {
+    if (navigator.onLine === false) return true;
+    try { if (B && typeof B.isOnline === 'function' && B.isOnline() === false) return true; } catch (e) {}
+    return false;
+  }
+  /** Returns false when it decided not to reload (offline / asking first). */
+  function refresh(force) {
+    if (refreshing) return true;
+    // offline (318): keep what is on screen, clear nothing
+    if (offline()) { call('toast', '当前离线，已保留列表'); return false; }
+    // something is playing (317): reloading would stop it, so ask first (Java shows the snack bar)
+    if (force !== true && playingNow() && B && typeof B.confirmRefresh === 'function') { call('confirmRefresh'); return false; }
     refreshing = true;
     var done = false;
     var go = function () { if (done) return; done = true; refreshing = false; call('hardReload'); };
@@ -1611,6 +1712,7 @@
     } catch (e) {}
     Promise.all(jobs).then(go, go);
     setTimeout(go, 800);
+    return true;
   }
   window.ytl.refresh = refresh;
 
@@ -1643,7 +1745,11 @@
     if (isHome || t.closest('ytm-home-logo')) {
       e.preventDefault();
       e.stopPropagation();
-      window.scrollTo(0, 0);
+      // scrolled down: just back to the top (319); already at the top: refresh
+      if ((window.scrollY || document.documentElement.scrollTop || 0) > 0) {
+        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (x) { window.scrollTo(0, 0); }
+        return;
+      }
       refresh();
     }
   });
@@ -1937,20 +2043,49 @@
   }
 
   /* ---------- 20. page colour for the system bars (92/145), remote CSS (73) ---------- */
+  /* sign-in (343): tell Java the moment the page is signed in / the account changes, so the
+   * cookies are written to disk right away instead of only when the app goes to the background */
+  var loginKey = null, lastLoginCheck = 0;
+  var checkLogin = guard('login', function () {
+    var now = Date.now();
+    if (now - lastLoginCheck < 3000) return;
+    lastLoginCheck = now;
+    if (!window.ytcfg || typeof ytcfg.get !== 'function') return;
+    var li = ytcfg.get('LOGGED_IN');
+    if (li !== true && li !== false) return;
+    var key = li ? 'in|' + (ytcfg.get('DATASYNC_ID') || ytcfg.get('DELEGATED_SESSION_ID') || '') : 'out';
+    if (loginKey !== null && key !== loginKey) call('loginChanged', !!li);
+    loginKey = key;
+  });
   var lastTheme = '', lastThemeCheck = 0;
   function rgbDark(c) {
     var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c || '');
     if (!m || (m[4] !== undefined && +m[4] < 0.5)) return null;
     return (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) < 128;
   }
+  /* light / dark (257): YouTube marks dark mode with html[dark]; an attribute observer reports
+   * changes, and getComputedStyle is only read when the attribute says nothing (no timer polling) */
+  var themeKnown = false, themeMo = null;
+  function watchThemeAttr() {
+    if (themeMo || !window.MutationObserver || !document.documentElement) return;
+    themeMo = new MutationObserver(function () {
+      reportTheme(true);
+      setTimeout(function () { reportTheme(true); }, 300);   // the page may repaint the body a moment later
+    });
+    themeMo.observe(document.documentElement, { attributes: true, attributeFilter: ['dark'] });
+  }
   var reportTheme = guard('theme', function (force) {
+    watchThemeAttr();
+    if (!force && themeKnown) return;   // known: only the attribute observer reports again
     var now = Date.now();
     if (!force && now - lastThemeCheck < 1500) return;
     lastThemeCheck = now;
     var dark = null;
-    if (document.body) dark = rgbDark(getComputedStyle(document.body).backgroundColor);
+    if (document.documentElement && document.documentElement.hasAttribute('dark')) dark = true;
+    if (dark === null && document.body) dark = rgbDark(getComputedStyle(document.body).backgroundColor);
     if (dark === null && document.documentElement) dark = rgbDark(getComputedStyle(document.documentElement).backgroundColor);
     if (dark === null) return;   // unknown: keep the app's dark default
+    themeKnown = true;
     var t = dark ? (cfg.amoled ? '#000000' : '#0f0f0f') : '#ffffff';
     if (t !== lastTheme) { lastTheme = t; call('pageTheme', t); }
   });
@@ -2062,6 +2197,7 @@
     else if (document.getElementById('ytl-chips')) ensureChips();
     searchFocus();
     reportTheme(false);
+    checkLogin();
     try { checkObserverRoot(); } catch (e) { report('observer-root', e); }
   }
   var passQueued = false, menuQueued = false, dirty = false;
@@ -2172,7 +2308,10 @@
     origAudio: function () { return origAudio; }, posStore: posStore, toolState: toolState,
     stopAtEnd: function () { return stopAtEnd; },
     parseDur: parseDur, ageDays: ageDays, cardInfo: cardInfo, filterCards: filterCards, remoteSelectors: remoteSelectors,
-    scrollMem: function () { return scrollMem; }, restoreScroll: restoreScroll, watchLater: watchLater, reportTheme: reportTheme
+    scrollMem: function () { return scrollMem; }, restoreScroll: restoreScroll, watchLater: watchLater, reportTheme: reportTheme,
+    // batch 4 (v1.6.0)
+    fadeVolume: fadeVolume, dismissStillWatching: dismissStillWatching, checkLogin: checkLogin,
+    playingNow: playingNow, chanById: function () { return chanById; }, cfg: function () { return cfg; }
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });

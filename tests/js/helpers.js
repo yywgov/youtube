@@ -25,7 +25,8 @@ async function load(opts) {
     sleepFired: rec('sleepFired'), saveRate: rec('saveRate'), savePos: rec('savePos'), videoEnded: rec('videoEnded'),
     openTools: rec('openTools'), isMetered: () => !!opts.metered,
     cardMenu: rec('cardMenu'), showKeyboard: rec('showKeyboard'), pageTheme: rec('pageTheme'),
-    getRemoteRules: () => (opts.remote ? JSON.stringify(opts.remote) : '')
+    getRemoteRules: () => (opts.remote ? JSON.stringify(opts.remote) : ''),
+    confirmRefresh: rec('confirmRefresh'), loginChanged: rec('loginChanged'), isOnline: () => opts.online !== false
   };
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };

@@ -55,7 +55,7 @@ public class YTProWebChromeClient extends WebChromeClient {
                 | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-        w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        activity.keepScreenOn("fullscreen", true);   // shared with the black screen (337)
         int lock = activity.orientationLock();
         activity.setRequestedOrientation(lock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? lock
                 : activity.portraitVideo ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
@@ -83,7 +83,7 @@ public class YTProWebChromeClient extends WebChromeClient {
         customView = null;
         customViewCallback = null;
         w.getDecorView().setSystemUiVisibility(savedUiVisibility);
-        w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        activity.keepScreenOn("fullscreen", false);
         if (Build.VERSION.SDK_INT >= 28) {
             WindowManager.LayoutParams p = w.getAttributes();
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;

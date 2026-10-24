@@ -19,8 +19,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * JS bridge, exposed as window.YTL. Methods are called on the JavaBridge
@@ -28,7 +26,6 @@ import java.util.concurrent.Executors;
  * network work goes to a background executor.
  */
 public class WebAppInterface {
-    private static final ExecutorService NET = Executors.newSingleThreadExecutor();
     private final MainActivity activity;
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -48,6 +45,8 @@ public class WebAppInterface {
             o.put("badge", SleepTimer.badge());
             o.put("sleepMode", MainActivity.sleepModeOn() && SleepTimer.active());
             o.put("bg", !MainActivity.isVisible());
+            MainActivity.onPageReady();   // queued commands for this page run now (247)
+            o.put("adKeys", new JSONArray(WatchPageFilter.adKeysJson()));   // one list with the native filter (279)
             return o.toString();
         } catch (Exception e) {
             return Prefs.jsConfig(activity);
@@ -56,7 +55,7 @@ public class WebAppInterface {
 
     @JavascriptInterface
     public void mediaMeta(final String title, final String artist, final String art, final long durMs, final String videoId) {
-        main.post(() -> PlaybackService.onMeta(activity, title, artist, art, durMs));
+        main.post(() -> PlaybackService.onMeta(activity, title, artist, art, durMs, videoId));
     }
 
     @JavascriptInterface
@@ -77,19 +76,32 @@ public class WebAppInterface {
         main.post(() -> activity.portraitVideo = portrait);
     }
 
+    /**
+     * Methods that act on the app are refused while the main frame is a known non-YouTube page
+     * (409): the Google sign-in pages share this WebView. Reading state stays open.
+     */
+    private boolean allowed(String what) {
+        if (com.google.android.youtube.pro.Logic.bridgeAllowed(MainActivity.pageHost())) return true;
+        if (Diag.allowFromPage()) Diag.log("bridge", "refused " + what + " on " + MainActivity.pageHost());
+        return false;
+    }
+
     @JavascriptInterface
     public void openSettings() {
+        if (!allowed("openSettings")) return;
         main.post(activity::openSettings);
     }
 
     /** Fresh reload after the script dropped YouTube's client-side caches. */
     @JavascriptInterface
     public void hardReload() {
+        if (!allowed("hardReload")) return;
         main.post(activity::hardReload);
     }
 
     @JavascriptInterface
     public void reloadPage() {
+        if (!allowed("reloadPage")) return;
         main.post(activity::hardReload);
     }
 
@@ -119,6 +131,7 @@ public class WebAppInterface {
     /** Speed the user picked, remembered when that setting is on (30). */
     @JavascriptInterface
     public void saveRate(final String rate) {
+        if (!allowed("saveRate")) return;
         try {
             double r = Double.parseDouble(rate);
             if (r >= 0.25 && r <= 2) Prefs.put(activity, Prefs.RATE, String.valueOf(r));
@@ -128,7 +141,7 @@ public class WebAppInterface {
     /** Last video + position, offered again when the app is reopened after being killed (27). */
     @JavascriptInterface
     public void savePos(final String videoId, final long sec, final String title) {
-        if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,20}")) return;
+        if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,20}") || !allowed("savePos")) return;
         Prefs.get(activity).edit()
                 .putString(Prefs.LAST_VIDEO, videoId)
                 .putLong(Prefs.LAST_POS, Math.max(0, sec))
@@ -140,19 +153,21 @@ public class WebAppInterface {
     /** Native playback tools sheet (sleep, black screen, touch lock, speed, loop...). */
     @JavascriptInterface
     public void openTools() {
+        if (!allowed("openTools")) return;
         main.post(activity::openTools);
     }
 
     /** Long-press on a video card (123): native quick menu. */
     @JavascriptInterface
     public void cardMenu(final String json) {
-        if (json == null || json.length() > 2000) return;
+        if (json == null || json.length() > 2000 || !allowed("cardMenu")) return;
         main.post(() -> activity.cardMenu(json));
     }
 
     /** Search box opened (124). */
     @JavascriptInterface
     public void showKeyboard() {
+        if (!allowed("showKeyboard")) return;
         main.post(activity::showKeyboard);
     }
 
@@ -171,6 +186,7 @@ public class WebAppInterface {
     /** Pull / Home tap while something plays in the mini player (317). */
     @JavascriptInterface
     public void confirmRefresh() {
+        if (!allowed("confirmRefresh")) return;
         main.post(activity::confirmRefresh);
     }
 
@@ -191,14 +207,19 @@ public class WebAppInterface {
 
     @JavascriptInterface
     public void toast(final String text) {
+        if (text == null || !allowed("toast")) return;
         main.post(() -> Toast.makeText(activity.getApplicationContext(), text, Toast.LENGTH_SHORT).show());
     }
 
-    /** SponsorBlock segments, fetched natively (no CSP issues, off the UI thread). */
+    /**
+     * SponsorBlock segments, fetched natively (no CSP issues, off the UI thread). Asked by the first
+     * 4 hex digits of sha256(videoId) (410): the service only learns a bucket of many videos, the
+     * one being watched is picked out here.
+     */
     @JavascriptInterface
     public void fetchSegments(final String videoId) {
         if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,20}")) return;
-        NET.execute(() -> {
+        com.google.android.youtube.pro.Bg.NET.execute(() -> {
             JSONArray out = new JSONArray();
             HttpURLConnection c = null;
             try {
@@ -207,20 +228,27 @@ public class WebAppInterface {
                 JSONArray catArr = new JSONArray();
                 for (String k : chosen) catArr.put(k);
                 String cats = URLEncoder.encode(catArr.toString(), "UTF-8");
-                URL u = new URL("https://sponsor.ajay.app/api/skipSegments?videoID=" + videoId + "&categories=" + cats);
+                String prefix = com.google.android.youtube.pro.Logic.sbPrefix(videoId);
+                if (prefix.length() != 4) throw new Exception("no hash");
+                URL u = new URL("https://sponsor.ajay.app/api/skipSegments/" + prefix + "?categories=" + cats);
                 c = (HttpURLConnection) u.openConnection();
                 c.setConnectTimeout(6000);
                 c.setReadTimeout(6000);
                 c.setRequestProperty("User-Agent", "YiWei");
                 if (c.getResponseCode() == 200) {
-                    String body = read(c.getInputStream());
-                    JSONArray arr = new JSONArray(body);
-                    for (int i = 0; i < arr.length(); i++) {
-                        JSONObject o = arr.getJSONObject(i);
-                        JSONArray seg = o.getJSONArray("segment");
-                        String cat = o.optString("category", "sponsor");
-                        if ("skip".equals(o.optString("actionType", "skip")) && chosen.contains(cat)) {
-                            out.put(new JSONArray().put(seg.getDouble(0)).put(seg.getDouble(1)).put(cat));
+                    JSONArray arr = new JSONArray(read(c.getInputStream()));
+                    for (int v = 0; v < arr.length(); v++) {
+                        JSONObject vo = arr.optJSONObject(v);
+                        if (vo == null || !videoId.equals(vo.optString("videoID", ""))) continue;
+                        JSONArray segs = vo.optJSONArray("segments");
+                        if (segs == null) continue;
+                        for (int i = 0; i < segs.length(); i++) {
+                            JSONObject o = segs.getJSONObject(i);
+                            JSONArray seg = o.getJSONArray("segment");
+                            String cat = o.optString("category", "sponsor");
+                            if ("skip".equals(o.optString("actionType", "skip")) && chosen.contains(cat)) {
+                                out.put(new JSONArray().put(seg.getDouble(0)).put(seg.getDouble(1)).put(cat));
+                            }
                         }
                     }
                 }
@@ -241,8 +269,24 @@ public class WebAppInterface {
 
     /** An ad that still reached the player despite the response filtering. */
     @JavascriptInterface
-    public void logAd(final String videoId, final String type, final String page) {
-        if (Diag.allowFromPage()) Diag.ad(videoId, type, page);
+    public void logAd(final String videoId, final String type, final String page, final String context) {
+        if (!Diag.allowFromPage()) return;
+        // page context + what only the app knows (280): the native rewrite of the last watch page, WebView version
+        Diag.ad(videoId, type, page, (context == null ? "" : context) + " wpf=" + WatchPageFilter.lastResult()
+                + " wv=" + MainActivity.webViewVersionCached());
+    }
+
+    /** Recovery gave up / no network while playing (250): the notification says why it stopped. */
+    @JavascriptInterface
+    public void netStalled(final boolean on) {
+        main.post(() -> PlaybackService.setNetNote(on));
+    }
+
+    /** The page's self check found a missing ad-blocking hook (254): told once per version. */
+    @JavascriptInterface
+    public void selfCheckFailed(final String what) {
+        if (what == null || what.length() > 200) return;
+        main.post(() -> activity.onSelfCheckFailed(what));
     }
 
     private static String read(InputStream in) throws java.io.IOException {

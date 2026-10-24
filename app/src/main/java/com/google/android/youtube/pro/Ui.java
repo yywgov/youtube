@@ -29,6 +29,24 @@ public final class Ui {
     public static final int TEXT_2 = 0xFFAAAAAA;
     public static final int DIVIDER = 0x1FFFFFFF;
     public static final int DEFAULT_ACCENT = 0xFF3EA6FF;
+    // (350) every native colour comes from here; a contract test keeps literals out of other classes
+    public static final int CHIP = 0xFF333333;        // chip / pill buttons on a sheet
+    public static final int SNACK = 0xF2323232;       // snack bar background
+    public static final int HANDLE = 0xFF5F5F5F;      // drag handle on sheets
+    public static final int HINT = 0xFF777777;        // input hint text
+    public static final int TEXT_3 = 0xFFCCCCCC;      // secondary text on dialogs
+    public static final int BLACK_HINT = 0xFF9E9E9E;  // text on the black screen, ≈7:1 on black (377)
+    public static final int OVERLAY_PILL = 0xB0000000; // translucent pill (touch lock, fullscreen moon)
+    public static final int PROGRESS = 0xFFFF0033;    // top load bar (YouTube red)
+    public static final int SWITCH_OFF = 0xFFBDBDBD;
+    public static final int BLACK = 0xFF000000;
+    public static final int WHITE = 0xFFFFFFFF;
+    public static final int TRACK_OFF = 0x40FFFFFF;
+
+    /** Same colour with another alpha (switch track). */
+    public static int withAlpha(int color, int alpha) {
+        return (color & 0x00FFFFFF) | ((alpha & 0xFF) << 24);
+    }
     public static final int RADIUS_DP = 16;
     public static final int ROW_MIN_DP = 56;
     public static final int ANIM_MS = 200;
@@ -40,6 +58,11 @@ public final class Ui {
         String a = Prefs.str(c, Prefs.ACCENT, "");
         try { if (a.matches("#[0-9a-fA-F]{6}")) return 0xFF000000 | Integer.parseInt(a.substring(1), 16); } catch (Exception ignored) {}
         return DEFAULT_ACCENT;
+    }
+
+    /** Native motion length (367): 0 when the system's "remove animations" is on. */
+    public static int anim(Context c, int ms) {
+        return Prefs.animationsOff(c) ? 0 : ms;
     }
 
     public static int dp(Context c, float v) {
@@ -86,7 +109,7 @@ public final class Ui {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, dp(a, 10), 0, dp(a, 12));
         View handle = new View(a);
-        handle.setBackground(round(0xFF5F5F5F, dp(a, 2)));
+        handle.setBackground(round(HANDLE, dp(a, 2)));
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(a, 36), dp(a, 4));
         hp.gravity = Gravity.CENTER_HORIZONTAL;
         hp.bottomMargin = dp(a, 6);
@@ -105,7 +128,7 @@ public final class Ui {
             w.setBackgroundDrawable(bg);
             w.setGravity(Gravity.BOTTOM);
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            w.setWindowAnimations(android.R.style.Animation_InputMethod);
+            if (!Prefs.animationsOff(a)) w.setWindowAnimations(android.R.style.Animation_InputMethod);   // (367)
             WindowManager.LayoutParams lp = w.getAttributes();
             lp.dimAmount = 0.4f;
             w.setAttributes(lp);
@@ -116,13 +139,30 @@ public final class Ui {
 
     /** Plain sheet row: title + optional one-line explanation, ≥ 48 dp touch target. */
     public static View sheetRow(Context c, String title, String sub, View.OnClickListener click) {
+        return sheetRow(c, 0, title, sub, click);
+    }
+
+    /** Sheet row with a line icon on the left (362); icon 0 = none. */
+    public static View sheetRow(Context c, int icon, String title, String sub, View.OnClickListener click) {
+        LinearLayout texts = new LinearLayout(c);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.addView(text(c, title, 16, TEXT));
+        if (sub != null && !sub.isEmpty()) texts.addView(text(c, sub, 12, TEXT_2));
         LinearLayout l = new LinearLayout(c);
-        l.setOrientation(LinearLayout.VERTICAL);
+        l.setOrientation(LinearLayout.HORIZONTAL);
         l.setPadding(dp(c, 20), dp(c, 10), dp(c, 20), dp(c, 10));
         l.setMinimumHeight(dp(c, 52));
         l.setGravity(Gravity.CENTER_VERTICAL);
-        l.addView(text(c, title, 16, TEXT));
-        if (sub != null && !sub.isEmpty()) l.addView(text(c, sub, 12, TEXT_2));
+        if (icon != 0) {
+            android.widget.ImageView iv = new android.widget.ImageView(c);
+            iv.setImageResource(icon);
+            iv.setImageTintList(ColorStateList.valueOf(TEXT_2));
+            iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(c, 24), dp(c, 24));
+            ip.rightMargin = dp(c, 16);
+            l.addView(iv, ip);
+        }
+        l.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         if (click != null) {
             ripple(l);
             l.setOnClickListener(click);

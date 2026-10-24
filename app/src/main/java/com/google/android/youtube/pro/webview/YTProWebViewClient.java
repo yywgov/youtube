@@ -95,6 +95,13 @@ public class YTProWebViewClient extends WebViewClient {
         activity.onPageFinished(url);
     }
 
+    /** First paint of a new page (253): the refresh's no-cache mode ends here. */
+    @Override
+    public void onPageCommitVisible(WebView view, String url) {
+        super.onPageCommitVisible(view, url);
+        activity.onPageCommitVisible();
+    }
+
     @Override
     public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
         super.doUpdateVisitedHistory(view, url, isReload);

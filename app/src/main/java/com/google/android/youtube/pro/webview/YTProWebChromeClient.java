@@ -51,16 +51,50 @@ public class YTProWebChromeClient extends WebChromeClient {
         }
         savedUiVisibility = w.getDecorView().getSystemUiVisibility();
         ((FrameLayout) w.getDecorView()).addView(view, new FrameLayout.LayoutParams(-1, -1));
-        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        hideBars(w);
         activity.keepScreenOn("fullscreen", true);   // shared with the black screen (337)
         int lock = activity.orientationLock();
         activity.setRequestedOrientation(lock != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? lock
                 : activity.portraitVideo ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                 : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         activity.raiseOverlays();
+        activity.onFullscreenChanged(true);   // moon button over the video (336)
+    }
+
+    /**
+     * System bars away for fullscreen (386): WindowInsetsController on Android 11+ (edge-to-edge on
+     * 15/16 no longer flashes the bars or leaves the layout shifted), the old flags before that.
+     */
+    @SuppressWarnings("deprecation")
+    private void hideBars(android.view.Window w) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                android.view.WindowInsetsController c = w.getInsetsController();
+                if (c != null) {
+                    c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    c.hide(android.view.WindowInsets.Type.systemBars());
+                    return;
+                }
+            } catch (Throwable ignored) {}
+        }
+        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void showBars(android.view.Window w) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                android.view.WindowInsetsController c = w.getInsetsController();
+                if (c != null) {
+                    c.show(android.view.WindowInsets.Type.systemBars());
+                    c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_DEFAULT);
+                }
+            } catch (Throwable ignored) {}
+        }
+        w.getDecorView().setSystemUiVisibility(savedUiVisibility);
     }
 
     @Override
@@ -82,8 +116,9 @@ public class YTProWebChromeClient extends WebChromeClient {
         ((FrameLayout) w.getDecorView()).removeView(customView);
         customView = null;
         customViewCallback = null;
-        w.getDecorView().setSystemUiVisibility(savedUiVisibility);
+        showBars(w);
         activity.keepScreenOn("fullscreen", false);
+        activity.onFullscreenChanged(false);
         if (Build.VERSION.SDK_INT >= 28) {
             WindowManager.LayoutParams p = w.getAttributes();
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
@@ -103,19 +138,45 @@ public class YTProWebChromeClient extends WebChromeClient {
         if (callback != null) callback.invoke(origin, false, false);
     }
 
+    /** Voice search waiting for the system microphone permission (411). */
+    private PermissionRequest pendingMic;
+
+    /**
+     * Microphone for voice search (411): only a YouTube page by its host, only audio capture (never
+     * whatever else the page asks for), and once the system permission is given the same request
+     * goes on, without a second tap.
+     */
     @Override
     public void onPermissionRequest(final PermissionRequest request) {
         String origin = request.getOrigin() != null ? request.getOrigin().toString() : "";
-        if (!origin.contains("youtube.com")) {
+        boolean wantsMic = false;
+        for (String r : request.getResources()) if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) wantsMic = true;
+        if (!com.google.android.youtube.pro.Logic.micOriginOk(origin) || !wantsMic) {
             request.deny();
             return;
         }
-        if (Build.VERSION.SDK_INT >= 23
-                && activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        final String[] audio = {PermissionRequest.RESOURCE_AUDIO_CAPTURE};
+        if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            if (pendingMic != null) { try { pendingMic.deny(); } catch (Exception ignored) {} }
+            pendingMic = request;
             activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MainActivity.REQ_MIC);
-            request.deny();
         } else {
-            request.grant(request.getResources());
+            request.grant(audio);
         }
+    }
+
+    @Override
+    public void onPermissionRequestCanceled(PermissionRequest request) {
+        if (request == pendingMic) pendingMic = null;
+    }
+
+    public void onMicPermission(boolean granted) {
+        PermissionRequest r = pendingMic;
+        pendingMic = null;
+        if (r == null) return;
+        try {
+            if (granted) r.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            else r.deny();
+        } catch (Exception ignored) {}
     }
 }

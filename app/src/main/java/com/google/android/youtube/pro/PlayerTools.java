@@ -27,8 +27,9 @@ import org.json.JSONObject;
  */
 public final class PlayerTools {
     private final MainActivity a;
-    private final JSONObject st;
+    private JSONObject st;
     private Dialog dialog;
+    private ScrollView scroll;
 
     private PlayerTools(MainActivity a, JSONObject st) {
         this.a = a;
@@ -39,35 +40,63 @@ public final class PlayerTools {
         new PlayerTools(a, state).build();
     }
 
+    /** Toggles stay in the sheet (335): the page state is read again and the rows are redrawn in place. */
+    private void refresh() {
+        MainActivity.MAIN_HANDLER.postDelayed(() -> a.toolState(s -> {
+            if (dialog == null || !dialog.isShowing()) return;
+            st = s == null ? new JSONObject() : s;
+            scroll.removeAllViews();
+            scroll.addView(content());
+        }), 120);
+    }
+
     private void build() {
-        ScrollView scroll = new ScrollView(a);
+        scroll = new ScrollView(a);
+        scroll.addView(content());
+        dialog = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
+        dialog.setContentView(scroll);
+        dialog.setCanceledOnTouchOutside(true);
+        Window w = dialog.getWindow();
+        if (w != null) {
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Ui.SHEET);
+            float r = dp(16);
+            bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
+            w.setBackgroundDrawable(bg);
+            w.setGravity(Gravity.BOTTOM);
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (!Prefs.animationsOff(a)) w.setWindowAnimations(android.R.style.Animation_InputMethod);
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.dimAmount = 0.4f;
+            w.setAttributes(lp);
+            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        }
+        dialog.show();
+    }
+
+    private LinearLayout content() {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, dp(10), 0, dp(16));
-        scroll.addView(box);
 
         TextView handle = new TextView(a);
-        GradientDrawable hd = new GradientDrawable();
-        hd.setColor(0xFF5F5F5F);
-        hd.setCornerRadius(dp(2));
-        handle.setBackground(hd);
+        handle.setBackground(Ui.round(Ui.HANDLE, dp(2)));
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(36), dp(4));
         hp.gravity = Gravity.CENTER_HORIZONTAL;
         hp.bottomMargin = dp(6);
         box.addView(handle, hp);
 
         box.addView(header("睡眠"));
-        String sleep = SleepTimer.active() ? "关闭睡眠定时（" + SleepTimer.optionLabel(SleepTimer.mode()) + "）" : "睡眠定时…";
-        box.addView(row(sleep, SleepTimer.active() ? SleepTimer.status() : "到点淡出后暂停", v -> {
+        String sleep = SleepTimer.active() ? "睡眠定时：" + SleepTimer.optionLabel(SleepTimer.mode()) : "睡眠定时…";
+        box.addView(row(sleep, SleepTimer.active() ? SleepTimer.status() + " · 点此改时长或关闭" : "到点淡出后暂停", v -> {
             dismiss();
-            if (SleepTimer.active()) SleepTimer.cancel(a);
-            else pickSleep(a, "睡眠定时", m -> SleepTimer.start(a, m));
+            pickSleep(a, "睡眠定时", m -> SleepTimer.start(a, m));
         }));
         if (!SleepTimer.active()) {
             box.addView(row("一键睡眠模式", "定时 " + SleepTimer.optionLabel(Prefs.sleepDefault(a)) + " + 最低画质 + 只续播同频道 + 调暗屏幕",
                     v -> { dismiss(); a.startSleepMode(); }));
         }
-        box.addView(row("黑屏播放", "屏幕全黑不锁屏，OLED 几乎不耗电；轻点恢复", v -> { dismiss(); a.startBlackScreen(); }));
+        box.addView(row("黑屏播放", "屏幕全黑不锁屏，OLED 几乎不耗电；双击恢复", v -> { dismiss(); a.startBlackScreen(); }));
         box.addView(row("触控锁", "睡前看视频防误触；长按屏幕 1.5 秒解锁", v -> { dismiss(); a.startTouchLock(); }));
 
         boolean watch = st.optBoolean("watch", false);
@@ -76,8 +105,8 @@ public final class PlayerTools {
             LinearLayout seekRow = new LinearLayout(a);
             seekRow.setOrientation(LinearLayout.HORIZONTAL);
             seekRow.setPadding(dp(12), dp(4), dp(12), dp(4));
-            seekRow.addView(chip("快退 10 秒", v -> MainActivity.js("ytl.seekBy(-10)")), weight());
-            seekRow.addView(chip("快进 30 秒", v -> MainActivity.js("ytl.seekBy(30)")), weight());
+            seekRow.addView(seekChip("快退 10 秒", -10), weight());
+            seekRow.addView(seekChip("快进 30 秒", 30), weight());
             box.addView(seekRow);
 
             double rate = st.optDouble("rate", 1);
@@ -86,8 +115,7 @@ public final class PlayerTools {
             boolean loop = st.optBoolean("loop", false);
             box.addView(row(loop ? "单曲循环：开 ✓" : "单曲循环：关", "睡前循环听同一个视频", v -> {
                 MainActivity.js("ytl.loop(" + !loop + ")");
-                toast(loop ? "已关闭单曲循环" : "已开启单曲循环");
-                dismiss();
+                refresh();
             }));
 
             double ab_a = st.optDouble("a", -1), ab_b = st.optDouble("b", -1);
@@ -97,17 +125,17 @@ public final class PlayerTools {
             LinearLayout abRow = new LinearLayout(a);
             abRow.setOrientation(LinearLayout.HORIZONTAL);
             abRow.setPadding(dp(12), 0, dp(12), dp(4));
-            abRow.addView(chip("设 A 点", v -> { MainActivity.js("ytl.ab('a')"); toast("已设 A 点"); dismiss(); }), weight());
-            abRow.addView(chip("设 B 点", v -> { MainActivity.js("ytl.ab('b')"); toast("已设 B 点（需在 A 点之后）"); dismiss(); }), weight());
-            abRow.addView(chip("清除", v -> { MainActivity.js("ytl.ab('clear')"); dismiss(); }), weight());
+            abRow.addView(chip("设 A 点", v -> { MainActivity.js("ytl.ab('a')"); refresh(); }), weight());
+            abRow.addView(chip("设 B 点", v -> { MainActivity.js("ytl.ab('b')"); refresh(); }), weight());
+            abRow.addView(chip("清除", v -> { MainActivity.js("ytl.ab('clear')"); refresh(); }), weight());
             box.addView(abRow);
 
             if (st.optBoolean("list", false) && st.optBoolean("shuffle", false)) {
                 LinearLayout sh = new LinearLayout(a);
                 sh.setOrientation(LinearLayout.HORIZONTAL);
                 sh.setPadding(dp(12), dp(4), dp(12), dp(4));
-                sh.addView(chip("列表随机播放", v -> { MainActivity.js("ytl.shuffle(true)"); toast("已开启随机播放"); dismiss(); }), weight());
-                sh.addView(chip("顺序播放", v -> { MainActivity.js("ytl.shuffle(false)"); toast("已恢复顺序播放"); dismiss(); }), weight());
+                sh.addView(chip("列表随机播放", v -> { MainActivity.js("ytl.shuffle(true)"); toast("已开启随机播放"); }), weight());
+                sh.addView(chip("顺序播放", v -> { MainActivity.js("ytl.shuffle(false)"); toast("已恢复顺序播放"); }), weight());
                 box.addView(sh);
             }
         }
@@ -118,32 +146,42 @@ public final class PlayerTools {
         or.setOrientation(LinearLayout.HORIZONTAL);
         or.setPadding(dp(12), dp(4), dp(12), dp(4));
         or.addView(chip(mark("跟随系统", lock == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED),
-                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED); dismiss(); }), weight());
+                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED); refresh(); }), weight());
         or.addView(chip(mark("锁定竖屏", lock == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT),
-                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT); dismiss(); }), weight());
+                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT); refresh(); }), weight());
         or.addView(chip(mark("锁定横屏", lock == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE),
-                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE); dismiss(); }), weight());
+                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE); refresh(); }), weight());
         box.addView(or);
+        // remembered across starts (388)
+        final boolean remember = Prefs.on(a, Prefs.ORIENT_REMEMBER);
+        box.addView(row(remember ? "记住屏幕方向：开 ✓" : "记住屏幕方向：关", "下次打开 App 沿用这里选的方向", v -> {
+            a.setOrientRemember(!remember);
+            refresh();
+        }));
+        return box;
+    }
 
-        dialog = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
-        dialog.setContentView(scroll);
-        dialog.setCanceledOnTouchOutside(true);
-        Window w = dialog.getWindow();
-        if (w != null) {
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(0xFF212121);
-            float r = dp(16);
-            bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
-            w.setBackgroundDrawable(bg);
-            w.setGravity(Gravity.BOTTOM);
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            w.setWindowAnimations(android.R.style.Animation_InputMethod);
-            WindowManager.LayoutParams lp = w.getAttributes();
-            lp.dimAmount = 0.4f;
-            w.setAttributes(lp);
-            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-        }
-        dialog.show();
+    // ---- -10 / +30 s (342): presses within 1.5 s add up, the chip shows the total for a moment ----
+    private int seekSum = 0;
+    private Button seekShown;
+    private final Runnable seekReset = () -> {
+        seekSum = 0;
+        if (seekShown != null) { seekShown.setText((String) seekShown.getTag()); seekShown = null; }
+    };
+
+    private Button seekChip(String label, final int sec) {
+        final Button b = chip(label, null);
+        b.setTag(label);
+        b.setOnClickListener(v -> {
+            MainActivity.js("ytl.seekBy(" + sec + ")");
+            if (seekShown != null && seekShown != b) seekReset.run();
+            seekSum += sec;
+            seekShown = b;
+            b.setText(seekSum < 0 ? "−" + (-seekSum) + " 秒" : "+" + seekSum + " 秒");
+            MainActivity.MAIN_HANDLER.removeCallbacks(seekReset);
+            MainActivity.MAIN_HANDLER.postDelayed(seekReset, 1500);
+        });
+        return b;
     }
 
     private void dismiss() {
@@ -164,9 +202,15 @@ public final class PlayerTools {
         box.addView(head);
         final Dialog[] d = new Dialog[1];
         int def = Prefs.sleepDefault(a);
+        // running timer (304): what is left, and switching it off, right here
+        boolean running = SleepTimer.active() && "睡眠定时".equals(title);
+        if (running) {
+            box.addView(Ui.sheetRow(a, R.drawable.ic_close_white, "关闭睡眠定时", SleepTimer.status(), v -> { d[0].dismiss(); SleepTimer.cancel(a); }));
+        }
         for (final int m : SleepTimer.OPTIONS) {
-            String sub = m == def ? "默认" : null;
-            box.addView(Ui.sheetRow(a, SleepTimer.optionLabel(m), sub, v -> { d[0].dismiss(); cb.pick(m); }));
+            boolean cur = running && SleepTimer.mode() == m;
+            String sub = cur ? "正在使用" + (m == def ? " · 默认" : "") : m == def ? "默认" : null;
+            box.addView(Ui.sheetRow(a, SleepTimer.optionLabel(m) + (cur ? " ✓" : ""), sub, v -> { d[0].dismiss(); cb.pick(m); }));
         }
         d[0] = Ui.sheet(a, box);
         d[0].show();
@@ -178,7 +222,7 @@ public final class PlayerTools {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(12), dp(20), 0);
-        final TextView label = text(fmtRate(cur * 0.05), 22, 0xFFFFFFFF);
+        final TextView label = text(fmtRate(cur * 0.05), 22, Ui.TEXT);
         label.setGravity(Gravity.CENTER);
         box.addView(label);
         final SeekBar bar = new SeekBar(a);
@@ -232,12 +276,9 @@ public final class PlayerTools {
         Button b = new Button(a, null, android.R.attr.borderlessButtonStyle);
         b.setText(label);
         b.setAllCaps(false);
-        b.setTextColor(0xFFFFFFFF);
+        b.setTextColor(Ui.TEXT);
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xFF333333);
-        bg.setCornerRadius(dp(20));
-        b.setBackground(bg);
+        b.setBackground(Ui.round(Ui.CHIP, dp(20)));
         b.setMinHeight(dp(48));
         b.setOnClickListener(click);
         return b;
@@ -248,8 +289,8 @@ public final class PlayerTools {
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(dp(20), dp(10), dp(20), dp(10));
         l.setMinimumHeight(dp(48));
-        l.addView(text(title, 16, 0xFFFFFFFF));
-        if (sub != null && !sub.isEmpty()) l.addView(text(sub, 12, 0xFFAAAAAA));
+        l.addView(text(title, 16, Ui.TEXT));
+        if (sub != null && !sub.isEmpty()) l.addView(text(sub, 12, Ui.TEXT_2));
         if (click != null) {
             TypedValue tv = new TypedValue();
             a.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true);

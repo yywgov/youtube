@@ -59,6 +59,7 @@ public class MainActivity extends Activity {
     private static WeakReference<MainActivity> current = new WeakReference<>(null);
     private static boolean visible = false;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    public static final Handler MAIN_HANDLER = MAIN;
 
     public boolean portraitVideo = false;
 
@@ -108,15 +109,86 @@ public class MainActivity extends Activity {
 
     public static boolean isVisible() { return visible; }
 
+    /** There is a live page that can take commands (296). */
+    public static boolean hasPage() {
+        MainActivity a = current.get();
+        return a != null && a.web != null && !a.isFinishing();
+    }
+
+    /** Host of the main frame as last reported by the WebView clients (409); "" when not known. */
+    private static volatile String pageHost = "";
+    public static String pageHost() { return pageHost; }
+
+    private static volatile String webViewVersion = "";
+    /** WebView package + version, read once (280). */
+    public static String webViewVersionCached() { return webViewVersion; }
+
+    // ---- commands for the page (247): queued while the page is (re)loading, run once it asks for its config ----
+    private static final int QUEUE_MAX = 10;
+    private static final long QUEUE_TTL_MS = 5000L;
+    private static final java.util.ArrayDeque<Object[]> pending = new java.util.ArrayDeque<>();
+
     /** Run a snippet against the injected script (window.ytl) on the main thread. */
     public static void js(final String code) {
         Runnable r = () -> {
             MainActivity a = current.get();
             if (a == null || a.web == null) return;
-            a.web.evaluateJavascript("window.ytl&&(function(){try{" + code + "}catch(e){}})()", null);
+            a.unfreezeWeb();   // any command wakes a page paused after the sleep timer (273)
+            a.web.evaluateJavascript("(function(){if(!window.ytl)return 0;try{" + code + "}catch(e){try{ytl.report&&ytl.report("
+                    + org.json.JSONObject.quote(code.length() > 40 ? code.substring(0, 40) : code) + ",e)}catch(x){}}return 1})()", res -> {
+                if (!"0".equals(res)) return;
+                // no script yet (reload in progress): keep it a few seconds for the new page
+                synchronized (pending) {
+                    if (pending.size() >= QUEUE_MAX) pending.pollFirst();
+                    pending.addLast(new Object[]{code, android.os.SystemClock.elapsedRealtime()});
+                }
+            });
         };
         if (Looper.myLooper() == Looper.getMainLooper()) r.run();
         else MAIN.post(r);
+    }
+
+    /** The page script asked for its config: it is there now, so queued commands run (247). */
+    public static void onPageReady() {
+        MAIN.post(() -> {
+            java.util.List<String> run = new java.util.ArrayList<>();
+            long now = android.os.SystemClock.elapsedRealtime();
+            synchronized (pending) {
+                for (Object[] o : pending) if (now - (Long) o[1] <= QUEUE_TTL_MS) run.add((String) o[0]);
+                pending.clear();
+            }
+            if (run.isEmpty()) return;
+            // after the script's start-up has run
+            MAIN.postDelayed(() -> { for (String c : run) js(c); }, 300);
+        });
+    }
+
+    // ---- after the sleep timer stopped playback and nothing happened for 5 min (273) ----
+    private boolean webFrozen = false;
+
+    public static void freezeWeb() {
+        MainActivity a = current.get();
+        if (a == null || a.web == null || a.webFrozen || visible) return;
+        try {
+            a.web.onPause();
+            a.web.pauseTimers();
+            a.webFrozen = true;
+            Diag.log("sleep", "page timers paused 5 min after the timer ended");
+        } catch (Throwable t) {
+            Diag.log("sleep", "freeze failed: " + t);
+        }
+    }
+
+    void unfreezeWeb() {
+        if (!webFrozen || web == null) return;
+        webFrozen = false;
+        try {
+            web.resumeTimers();
+            web.onResume();
+            Diag.log("sleep", "page timers resumed");
+        } catch (Throwable t) {
+            Diag.log("sleep", "resume failed: " + t);
+        }
     }
 
     // ===================== lifecycle =====================
@@ -126,6 +198,8 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         Diag.init(this);
         Prefs.migrate(this);   // settings schema (226): idempotent, never blocks the start
+        WatchPageFilter.init(this);   // one ad-key list with the page script (279)
+        if (webViewVersion.isEmpty()) webViewVersion = webViewVersion(this);
         current = new WeakReference<>(this);
         setContentView(R.layout.main);
         swipe = findViewById(R.id.swipe);
@@ -138,6 +212,7 @@ public class MainActivity extends Activity {
         setupBack();
         setupOverlay();
         Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
+        restoreOrientation();
         String startUrl = urlFromIntent(getIntent());
         coldStart = savedInstanceState == null && HOME.equals(startUrl);
         // start page (63): subscriptions instead of home when launched from the icon
@@ -146,22 +221,48 @@ public class MainActivity extends Activity {
             String resume = lastVideoUrl();
             if (resume != null) { startUrl = resume; coldStart = false; }
         }
+        // renderer crash / kill (242): back to the page and position it was on, not the start page
+        if (rendererRestoreUrl != null) {
+            startUrl = rendererRestoreUrl;
+            rendererRestoreUrl = null;
+            coldStart = false;
+            Diag.log("renderer", "restored " + (isPlayerUrl(startUrl) ? "video" : "page"));
+        }
         web.loadUrl(startUrl);
         SleepTimer.restore(this);   // a timer the system killed with the process comes back (244)
-        if (coldStart) MAIN.postDelayed(this::offerResume, 3000);
-        MAIN.postDelayed(this::checkNotifications, 5000);
         if (ACTION_SLEEP_MODE.equals(getIntent().getAction())) MAIN.postDelayed(this::startSleepMode, 1500);
         registerPowerSave();
-        MAIN.postDelayed(this::maybeWhatsNew, 2500);
-        MAIN.postDelayed(() -> { if (!isFinishing()) RemoteRules.autoCheck(this); }, 6000);
         MAIN.postDelayed(this::askPermissionsOnce, 1500);
-        Updater.cleanup(this);
-        MAIN.postDelayed(() -> { if (!isFinishing()) Updater.autoCheck(this); }, 4000);
+        // the rest waits for the first page (261): one after another, a second apart
+        MAIN.postDelayed(startupRun, 8000);   // no page finished (offline): run anyway
+    }
+
+    // ---- cold start queue (261) ----
+    private boolean startupDone = false;
+    private final Runnable startupRun = this::runStartupQueue;
+
+    private void runStartupQueue() {
+        if (startupDone || isFinishing()) return;
+        startupDone = true;
+        MAIN.removeCallbacks(startupRun);
+        final boolean offer = coldStart;
+        Runnable[] jobs = {
+                this::maybeWhatsNew,
+                () -> { if (offer) offerResume(); },
+                this::checkNotifications,
+                () -> { Updater.cleanup(this); Updater.autoCheck(this); },
+                () -> RemoteRules.autoCheck(this),
+        };
+        for (int i = 0; i < jobs.length; i++) {
+            final Runnable j = jobs[i];
+            MAIN.postDelayed(() -> { if (!isFinishing()) { try { j.run(); } catch (Throwable t) { Diag.log("startup", String.valueOf(t)); } } }, 1000L * (i + 1));
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        unfreezeWeb();
         requestHighRefreshRate();
         Updater.onResume(this);
         PlaybackService.retryForeground();   // a refused foreground start gets another try now (291)
@@ -182,7 +283,6 @@ public class MainActivity extends Activity {
      * LTPO panels (and ColorOS/MIUI) otherwise often keep WebView apps at 60 Hz.
      */
     private void requestHighRefreshRate() {
-        if (Build.VERSION.SDK_INT < 23) return;
         try {
             @SuppressWarnings("deprecation")
             Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
@@ -205,9 +305,55 @@ public class MainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 35) {
                 getWindow().setFrameRatePowerSavingsBalanced(false);
                 getWindow().setFrameRateBoostOnTouchEnabled(true);
-                if (web != null) web.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH);
+                setWebFrameRate(true);
             }
         } catch (Throwable ignored) {}
+    }
+
+    // ---- Android 15+ (275): ask for the high frame rate only while touching / scrolling ----
+    private boolean frameHigh = false;
+    private final Runnable frameIdle = () -> {
+        if (chrome != null && chrome.isFullscreen()) return;   // fullscreen video keeps its rate
+        setWebFrameRate(false);
+    };
+
+    private void setWebFrameRate(boolean high) {
+        if (Build.VERSION.SDK_INT < 35 || web == null || frameHigh == high) return;
+        try {
+            web.setRequestedFrameRate(high ? View.REQUESTED_FRAME_RATE_CATEGORY_HIGH : View.REQUESTED_FRAME_RATE_CATEGORY_NORMAL);
+            frameHigh = high;
+        } catch (Throwable ignored) {}
+    }
+
+    // ---- refresh rate while scrolling (391): samples to tell whether the system holds the app at 60 Hz ----
+    private static int rrSamples = 0, rrLow = 0;
+    private static float rrMax = 0;
+    private long lastRrSample = 0;
+
+    private void sampleRefreshRate() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastRrSample < 500 || rrSamples >= 400) return;
+        lastRrSample = now;
+        try {
+            @SuppressWarnings("deprecation")
+            Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
+            if (d == null) return;
+            if (rrMax == 0) for (Display.Mode m : d.getSupportedModes()) rrMax = Math.max(rrMax, m.getRefreshRate());
+            rrSamples++;
+            if (d.getRefreshRate() < rrMax - 5) rrLow++;
+        } catch (Throwable ignored) {}
+    }
+
+    /** Scrolling has mostly run below the panel's best rate (391). */
+    public boolean refreshLimited() { return Logic.refreshLimited(rrSamples, rrLow, rrMax); }
+
+    public void openDisplaySettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_DISPLAY_SETTINGS));
+            Toast.makeText(this, "屏幕刷新率 → 应用：把 " + getString(R.string.app_name) + " 设为高刷", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            openAppDetails();
+        }
     }
 
     @Override
@@ -219,16 +365,25 @@ public class MainActivity extends Activity {
             String resume = lastVideoUrl();
             if (resume != null && web != null) { web.loadUrl(resume); return; }
         }
-        String url = urlFromIntent(intent);
+        final String url = urlFromIntent(intent);
         boolean external = Intent.ACTION_VIEW.equals(intent.getAction()) || Intent.ACTION_SEND.equals(intent.getAction());
-        if (external && web != null) web.loadUrl(url);
+        if (!external || web == null) return;
+        // something is playing (293): a link tapped in another app does not replace it without asking
+        if (PlaybackService.isPlaying() && !url.equals(currentUrl)) {
+            showSnack("正在播放，要打开收到的链接吗？", "打开", () -> { if (web != null) web.loadUrl(url); }, 10000);
+            return;
+        }
+        web.loadUrl(url);
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         visible = true;
+        unfreezeWeb();
+        PlaybackService.noteInput();
         js("ytl.bg(false)");
+        PlaybackService.refresh();   // Wi-Fi lock choice follows the screen (271)
     }
 
     @Override
@@ -237,6 +392,7 @@ public class MainActivity extends Activity {
         visible = false;
         js("ytl.bg(true)");
         CookieManager.getInstance().flush();
+        PlaybackService.refresh();
     }
 
     @Override
@@ -272,6 +428,7 @@ public class MainActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
         WebSettings s = web.getSettings();
+        MAIN.post(this::applyClientHints);   // (344) only when a sign-in was refused before
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
@@ -299,13 +456,11 @@ public class MainActivity extends Activity {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, false); // YouTube's own dark theme
         }
 
-        web.setBackgroundColor(0xFF0F0F0F);
+        web.setBackgroundColor(Ui.BG);
         if (Build.VERSION.SDK_INT >= 35) web.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH);
         web.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
-        if (Build.VERSION.SDK_INT >= 26) {
-            // keep the renderer important even when not visible (screen off)
-            web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
-        }
+        // keep the renderer important even when not visible (screen off)
+        web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
@@ -355,7 +510,24 @@ public class MainActivity extends Activity {
         web = null;
     }
 
+    /** Page to reopen after the renderer died (242), read by the recreated activity. */
+    private static String rendererRestoreUrl = null;
+
     public void onRendererGone() {
+        try {
+            // back to where it was: a video at its current position, any other page as it was
+            String vid = PlaybackService.videoId();
+            if (isPlayerUrl(currentUrl) && vid != null && vid.matches("[A-Za-z0-9_-]{6,20}")) {
+                long pos = PlaybackService.positionNowMs() / 1000;
+                rendererRestoreUrl = HOME + "watch?v=" + vid + (pos > 5 ? "&t=" + pos + "s" : "");
+                Prefs.get(this).edit().putString(Prefs.LAST_VIDEO, vid).putLong(Prefs.LAST_POS, pos)
+                        .putLong(Prefs.LAST_AT, System.currentTimeMillis()).apply();
+            } else if (currentUrl != null && Logic.isYouTubeHost(currentUrl)) {
+                rendererRestoreUrl = currentUrl;
+            }
+        } catch (Throwable t) {
+            Diag.log("renderer", "restore info: " + t);
+        }
         unregisterErrNet();
         destroyWebView();
         recreate();
@@ -377,6 +549,7 @@ public class MainActivity extends Activity {
 
     public void onPageStarted(String url) {
         currentUrl = url;
+        pageHost = Logic.hostOf(url);
         pageAtTop = true;
         loadError = false;
         showTopBar(10);
@@ -384,9 +557,11 @@ public class MainActivity extends Activity {
 
     public void onPageFinished(String url) {
         currentUrl = url;
+        pageHost = Logic.hostOf(url);
         // Google sign-in pages: store the cookies as soon as each step finishes (343)
-        if (url != null && url.startsWith("https://accounts.google.")) flushCookies();
+        if (url != null && url.startsWith("https://accounts.google.")) { flushCookies(); checkSignInRejected(url); }
         injectFallback();
+        if (!startupDone) { MAIN.removeCallbacks(startupRun); MAIN.postDelayed(startupRun, 500); }   // (261)
         swipe.setRefreshing(false);
         hideTopBar();
         if (!loadError) hideError();
@@ -398,8 +573,14 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** First paint of the new page (253): the HTTP cache comes back on right away. */
+    public void onPageCommitVisible() {
+        if (noCacheLoad) restoreCacheMode();
+    }
+
     public void onUrlChanged(String url) {
         currentUrl = url;
+        pageHost = Logic.hostOf(url);
         if (!isPlayerUrl(url)) pageAtTop = web == null || web.getScrollY() == 0;
     }
 
@@ -478,6 +659,59 @@ public class MainActivity extends Activity {
         swipe.setRefreshing(false);
         hideTopBar();
         showSnack("刷新会停止正在播放的视频", "仍要刷新", () -> js("ytl.refresh(true)"), 6000);
+    }
+
+    // ---- sign-in refused as "this browser may not be secure" (344): only then send Chrome-like client hints ----
+    private static final String REJECT_RE_JS = "(function(){try{var t=(document.title+' '+(document.body?document.body.innerText:'')).slice(0,3000);"
+            + "return /may not be secure|浏览器或应用可能不安全|瀏覽器或應用程式可能不安全|此浏览器或应用可能不安全/i.test(t)?1:0}catch(e){return 0}})()";
+
+    private void checkSignInRejected(String url) {
+        if (web == null || Prefs.get(this).getBoolean(Prefs.CH_UA_FIX, false)) return;
+        boolean byUrl = url.contains("/rejected");
+        web.evaluateJavascript(REJECT_RE_JS, r -> {
+            if (!byUrl && !"1".equals(r)) return;
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+                Diag.log("login", "sign-in refused, client hints cannot be changed on this WebView");
+                return;
+            }
+            Prefs.put(this, Prefs.CH_UA_FIX, true);
+            applyClientHints();
+            Diag.log("login", "sign-in refused as insecure: Chrome client hints on from now");
+            Toast.makeText(this, "登录被拦截：已调整浏览器标识，请重新登录", Toast.LENGTH_LONG).show();
+            if (web != null) web.loadUrl("https://accounts.google.com/ServiceLogin?service=youtube&continue=" + Uri.encode(HOME));
+        });
+    }
+
+    /** Sec-CH-UA brands like Chrome's instead of "Android WebView" (344); only after a refused sign-in. */
+    private void applyClientHints() {
+        try {
+            if (web == null || !Prefs.get(this).getBoolean(Prefs.CH_UA_FIX, false)
+                    || !WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return;
+            WebSettings s = web.getSettings();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("Chrome/(\\d+)(\\.[\\d.]+)?").matcher(s.getUserAgentString());
+            String major = m.find() ? m.group(1) : "130";
+            String full = major + (m.group(2) != null ? m.group(2) : ".0.0.0");
+            java.util.List<androidx.webkit.UserAgentMetadata.BrandVersion> brands = new java.util.ArrayList<>();
+            brands.add(new androidx.webkit.UserAgentMetadata.BrandVersion.Builder().setBrand("Google Chrome").setMajorVersion(major).setFullVersion(full).build());
+            brands.add(new androidx.webkit.UserAgentMetadata.BrandVersion.Builder().setBrand("Chromium").setMajorVersion(major).setFullVersion(full).build());
+            brands.add(new androidx.webkit.UserAgentMetadata.BrandVersion.Builder().setBrand("Not?A_Brand").setMajorVersion("99").setFullVersion("99.0.0.0").build());
+            androidx.webkit.UserAgentMetadata cur = WebSettingsCompat.getUserAgentMetadata(s);
+            WebSettingsCompat.setUserAgentMetadata(s, new androidx.webkit.UserAgentMetadata.Builder(cur).setBrandVersionList(brands).setFullVersion(full).build());
+        } catch (Throwable t) {
+            Diag.log("login", "client hints: " + t);
+        }
+    }
+
+    // ---- self check failed (254): one bar per version, with a way to send the report ----
+    public void onSelfCheckFailed(String what) {
+        try {
+            String ver = appVersion();
+            if (ver.equals(Prefs.str(this, Prefs.SELFCHECK_WARNED, "")) || isFinishing()) return;
+            Prefs.put(this, Prefs.SELFCHECK_WARNED, ver);
+            showSnack("去广告组件异常（" + what + "），已记录", "复制报告", () -> SettingsPage.copyReport(this), 10000);
+        } catch (Throwable t) {
+            Diag.log("selfcheck", String.valueOf(t));
+        }
     }
 
     /** Signed in / account switched (343): write the cookies to disk now, not only in onStop. */
@@ -598,7 +832,7 @@ public class MainActivity extends Activity {
         pageTheme = color.toLowerCase(java.util.Locale.ROOT);
         try {
             boolean light = "#ffffff".equals(pageTheme);
-            int c = light ? 0xFFFFFFFF : (Prefs.on(this, Prefs.AMOLED) ? 0xFF000000 : android.graphics.Color.parseColor(pageTheme));
+            int c = light ? Ui.WHITE : (Prefs.on(this, Prefs.AMOLED) ? Ui.BLACK : android.graphics.Color.parseColor(pageTheme));
             if (swipe != null) swipe.setBackgroundColor(c);
             if (web != null) web.setBackgroundColor(c);
             getWindow().getDecorView().setBackgroundColor(c);
@@ -630,7 +864,8 @@ public class MainActivity extends Activity {
         int z = 100;
         if (Prefs.on(this, Prefs.FONT_FOLLOW)) {
             float fs = getResources().getConfiguration().fontScale;
-            z = Math.max(85, Math.min(130, Math.round(fs * 100)));
+            int max = Prefs.on(this, Prefs.FONT_LARGE) ? 160 : 130;   // very large text (378)
+            z = Math.max(85, Math.min(max, Math.round(fs * 100)));
         }
         if (web.getSettings().getTextZoom() != z) web.getSettings().setTextZoom(z);
     }
@@ -660,12 +895,16 @@ public class MainActivity extends Activity {
     // ===================== long-press card menu (123) =====================
 
     public void cardMenu(String json) {
-        final String id, title, channel;
+        final String id, title, channel, key;
+        final boolean wl;
         try {
             org.json.JSONObject o = new org.json.JSONObject(json);
             id = o.optString("id", "");
             title = o.optString("title", "");
             channel = o.optString("channel", "");
+            String k = o.optString("key", "");
+            key = k.matches("@[^\\s|]{1,58}|UC[\\w-]{10,40}") ? k : "";
+            wl = o.optBoolean("wl", false);
         } catch (Exception e) {
             return;
         }
@@ -679,18 +918,21 @@ public class MainActivity extends Activity {
         head.setPadding(dp(20), dp(4), dp(20), dp(8));
         box.addView(head);
         final android.app.Dialog[] d = new android.app.Dialog[1];
-        box.addView(Ui.sheetRow(this, "稍后观看", "加入 YouTube 的「稍后观看」（需登录）", v -> { d[0].dismiss(); js("ytl.watchLater(" + org.json.JSONObject.quote(id) + ")"); }));
-        box.addView(Ui.sheetRow(this, "不感兴趣 / 更多", "打开 YouTube 自己的菜单", v -> { d[0].dismiss(); js("ytl.openCardMenu()"); }));
-        if (!channel.isEmpty()) {
-            box.addView(Ui.sheetRow(this, "不再显示此频道", channel + " · 只在本机屏蔽，可在设置里撤销", v -> {
+        // already in "watch later" (331): adding it again makes no sense there
+        if (!wl) box.addView(Ui.sheetRow(this, R.drawable.ic_watch_later_white, "稍后观看", "加入 YouTube 的「稍后观看」（需登录）", v -> { d[0].dismiss(); js("ytl.watchLater(" + org.json.JSONObject.quote(id) + ")"); }));
+        box.addView(Ui.sheetRow(this, R.drawable.ic_more_white, wl ? "移除 / 更多" : "不感兴趣 / 更多", "打开 YouTube 自己的菜单", v -> { d[0].dismiss(); js("ytl.openCardMenu()"); }));
+        if (!channel.isEmpty() || !key.isEmpty()) {
+            final String label = channel.isEmpty() ? key : channel;
+            box.addView(Ui.sheetRow(this, R.drawable.ic_block_white, "不再显示此频道", label + " · 只在本机屏蔽，可在设置里撤销", v -> {
                 d[0].dismiss();
-                Prefs.addLine(this, Prefs.BLOCK_CHANNELS, channel);
+                // with the channel link (322): still matches after a rename, never a namesake
+                Prefs.addLine(this, Prefs.BLOCK_CHANNELS, key.isEmpty() ? channel : key + "|" + channel);
                 applySettings();
-                Toast.makeText(this, "已屏蔽：" + channel, Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "已屏蔽：" + label, Toast.LENGTH_SHORT).show();
             }));
         }
-        box.addView(Ui.sheetRow(this, "本地隐藏这个视频", "以后在列表里不再出现", v -> { d[0].dismiss(); js("ytl.hideVideo(" + org.json.JSONObject.quote(id) + ")"); }));
-        box.addView(Ui.sheetRow(this, "复制链接", "https://youtu.be/" + id, v -> {
+        box.addView(Ui.sheetRow(this, R.drawable.ic_hide_white, "本地隐藏这个视频", "以后在列表里不再出现", v -> { d[0].dismiss(); js("ytl.hideVideo(" + org.json.JSONObject.quote(id) + ")"); }));
+        box.addView(Ui.sheetRow(this, R.drawable.ic_link_white, "复制链接", "https://youtu.be/" + id, v -> {
             d[0].dismiss();
             try {
                 ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
@@ -849,7 +1091,14 @@ public class MainActivity extends Activity {
 
     /** Moon button: playback tools sheet, with the page's current player state. */
     public void openTools() {
-        if (web == null) { PlayerTools.show(this, null); return; }
+        toolState(st -> { if (!isFinishing()) PlayerTools.show(this, st); });
+    }
+
+    public interface StateCb { void on(org.json.JSONObject st); }
+
+    /** The page's player state for the tools sheet (also re-read after a toggle, 335). */
+    public void toolState(final StateCb cb) {
+        if (web == null) { cb.on(null); return; }
         web.evaluateJavascript("(window.ytl&&ytl.state)?ytl.state():''", r -> {
             org.json.JSONObject st = null;
             try {
@@ -858,7 +1107,7 @@ public class MainActivity extends Activity {
                     st = new org.json.JSONObject(json);
                 }
             } catch (Exception ignored) {}
-            if (!isFinishing()) PlayerTools.show(this, st);
+            cb.on(st);
         });
     }
 
@@ -874,7 +1123,7 @@ public class MainActivity extends Activity {
         } else snackAction.setVisibility(View.GONE);
         snack.setVisibility(View.VISIBLE);
         snack.setAlpha(0f);
-        snack.animate().alpha(1f).setDuration(200).start();
+        snack.animate().alpha(1f).setDuration(Ui.anim(this, Ui.ANIM_MS)).start();
         MAIN.removeCallbacks(hideSnackRun);
         MAIN.postDelayed(hideSnackRun, ms);
     }
@@ -890,15 +1139,16 @@ public class MainActivity extends Activity {
 
     private final Runnable nightPromptRun = this::maybeNightPrompt;
 
-    /** 22:00-05:00, timer off, once per night: offer the usual sleep timer (18). */
+    /** Night window from settings (307, default 22:00-05:00), timer off, once per night: offer the usual sleep timer (18). */
     private void maybeNightPrompt() {
         try {
             if (isFinishing() || !visible || SleepTimer.active() || snackShowing() || blackView != null || lockView != null) return;
             if (!Prefs.on(this, Prefs.NIGHT_PROMPT)) return;
             java.util.Calendar cal = java.util.Calendar.getInstance();
             int h = cal.get(java.util.Calendar.HOUR_OF_DAY);
-            if (h < 22 && h >= 5) return;
-            if (h < 5) cal.add(java.util.Calendar.DAY_OF_MONTH, -1);
+            int ns = Prefs.num(this, Prefs.NIGHT_START), ne = Prefs.num(this, Prefs.NIGHT_END);
+            if (!Logic.inNight(h, ns, ne)) return;
+            if (Logic.nightBelongsToYesterday(h, ns, ne)) cal.add(java.util.Calendar.DAY_OF_MONTH, -1);
             String night = cal.get(java.util.Calendar.YEAR) + "-" + cal.get(java.util.Calendar.DAY_OF_YEAR);
             if (night.equals(Prefs.str(this, Prefs.NIGHT_SHOWN, ""))) return;
             Prefs.put(this, Prefs.NIGHT_SHOWN, night);
@@ -972,7 +1222,7 @@ public class MainActivity extends Activity {
         if (blackView != null) return;
         try {
             FrameLayout v = new FrameLayout(this);
-            v.setBackgroundColor(0xFF000000);
+            v.setBackgroundColor(Ui.BLACK);
             v.setClickable(true);
             // double tap leaves (370): turning over in bed and brushing the screen does not light it up
             v.setOnClickListener(x -> {
@@ -982,16 +1232,16 @@ public class MainActivity extends Activity {
                 if (blackHint != null) {
                     blackHint.animate().cancel();
                     blackHint.setAlpha(1f);
-                    blackHint.animate().alpha(0f).setStartDelay(1500).setDuration(600).start();
+                    blackHint.animate().alpha(0f).setStartDelay(1500).setDuration(Ui.anim(this, 600)).start();
                 }
             });
             TextView hint = new TextView(this);
             hint.setText("黑屏播放中 · 双击恢复");
-            hint.setTextColor(0xFF555555);
+            hint.setTextColor(Ui.BLACK_HINT);   // readable on black (377)
             hint.setTextSize(14);
             FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER);
             v.addView(hint, hp);
-            hint.animate().alpha(0f).setStartDelay(2500).setDuration(800).start();
+            hint.animate().alpha(0f).setStartDelay(2500).setDuration(Ui.anim(this, 800)).start();
             blackHint = hint;
             decor().addView(v, new FrameLayout.LayoutParams(-1, -1));
             v.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
@@ -1041,20 +1291,17 @@ public class MainActivity extends Activity {
         if (lockView != null) return;
         try {
             final FrameLayout v = new FrameLayout(this);
-            v.setBackgroundColor(0x00000000);
+            v.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             final TextView pill = new TextView(this);
             pill.setText("触控已锁定 · 长按 1.5 秒解锁");
-            pill.setTextColor(0xFFFFFFFF);
+            pill.setTextColor(Ui.TEXT);
             pill.setTextSize(13);
             pill.setPadding(dp(14), dp(8), dp(14), dp(8));
-            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-            bg.setColor(0xB0000000);
-            bg.setCornerRadius(dp(18));
-            pill.setBackground(bg);
+            pill.setBackground(Ui.round(Ui.OVERLAY_PILL, dp(18)));
             FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
             pp.topMargin = dp(48);
             v.addView(pill, pp);
-            pill.animate().alpha(0.15f).setStartDelay(2500).setDuration(600).start();
+            pill.animate().alpha(0.15f).setStartDelay(2500).setDuration(Ui.anim(this, 600)).start();
             final Runnable unlock = this::stopTouchLock;
             v.setOnTouchListener((x, ev) -> {
                 switch (ev.getActionMasked()) {
@@ -1068,7 +1315,7 @@ public class MainActivity extends Activity {
                     case MotionEvent.ACTION_CANCEL:
                         MAIN.removeCallbacks(unlock);
                         pill.setText("触控已锁定 · 长按 1.5 秒解锁");
-                        pill.animate().alpha(0.15f).setStartDelay(1500).setDuration(600).start();
+                        pill.animate().alpha(0.15f).setStartDelay(1500).setDuration(Ui.anim(this, 600)).start();
                         break;
                     default:
                         break;
@@ -1092,6 +1339,7 @@ public class MainActivity extends Activity {
 
     /** Fullscreen video was added to the decor view: keep our overlays above it. */
     public void raiseOverlays() {
+        if (fsTools != null) fsTools.bringToFront();
         if (lockView != null) lockView.bringToFront();
         if (blackView != null) blackView.bringToFront();
     }
@@ -1100,8 +1348,32 @@ public class MainActivity extends Activity {
 
     public int orientationLock() { return orientationLock; }
 
+    /** Remembered lock (388): 0 follow system, 1 portrait, 2 landscape. */
+    private void restoreOrientation() {
+        if (!Prefs.on(this, Prefs.ORIENT_REMEMBER)) return;
+        int v = Prefs.num(this, Prefs.ORIENT_LOCK);
+        orientationLock = v == 1 ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                : v == 2 ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        if (orientationLock != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) setRequestedOrientation(orientationLock);
+    }
+
+    public void setOrientRemember(boolean on) {
+        Prefs.put(this, Prefs.ORIENT_REMEMBER, on);
+        saveOrientation();
+        Toast.makeText(this, on ? "下次打开沿用当前屏幕方向" : "下次打开跟随系统", Toast.LENGTH_SHORT).show();
+    }
+
+    private void saveOrientation() {
+        if (!Prefs.on(this, Prefs.ORIENT_REMEMBER)) return;
+        int v = orientationLock == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? 1
+                : orientationLock == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ? 2 : 0;
+        Prefs.put(this, Prefs.ORIENT_LOCK, v);
+    }
+
     public void setOrientationLock(int o) {
         orientationLock = o;
+        saveOrientation();
         if (chrome == null || !chrome.isFullscreen()) setRequestedOrientation(o);
         Toast.makeText(this, o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? "屏幕方向：跟随系统"
                 : o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? "已锁定竖屏" : "已锁定横屏", Toast.LENGTH_SHORT).show();
@@ -1118,8 +1390,8 @@ public class MainActivity extends Activity {
             topBar.setMax(100);
             topBar.setIndeterminate(false);
             if (Build.VERSION.SDK_INT >= 21) {
-                topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xFFFF0033));
-                topBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x00000000));
+                topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.PROGRESS));
+                topBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT));
             }
             topBar.setVisibility(View.GONE);
             FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3));
@@ -1129,17 +1401,17 @@ public class MainActivity extends Activity {
             LinearLayout panel = new LinearLayout(this);
             panel.setOrientation(LinearLayout.VERTICAL);
             panel.setGravity(android.view.Gravity.CENTER);
-            panel.setBackgroundColor(0xFF0F0F0F);
+            panel.setBackgroundColor(Ui.BG);
             panel.setClickable(true); // swallow touches while shown
             panel.setPadding(dp(32), dp(32), dp(32), dp(32));
             TextView title = new TextView(this);
             title.setText("无法连接到 YouTube");
-            title.setTextColor(0xFFFFFFFF);
+            title.setTextColor(Ui.TEXT);
             title.setTextSize(18);
             title.setGravity(android.view.Gravity.CENTER);
             panel.addView(title);
             errorText = new TextView(this);
-            errorText.setTextColor(0xFFAAAAAA);
+            errorText.setTextColor(Ui.TEXT_2);
             errorText.setTextSize(14);
             errorText.setGravity(android.view.Gravity.CENTER);
             errorText.setPadding(0, dp(8), 0, dp(20));
@@ -1156,24 +1428,21 @@ public class MainActivity extends Activity {
             sb.setOrientation(LinearLayout.HORIZONTAL);
             sb.setGravity(android.view.Gravity.CENTER_VERTICAL);
             sb.setPadding(dp(16), dp(6), dp(6), dp(6));
-            android.graphics.drawable.GradientDrawable sbg = new android.graphics.drawable.GradientDrawable();
-            sbg.setColor(0xF2323232);
-            sbg.setCornerRadius(dp(10));
-            sb.setBackground(sbg);
+            sb.setBackground(Ui.round(Ui.SNACK, dp(10)));
             sb.setElevation(dp(6));
             snackText = new TextView(this);
-            snackText.setTextColor(0xFFFFFFFF);
+            snackText.setTextColor(Ui.TEXT);
             snackText.setTextSize(14);
             snackText.setMaxLines(2);
             snackText.setEllipsize(android.text.TextUtils.TruncateAt.END);
             sb.addView(snackText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             snackAction = new Button(this, null, android.R.attr.borderlessButtonStyle);
-            snackAction.setTextColor(0xFF3EA6FF);
+            snackAction.setTextColor(Ui.accent(this));
             snackAction.setAllCaps(false);
             sb.addView(snackAction, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
             Button close = new Button(this, null, android.R.attr.borderlessButtonStyle);
             close.setText("✕");
-            close.setTextColor(0xFFAAAAAA);
+            close.setTextColor(Ui.TEXT_2);
             close.setContentDescription("关闭");
             close.setOnClickListener(v -> hideSnack());
             sb.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
@@ -1219,6 +1488,7 @@ public class MainActivity extends Activity {
         loadError = true;
         failedUrl = url != null ? url : currentUrl;
         Diag.log("load-error", "code=" + code);
+        if (PlaybackService.isPlaying()) PlaybackService.setNetNote(true);   // the lock screen says why (250)
         hideTopBar();
         if (swipe != null) swipe.setRefreshing(false);
         if (errorPanel == null) return;
@@ -1316,13 +1586,85 @@ public class MainActivity extends Activity {
      */
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) touchStartedAtTop = canPullToRefresh();
+        int act = ev.getActionMasked();
+        if (act == MotionEvent.ACTION_DOWN) {
+            touchStartedAtTop = canPullToRefresh();
+            PlaybackService.noteInput();   // (277)
+            MAIN.removeCallbacks(frameIdle);
+            setWebFrameRate(true);         // (275)
+            showFullscreenTools();         // (336)
+        } else if (act == MotionEvent.ACTION_MOVE) {
+            sampleRefreshRate();           // (391)
+        } else if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) {
+            MAIN.removeCallbacks(frameIdle);
+            MAIN.postDelayed(frameIdle, 3000);   // a fling settles first
+        }
         return super.dispatchTouchEvent(ev);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent ev) {
+        PlaybackService.noteInput();   // (277)
+        return super.dispatchKeyEvent(ev);
+    }
+
+    // ---- moon button over fullscreen video (336): shows on a tap, fades after 3 s, never takes the player's touches ----
+    private android.widget.ImageButton fsTools;
+    private final Runnable hideFsTools = () -> {
+        if (fsTools != null) fsTools.animate().alpha(0f).setDuration(Ui.anim(this, 300)).withEndAction(() -> {
+            if (fsTools != null) fsTools.setVisibility(View.GONE);
+        }).start();
+    };
+
+    public void onFullscreenChanged(boolean on) {
+        MAIN.removeCallbacks(hideFsTools);
+        if (!on) {
+            if (fsTools != null) { try { decor().removeView(fsTools); } catch (Throwable ignored) {} fsTools = null; }
+            MAIN.removeCallbacks(frameIdle);
+            MAIN.postDelayed(frameIdle, 3000);
+            return;
+        }
+        MAIN.removeCallbacks(frameIdle);
+        setWebFrameRate(true);
+        try {
+            android.widget.ImageButton b = new android.widget.ImageButton(this);
+            b.setImageResource(R.drawable.ic_moon_white);
+            b.setBackground(Ui.round(Ui.OVERLAY_PILL, dp(20)));
+            b.setContentDescription("播放工具与睡眠定时");
+            b.setOnClickListener(v -> { MAIN.removeCallbacks(hideFsTools); openTools(); });
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(40), dp(40), android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
+            lp.topMargin = dp(12);
+            b.setVisibility(View.GONE);
+            decor().addView(b, lp);
+            fsTools = b;
+            raiseOverlays();
+            showFullscreenTools();
+        } catch (Throwable t) {
+            Diag.log("fs-tools", String.valueOf(t));
+        }
+    }
+
+    private void showFullscreenTools() {
+        if (fsTools == null || chrome == null || !chrome.isFullscreen() || lockView != null || blackView != null) return;
+        // keep clear of a centred punch-hole camera in portrait fullscreen (cutout area is drawn into)
+        try {
+            int top = dp(12);
+            android.view.WindowInsets wi = getWindow().getDecorView().getRootWindowInsets();
+            if (wi != null && wi.getDisplayCutout() != null) top = Math.max(top, wi.getDisplayCutout().getSafeInsetTop() + dp(8));
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) fsTools.getLayoutParams();
+            if (lp.topMargin != top) { lp.topMargin = top; fsTools.setLayoutParams(lp); }
+        } catch (Throwable ignored) {}
+        fsTools.animate().cancel();
+        fsTools.setVisibility(View.VISIBLE);
+        fsTools.setAlpha(1f);
+        fsTools.bringToFront();
+        MAIN.removeCallbacks(hideFsTools);
+        MAIN.postDelayed(hideFsTools, 3000);
     }
 
     private void setupSwipe() {
         swipe.setColorSchemeColors(Ui.accent(this));
-        swipe.setProgressBackgroundColorSchemeColor(0xFF212121);
+        swipe.setProgressBackgroundColorSchemeColor(Ui.SHEET);
         // pull feel (121): trigger a little earlier, spinner travels a bit further, settles 64dp down
         float dens = getResources().getDisplayMetrics().density;
         swipe.setDistanceToTriggerSync(Math.round(100 * dens));
@@ -1441,7 +1783,7 @@ public class MainActivity extends Activity {
         Prefs.put(this, Prefs.ASKED_BATTERY, true);
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("允许后台持续播放")
-                .setMessage("为了熄屏后也能一直播放（听着入睡），请在下一步允许 " + getString(R.string.app_name) + "「不受电池优化限制」。\n\n"
+                .setMessage("为了息屏后也能一直播放（听着入睡），请在下一步允许 " + getString(R.string.app_name) + "「不受电池优化限制」。\n\n"
                         + "国产系统（ColorOS、MIUI/HyperOS、EMUI/HarmonyOS 等）还需要开启「自启动」并把耗电策略设为「无限制」，可点「自启动」直接跳过去。")
                 .setPositiveButton("去设置", (d, w) -> requestIgnoreBattery())
                 .setNeutralButton("自启动", (d, w) -> openAutostartSettings())
@@ -1483,9 +1825,23 @@ public class MainActivity extends Activity {
         if (requestCode == REQ_NOTIF) {
             askBatteryOnce();
         } else if (requestCode == REQ_MIC) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "麦克风已授权，请再点一次语音搜索", Toast.LENGTH_SHORT).show();
-            }
+            // the voice search that asked goes on by itself (411)
+            boolean ok = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (chrome != null) chrome.onMicPermission(ok);
         }
+    }
+
+    // ---- backup to / from a file (402): system file picker, no storage permission ----
+    public static final int REQ_BACKUP_SAVE = 201;
+    public static final int REQ_BACKUP_OPEN = 202;
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_BACKUP_SAVE && requestCode != REQ_BACKUP_OPEN) return;
+        Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+        if (uri == null) return;
+        if (requestCode == REQ_BACKUP_SAVE) SettingsPage.onBackupSaved(this, uri);
+        else SettingsPage.onBackupOpened(this, uri);
     }
 }

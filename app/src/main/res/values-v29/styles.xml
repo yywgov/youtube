@@ -1,0 +1,13 @@
+<resources>
+	<style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+		<item name="android:colorPrimary">@color/background</item>
+		<item name="android:colorPrimaryDark">@color/background</item>
+		<item name="android:colorAccent">@color/accent</item>
+		<item name="android:statusBarColor">@color/background</item>
+		<item name="android:navigationBarColor">@color/background</item>
+		<item name="android:windowBackground">@color/background</item>
+		<item name="android:windowLightStatusBar">false</item>
+		<!-- native screens are already dark: no system "force dark" on top (392) -->
+		<item name="android:forceDarkAllowed">false</item>
+	</style>
+</resources>

@@ -81,6 +81,7 @@ public final class Ui {
     /** Bottom sheet: rounded top, slides up, dim behind, content scrolls. */
     public static Dialog sheet(Activity a, View content) {
         ScrollView scroll = new ScrollView(a);
+        if (android.os.Build.VERSION.SDK_INT >= 29) scroll.setForceDarkAllowed(false);   // (392)
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, dp(a, 10), 0, dp(a, 12));

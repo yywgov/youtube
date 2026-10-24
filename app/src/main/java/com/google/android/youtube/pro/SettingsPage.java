@@ -36,96 +36,352 @@ public class SettingsPage {
         this.a = a;
     }
 
+    /** Undo for "restore defaults" / import (406): offered on the root page for 10 s. */
+    private static long undoUntil = 0;
+    private static String undoWhat = "";
+    private int hiddenCount = -1;
+
     public void show() {
         page(a.getString(R.string.app_name) + " 设置", box -> {
-            String ready = Updater.readyTag(a);
-            if (ready != null) {
-                LinearLayout card = card(box);
-                card.addView(row("发现新版本 " + ready, "点此下载并安装（不会自动弹窗打扰）", v -> Updater.checkNow(a)));
-            }
-            LinearLayout c1 = card(box);
-            c1.addView(nav("播放", "画质、速度、字幕、音轨、SponsorBlock", this::playPage));
-            c1.addView(nav("睡眠与续播", "睡眠定时、淡出、一键睡眠模式、接下来播放", this::sleepPage));
-            c1.addView(nav("首页与列表", "启动页、过滤、已看完、刷新、布局、搜索", this::listPage));
-            c1.addView(nav("外观", "纯黑主题、强调色、卡片样式、字体", this::lookPage));
-            c1.addView(nav("通知与操作", "通知栏按钮、耳机、长按菜单、触感", this::controlPage));
-            LinearLayout c2 = card(box);
-            c2.addView(nav("后台播放", "电池优化、ColorOS 自启动（熄屏续播必需）", this::backgroundPage));
-            c2.addView(nav("隐私与记录", "观看/搜索记录、本地隐藏和屏蔽", this::privacyPage));
-            c2.addView(nav("诊断与反馈", "一键问题报告、漏网广告记录", this::diagPage));
-            c2.addView(nav("更新", "检查更新、下载线路、远程规则", this::updatePage));
-            c2.addView(nav("关于", "版本、WebView、刷新率、本机观看统计、开源许可", this::aboutPage));
-            LinearLayout c3 = card(box);
-            c3.addView(row("备份设置到剪贴板", "导出为一段文字，可存到备忘录", v -> exportSettings()));
-            c3.addView(row("从剪贴板恢复设置", "粘贴之前备份的那段文字后点这里", v -> importSettings()));
-            c3.addView(row("恢复默认设置", "所有开关回到默认（不影响登录和观看记录）", v -> confirmDefaults()));
+            statusCard(box);
+            LinearLayout c = card(box);
+            c.addView(nav("播放", "画质、声音与速度、字幕、SponsorBlock、断点续播", this::playPage));
+            c.addView(nav("后台与睡眠", "保活、睡眠定时、接下来播放、通知栏与耳机", this::sleepPage));
+            c.addView(nav("首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
+            c.addView(nav("外观与交互", "主题、列表样式、长按菜单、轻震、保持位置", this::lookPage));
+            c.addView(nav("数据与更新", "更新、备份与恢复、记录与隐私、诊断、关于", this::dataPage));
         });
     }
 
-    // ===================== pages =====================
+    /** Root status card (225/291/292): only shown when something needs attention. */
+    private void statusCard(LinearLayout box) {
+        List<View> rows = new ArrayList<>();
+        if (System.currentTimeMillis() < undoUntil) {
+            final View[] self = new View[1];
+            self[0] = row("撤销刚才的「" + undoWhat + "」", "10 秒内可撤销，回到之前的设置", v -> {
+                undoUntil = 0;
+                if (Prefs.undoSnapshot(a)) {
+                    a.applySettings();
+                    toastShort("已撤销");
+                    reopen();
+                } else toastShort("没有可撤销的内容");
+            });
+            rows.add(self[0]);
+            final long left = Math.max(0, undoUntil - System.currentTimeMillis());
+            self[0].postDelayed(() -> self[0].setVisibility(View.GONE), left);
+        }
+        String ready = Updater.readyTag(a);
+        if (ready != null) rows.add(row("发现新版本 " + ready, "点此下载并安装（不会自动弹窗打扰）", v -> Updater.checkNow(a)));
+        if (!a.notificationsOk()) rows.add(row("通知已关闭", "锁屏和通知栏无法控制播放 · 点此打开通知设置", v -> a.openNotificationSettings()));
+        if (!a.isIgnoringBattery()) rows.add(row("后台保活未完成", "电池优化仍在限制本 App，熄屏播放可能中断 · 点此设置", v -> keepAliveSheet()));
+        if (a.fgsDeniedAt() > 0) rows.add(row("上次后台播放没能保持前台", "系统拒绝了后台播放服务 · 点此检查保活设置", v -> { a.clearFgsDenied(); keepAliveSheet(); }));
+        if (rows.isEmpty()) return;
+        LinearLayout card = card(box);
+        for (View r : rows) card.addView(r);
+    }
+
+    private void reopen() {
+        closeAll();
+        new SettingsPage(a).show();
+    }
+
+    // ===================== 1. 播放 =====================
+
+    private static final String[] Q_LABELS = {"自动（YouTube 决定）", "Wi-Fi 最高，流量 720p", "1080p", "720p", "480p"};
+    private static final String[] Q_VALUES = {"auto", "wifiMax", "1080", "720", "480"};
+    private static final String[] Q_SHORT = {"自动", "Wi-Fi 最高", "1080p", "720p", "480p"};
 
     private void playPage() {
         page("播放", box -> {
-            LinearLayout c = card(box);
-            c.addView(choice("默认画质", "每个视频开始时设一次，之后可手动改", Prefs.QUALITY,
-                    new String[]{"自动（YouTube 决定）", "Wi-Fi 最高，流量 720p", "1080p", "720p", "480p"},
-                    new String[]{"auto", "wifiMax", "1080", "720", "480"}, "auto"));
-            c.addView(toggle("后台/熄屏时最低画质", "省电省流量；回到前台恢复默认画质", Prefs.LOW_QUALITY_BG));
-            c.addView(toggle("省电模式时降画质、关动画", "系统开启省电模式时画质最高 480p", Prefs.POWER_SAVE_AUTO));
-            c.addView(toggle("记住播放速度", "下一个视频沿用上次选的速度（最高 2 倍）", Prefs.REMEMBER_RATE));
-            c.addView(toggle("优先原声音轨", "有多条音轨（AI 自动配音）时切回原声", Prefs.ORIG_AUDIO));
+            LinearLayout q = card(box, "画质");
+            q.addView(sub("画质策略", () -> "前台 " + pick(Q_VALUES, Q_SHORT, Prefs.str(a, Prefs.QUALITY, "auto"))
+                    + " · 后台 " + (Prefs.on(a, Prefs.LOW_QUALITY_BG) ? "最低" : "不变")
+                    + " · 省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
+            LinearLayout s = card(box, "声音与速度");
+            s.addView(toggle("优先原声音轨", "有多条音轨（AI 自动配音）时切回原声", Prefs.ORIG_AUDIO));
+            s.addView(toggle("音量均衡（实验）", "压缩忽大忽小的音量；若关屏后没声音请关闭", Prefs.NORMALIZE));
+            s.addView(toggle("记住播放速度", "下一个视频沿用上次选的速度（最高 2 倍）", Prefs.REMEMBER_RATE));
+            LinearLayout c = card(box, "字幕与片段");
+            c.addView(sub("字幕", () -> pick(new String[]{"yt", "off", "zh"}, new String[]{"跟随 YouTube", "默认关闭", "有中文时打开"}, Prefs.str(a, Prefs.CAPTIONS, "yt"))
+                    + " · 大小" + pick(new String[]{"default", "s", "l", "xl"}, new String[]{"默认", "小", "大", "特大"}, Prefs.str(a, Prefs.SUB_SIZE, "default"))
+                    + " · 背景" + pick(new String[]{"default", "half", "none"}, new String[]{"默认", "半透明", "无"}, Prefs.str(a, Prefs.SUB_BG, "default")), this::captionsPage));
+            c.addView(dyn("SponsorBlock", this::sponsorLabel, v -> pickSponsor()));
             c.addView(toggle("视频结束不显示推荐墙", "只隐藏片尾推荐网格，自动续播倒计时照常", Prefs.NO_END_WALL));
-            c.addView(toggle("音量均衡（实验）", "压缩忽大忽小的音量；若关屏后没声音请关闭", Prefs.NORMALIZE));
-            LinearLayout s = card(box, "字幕");
+            LinearLayout r = card(box, "断点续播");
+            r.addView(toggle("未登录时记住观看进度", "只存在本机，再打开同一视频从上次位置继续", Prefs.RESUME_LOCAL));
+            r.addView(toggle("重开时提示继续上次视频", "被系统清掉后打开 App，底部提示一键回到断点", Prefs.RESUME_PROMPT));
+        });
+    }
+
+    private void qualityPage() {
+        page("画质策略", box -> {
+            LinearLayout c = card(box);
+            c.addView(choice("默认画质", "每个视频开始时设一次，之后可手动改", Prefs.QUALITY, Q_LABELS, Q_VALUES, "auto"));
+            c.addView(toggle("后台/息屏时最低画质", "省电省流量；回到前台恢复默认画质", Prefs.LOW_QUALITY_BG));
+            c.addView(toggle("省电模式时降画质、关动画", "系统开启省电模式时画质最高 480p", Prefs.POWER_SAVE_AUTO));
+            c.addView(row("优先级", "一键睡眠模式 > 后台/息屏最低 > 省电上限 480p > 默认画质", null));
+        });
+    }
+
+    private void captionsPage() {
+        page("字幕", box -> {
+            LinearLayout s = card(box);
             s.addView(choice("默认字幕", "跟随 YouTube 时不做任何改动", Prefs.CAPTIONS,
                     new String[]{"跟随 YouTube", "默认关闭", "有中文字幕时打开"}, new String[]{"yt", "off", "zh"}, "yt"));
             s.addView(choice("字幕大小", "只改显示大小，不影响字幕内容", Prefs.SUB_SIZE,
                     new String[]{"默认", "小", "大", "特大"}, new String[]{"default", "s", "l", "xl"}, "default"));
             s.addView(choice("字幕背景", "夜里看可选半透明或无背景", Prefs.SUB_BG,
                     new String[]{"默认", "半透明", "无背景（文字描边）"}, new String[]{"default", "half", "none"}, "default"));
-            LinearLayout sb = card(box, "SponsorBlock");
-            sb.addView(toggle("自动跳过赞助片段", "跳过后 2 秒内可点「撤销」回看", Prefs.SPONSOR_BLOCK));
-            sb.addView(dyn("跳过类别", () -> Prefs.sponsorCatsLabel(a) + " · 从下一个视频开始生效", v -> pickSponsorCats()));
         });
     }
 
+    private String sponsorLabel() {
+        if (!Prefs.sponsorBlock(a)) return "关闭";
+        if (Prefs.sponsorCats(a).isEmpty()) return "已开启但未选类别（不会跳过）";
+        return "跳过：" + Prefs.sponsorCatsLabel(a) + " · 跳过后 2 秒内可撤销";
+    }
+
+    /** One sheet for SponsorBlock (230): master switch on top, categories below; keys stay separate. */
+    private void pickSponsor() {
+        final String[] keys = Prefs.SB_CATS;
+        final List<String> cur = Prefs.sponsorCats(a);
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(8), dp(8), dp(8), 0);
+        final Switch master = new Switch(a);
+        master.setText("自动跳过片段（总开关）");
+        master.setTextColor(Ui.TEXT);
+        master.setTextSize(16);
+        master.setChecked(Prefs.sponsorBlock(a));
+        master.setPadding(dp(16), dp(12), dp(16), dp(12));
+        tint(master);
+        box.addView(master);
+        final android.widget.CheckBox[] boxes = new android.widget.CheckBox[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            android.widget.CheckBox cb = new android.widget.CheckBox(a);
+            cb.setText(Prefs.SB_LABELS[i]);
+            cb.setTextColor(Ui.TEXT);
+            cb.setChecked(cur.contains(keys[i]));
+            cb.setPadding(dp(8), dp(6), dp(8), dp(6));
+            cb.setEnabled(master.isChecked());
+            boxes[i] = cb;
+            box.addView(cb);
+        }
+        master.setOnCheckedChangeListener((b, on) -> { for (android.widget.CheckBox cb : boxes) cb.setEnabled(on); });
+        ScrollView sv = new ScrollView(a);
+        sv.addView(box);
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("SponsorBlock")
+                .setView(sv)
+                .setPositiveButton("确定", (d, w) -> {
+                    StringBuilder b = new StringBuilder();
+                    for (int i = 0; i < keys.length; i++) {
+                        if (!boxes[i].isChecked()) continue;
+                        if (b.length() > 0) b.append(',');
+                        b.append(keys[i]);
+                    }
+                    Prefs.put(a, Prefs.SPONSOR_BLOCK, master.isChecked());
+                    Prefs.put(a, Prefs.SPONSOR_CATS, b.toString());
+                    applied();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ===================== 2. 后台与睡眠 =====================
+
     private void sleepPage() {
-        page("睡眠与续播", box -> {
+        page("后台与睡眠", box -> {
+            LinearLayout k = card(box, "后台保活（熄屏续播必需）");
+            k.addView(dyn("保活状态", this::keepAliveLabel, v -> keepAliveSheet()));
             LinearLayout c = card(box, "睡眠定时");
-            c.addView(dyn("一键睡眠模式", () -> "定时 " + SleepTimer.optionLabel(Prefs.sleepDefault(a)) + " + 最低画质 + 只续播同频道 + 调暗屏幕",
-                    v -> { a.startSleepMode(); toastShort("已开启睡眠模式"); }));
-            c.addView(dyn("现在开始 / 关闭", () -> SleepTimer.active() ? "正在定时：" + SleepTimer.optionLabel(SleepTimer.mode()) + "（点此关闭）" : "未开启",
-                    v -> {
-                        if (SleepTimer.active()) { SleepTimer.cancel(a); refreshAll(); }
-                        else PlayerTools.pickSleep(a, "现在开始睡眠定时", m -> { SleepTimer.start(a, m); refreshAll(); });
-                    }));
-            c.addView(dyn("默认时长", () -> SleepTimer.optionLabel(Prefs.sleepDefault(a)) + " · 通知栏按钮和一键睡眠模式用",
-                    v -> PlayerTools.pickSleep(a, "默认时长", m -> { Prefs.put(a, Prefs.SLEEP_DEFAULT, m); refreshAll(); })));
+            c.addView(dyn("当前", () -> SleepTimer.active()
+                    ? "正在定时：" + SleepTimer.optionLabel(SleepTimer.mode()) + "（在顶栏月亮按钮或通知栏关闭）"
+                    : "未开启（在顶栏月亮按钮、通知栏或桌面快捷方式开启）", null));
+            c.addView(dyn("默认时长", this::sleepDefaultLabel, v -> pickSleepDefault()));
             c.addView(choiceInt("淡出时长", "到点前音量逐渐变小的时间", Prefs.SLEEP_FADE,
                     new String[]{"10 秒", "30 秒", "60 秒"}, new int[]{10, 30, 60}, 60));
-            c.addView(toggle("开启的时长记为默认", "下次在通知栏一键开启同样的时长", Prefs.SLEEP_REMEMBER));
             c.addView(toggle("播放器角上显示剩余时间", "左上角小字，不挡画面", Prefs.SLEEP_BADGE));
             c.addView(toggle("夜间打开时提示开定时", "22:00–5:00 打开 App 时提示，每晚最多一次", Prefs.NIGHT_PROMPT));
             LinearLayout n = card(box, "续播");
-            n.addView(choice("接下来播放", "默认用 YouTube 自动播放；其他选项会关掉它由本 App 选", Prefs.NEXT_SOURCE,
-                    new String[]{"YouTube 推荐（默认）", "优先同频道", "只在播放列表内"}, new String[]{"rec", "channel", "playlist"}, "rec"));
-            n.addView(toggle("睡眠定时期间只续播同频道/列表", "睡着时不跳到刺激内容；找不到时照常推荐", Prefs.SLEEP_CALM));
-            n.addView(toggle("未登录时记住观看进度", "只存在本机，再打开同一视频从上次位置继续", Prefs.RESUME_LOCAL));
-            n.addView(toggle("重开时提示继续上次视频", "被系统清掉后打开 App，底部提示一键回到断点", Prefs.RESUME_PROMPT));
+            n.addView(dyn("接下来播放", this::nextLabel, v -> pickNext()));
+            LinearLayout h = card(box, "通知栏与耳机");
+            h.addView(dyn("通知栏按钮", () -> PrefsModel.notifLayout(Prefs.on(a, Prefs.NOTIF_SEEK), Prefs.on(a, Prefs.NOTIF_WL)), v -> pickNotif()));
+            h.addView(toggle("耳机按键多击", "按一下暂停/播放，两下下一个，三下上一个", Prefs.HEADSET_MULTI));
         });
     }
 
+    private String keepAliveLabel() {
+        StringBuilder b = new StringBuilder();
+        b.append(a.isIgnoringBattery() ? "电池优化 ✓" : "电池优化未关闭");
+        b.append(" · ").append(a.notificationsOk() ? "通知 ✓" : "通知已关闭");
+        if (a.fgsDeniedAt() > 0) b.append(" · 上次后台播放没能保持前台");
+        b.append(" · 点此设置自启动和后台运行");
+        return b.toString();
+    }
+
+    /** Keep-alive sheet (238/390/292): every system page that keeps playback alive with the screen off. */
+    private void keepAliveSheet() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        TextView head = Ui.text(a, "后台保活", 18, Ui.TEXT);
+        head.setPadding(dp(20), dp(4), dp(20), dp(8));
+        box.addView(head);
+        final android.app.Dialog[] d = new android.app.Dialog[1];
+        box.addView(Ui.sheetRow(a, "电池优化", a.isIgnoringBattery() ? "已不受限制 ✓" : "点此关闭电池优化（熄屏持续播放必需）", v -> { d[0].dismiss(); a.requestIgnoreBattery(); }));
+        box.addView(Ui.sheetRow(a, "自启动", "ColorOS 等系统的自启动管理；找不到时打开应用详情", v -> { d[0].dismiss(); a.openAutostartSettings(); }));
+        box.addView(Ui.sheetRow(a, "后台运行（耗电管理）", "ColorOS：允许后台运行 / 耗电策略无限制", v -> { d[0].dismiss(); a.openBatterySettings(); }));
+        box.addView(Ui.sheetRow(a, "通知", a.notificationsOk() ? "已开启 ✓（锁屏控制需要）" : "已关闭：锁屏和通知栏无法控制播放，点此打开", v -> { d[0].dismiss(); a.openNotificationSettings(); }));
+        box.addView(Ui.sheetRow(a, "应用详情", "耗电管理 → 允许后台运行", v -> { d[0].dismiss(); a.openAppDetails(); }));
+        d[0] = Ui.sheet(a, box);
+        d[0].setOnDismissListener(x -> refreshAll());
+        d[0].show();
+    }
+
+    /** Merged default length (228): "same as the last one started" (sleepRemember) or a fixed mode. */
+    private String sleepDefaultLabel() {
+        int def = Prefs.sleepDefault(a);
+        if (PrefsModel.sleepChoice(Prefs.sleepRemember(a), def) == PrefsModel.SLEEP_CHOICE_LAST) {
+            return "沿用上次开启的（当前 " + SleepTimer.optionLabel(def) + "）· 通知栏按钮和一键睡眠模式用";
+        }
+        return SleepTimer.optionLabel(def) + " · 通知栏按钮和一键睡眠模式用";
+    }
+
+    private void pickSleepDefault() {
+        final int[] opts = SleepTimer.OPTIONS;
+        String[] labels = new String[opts.length + 1];
+        labels[0] = "沿用上次开启的";
+        for (int i = 0; i < opts.length; i++) labels[i + 1] = SleepTimer.optionLabel(opts[i]);
+        int cur = PrefsModel.sleepChoice(Prefs.sleepRemember(a), Prefs.sleepDefault(a));
+        int sel = cur == PrefsModel.SLEEP_CHOICE_LAST ? 0 : -1;
+        for (int i = 0; i < opts.length; i++) if (opts[i] == cur) sel = i + 1;
+        radio("默认时长", labels, sel, which -> {
+            Prefs.PrefStore s = new Prefs.PrefStore(Prefs.get(a));
+            PrefsModel.writeSleepChoice(s, which == 0 ? PrefsModel.SLEEP_CHOICE_LAST : opts[which - 1]);
+            s.apply();
+            applied();
+        });
+    }
+
+    private static final String[] NEXT_VALUES = {"rec", "channel", "playlist"};
+    private static final String[] NEXT_LABELS = {"YouTube 推荐", "优先同频道", "只在播放列表内"};
+
+    private String nextLabel() {
+        return "平时：" + pick(NEXT_VALUES, NEXT_LABELS, Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))
+                + " · 睡眠时：" + (Prefs.on(a, Prefs.SLEEP_CALM) ? "同频道/列表" : "跟随平时")
+                + " · 一键睡眠模式总是同频道";
+    }
+
+    /** Next video (231): "usual" -> nextSource, "while a sleep timer runs" -> sleepCalm. */
+    private void pickNext() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.addView(Ui.title(a, "平时"));
+        final android.widget.RadioGroup g1 = radios(box, NEXT_LABELS, Math.max(0, java.util.Arrays.asList(NEXT_VALUES).indexOf(Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))));
+        box.addView(Ui.title(a, "睡眠定时中"));
+        final android.widget.RadioGroup g2 = radios(box, new String[]{"跟随平时", "优先同频道 / 列表（找不到时照常推荐）"}, Prefs.on(a, Prefs.SLEEP_CALM) ? 1 : 0);
+        TextView note = Ui.text(a, "默认用 YouTube 自动播放；其他选项会关掉它由本 App 选。一键睡眠模式总是同频道。", 13, Ui.TEXT_2);
+        note.setPadding(0, dp(8), 0, 0);
+        box.addView(note);
+        ScrollView sv = new ScrollView(a);
+        sv.addView(box);
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("接下来播放")
+                .setView(sv)
+                .setPositiveButton("确定", (d, w) -> {
+                    Prefs.put(a, Prefs.NEXT_SOURCE, NEXT_VALUES[Math.max(0, checkedIndex(g1))]);
+                    Prefs.put(a, Prefs.SLEEP_CALM, checkedIndex(g2) == 1);
+                    applied();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** Notification layout (237): left/right keys -> notifSeek, fifth key -> notifWatchLater. */
+    private void pickNotif() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.addView(Ui.title(a, "左右两个键"));
+        final android.widget.RadioGroup g1 = radios(box, new String[]{"上一个 / 下一个", "快退 10 秒 / 快进 30 秒"}, Prefs.on(a, Prefs.NOTIF_SEEK) ? 1 : 0);
+        box.addView(Ui.title(a, "第五个键"));
+        final android.widget.RadioGroup g2 = radios(box, new String[]{"稍后观看（需登录）", "不显示"}, Prefs.on(a, Prefs.NOTIF_WL) ? 0 : 1);
+        TextView note = Ui.text(a, "睡眠定时中第五键让位给「+15 分钟」；暂停时第五键是「关闭」。Android 13+ 的锁屏/下拉媒体卡片同样生效。", 13, Ui.TEXT_2);
+        note.setPadding(0, dp(8), 0, 0);
+        box.addView(note);
+        ScrollView sv = new ScrollView(a);
+        sv.addView(box);
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("通知栏按钮")
+                .setView(sv)
+                .setPositiveButton("确定", (d, w) -> {
+                    Prefs.put(a, Prefs.NOTIF_SEEK, checkedIndex(g1) == 1);
+                    Prefs.put(a, Prefs.NOTIF_WL, checkedIndex(g2) == 0);
+                    applied();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ===================== 3. 首页与内容 =====================
+
     private void listPage() {
-        page("首页与列表", box -> {
+        page("首页与内容", box -> {
             LinearLayout h = card(box, "首页");
             h.addView(choice("打开 App 时进入", "从桌面图标启动时的第一页", Prefs.START_PAGE,
                     new String[]{"首页", "订阅"}, new String[]{"home", "subs"}, "home"));
-            h.addView(toggle("隐藏已看完的视频", "刷新更容易出新视频；看了一部分的保留", Prefs.HIDE_WATCHED));
-            h.addView(choiceInt("「已看完」的标准", "看到多少算看完", Prefs.SEEN_MIN,
-                    new String[]{"看过 50%", "看过 80%（默认）", "看过 95%"}, new int[]{50, 80, 95}, 80));
+            h.addView(dyn("隐藏已看完的视频", this::watchedLabel, v -> pickWatched()));
             h.addView(toggle("刷新后提示新视频数", "下拉刷新后提示「更新了 N 个新视频」", Prefs.REFRESH_COUNT));
-            h.addView(toggle("隐藏首页货架", "新闻、合集、「可能喜欢」等横向模块", Prefs.HIDE_SHELVES));
-            LinearLayout f = card(box, "过滤（首页和「接下来播放」）");
+            LinearLayout f = card(box, "内容过滤（首页和「接下来播放」）");
+            f.addView(sub("内容过滤", this::filterLabel, this::filterPage));
+            LinearLayout m = card(box, "隐藏模块");
+            m.addView(toggle("隐藏首页货架", "新闻、合集、「可能喜欢」等横向模块", Prefs.HIDE_SHELVES));
+            m.addView(toggle("订阅页隐藏社区帖子", "订阅页只显示视频", Prefs.SUBS_ONLY_VIDEOS));
+            m.addView(toggle("搜索结果隐藏「相关搜索」等", "「人们还看了」「为你推荐」这类插入模块", Prefs.HIDE_SEARCH_EXTRAS));
+            LinearLayout s = card(box, "搜索");
+            s.addView(toggle("搜索结果快捷筛选", "顶部一排：最新、只看视频、本周、按时长", Prefs.SEARCH_CHIPS));
+            s.addView(toggle("打开搜索时弹出键盘", "搜索框出现时自动聚焦", Prefs.SEARCH_FOCUS));
+        });
+    }
+
+    private static final int[] WATCHED_VALUES = {0, 50, 80, 95};
+    private static final String[] WATCHED_LABELS = {"不隐藏", "看过 50%", "看过 80%（默认）", "看过 95%"};
+
+    /** Merged watched row (229): "don't hide" keeps seenMin for when it is switched on again. */
+    private String watchedLabel() {
+        int c = PrefsModel.watchedChoice(Prefs.hideWatched(a), Prefs.get(a).getInt(Prefs.SEEN_MIN, 80));
+        String l = WATCHED_LABELS[0];
+        for (int i = 0; i < WATCHED_VALUES.length; i++) if (WATCHED_VALUES[i] == c) l = WATCHED_LABELS[i];
+        return c == 0 ? l : l + " · 刷新更容易出新视频；看了一部分的保留";
+    }
+
+    private void pickWatched() {
+        int c = PrefsModel.watchedChoice(Prefs.hideWatched(a), Prefs.get(a).getInt(Prefs.SEEN_MIN, 80));
+        int sel = 0;
+        for (int i = 0; i < WATCHED_VALUES.length; i++) if (WATCHED_VALUES[i] == c) sel = i;
+        radio("隐藏已看完的视频", WATCHED_LABELS, sel, which -> {
+            Prefs.PrefStore s = new Prefs.PrefStore(Prefs.get(a));
+            PrefsModel.writeWatchedChoice(s, WATCHED_VALUES[which]);
+            s.apply();
+            applied();
+        });
+    }
+
+    private String filterLabel() {
+        int n = 0;
+        if (!Prefs.lines(a, Prefs.BLOCK_CHANNELS).isEmpty()) n++;
+        if (!Prefs.lines(a, Prefs.BLOCK_WORDS).isEmpty()) n++;
+        if (Prefs.get(a).getInt(Prefs.MIN_DUR, 0) > 0) n++;
+        if (Prefs.get(a).getInt(Prefs.MAX_AGE, 0) > 0) n++;
+        if (Prefs.on(a, Prefs.HIDE_LIVE)) n++;
+        return (n == 0 ? "未开启" : "已开 " + n + " 项") + " · 频道、关键词、短视频、旧视频、直播、本地隐藏";
+    }
+
+    /** Every reason a video can be missing, in one page (235). */
+    private void filterPage() {
+        page("内容过滤", box -> {
+            LinearLayout f = card(box);
             f.addView(dyn("屏蔽的频道", () -> countLabel(Prefs.BLOCK_CHANNELS, "长按视频卡片 →「不再显示此频道」也能加"),
                     v -> editLines("屏蔽的频道", "每行一个频道名（和卡片上显示的一致）", Prefs.BLOCK_CHANNELS)));
             f.addView(dyn("屏蔽的关键词", () -> countLabel(Prefs.BLOCK_WORDS, "标题含这些词就不显示，搜索结果也生效"),
@@ -135,71 +391,98 @@ public class SettingsPage {
             f.addView(choiceInt("隐藏旧视频", "按「x 天前」这类发布时间判断", Prefs.MAX_AGE,
                     new String[]{"不隐藏", "超过 7 天", "超过 30 天", "超过半年", "超过 1 年"}, new int[]{0, 7, 30, 180, 365}, 0));
             f.addView(toggle("隐藏直播、首映和即将开播", "只在首页和「接下来播放」里生效", Prefs.HIDE_LIVE));
-            LinearLayout s = card(box, "订阅与搜索");
-            s.addView(toggle("订阅页只显示视频", "隐藏社区帖子", Prefs.SUBS_ONLY_VIDEOS));
-            s.addView(toggle("搜索结果隐藏「相关搜索」等", "「人们还看了」「为你推荐」这类插入模块", Prefs.HIDE_SEARCH_EXTRAS));
-            s.addView(toggle("搜索结果快捷筛选", "顶部一排：最新、只看视频、本周、按时长", Prefs.SEARCH_CHIPS));
-            s.addView(toggle("打开搜索时弹出键盘", "搜索框出现时自动聚焦", Prefs.SEARCH_FOCUS));
-            LinearLayout l = card(box, "布局与流畅度");
-            l.addView(choice("首页列表布局", "紧凑：小图在左、标题在右，一屏看更多", Prefs.COMPACT + "_choice",
-                    new String[]{"大图（默认）", "紧凑列表"}, new String[]{"big", "compact"}, "big"));
-            l.addView(toggle("返回列表时保持位置", "从视频返回时回到刚才滑到的地方", Prefs.KEEP_SCROLL));
-            l.addView(toggle("列表渲染优化", "屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭", Prefs.PERF_CSS));
+            LinearLayout l = card(box, "本地");
+            l.addView(dyn("本地隐藏的视频", () -> (hiddenCount < 0 ? "长按菜单里「本地隐藏」过的视频" : hiddenCount + " 个")
+                    + " · 点此全部恢复", v -> {
+                MainActivity.js("ytl.unhideAll()");
+                hiddenCount = 0;
+                refreshAll();
+                toastShort("已恢复");
+            }));
+            l.addView(row("清空屏蔽列表", "删除全部屏蔽的频道和关键词（「恢复默认」不会动它们）", v -> confirmClearBlocks()));
+            a.evalJs("window.ytl&&ytl.hiddenCount?ytl.hiddenCount():-1", r -> {
+                try { hiddenCount = r == null || "null".equals(r) ? -1 : (int) Double.parseDouble(r); } catch (Exception e) { hiddenCount = -1; }
+                refreshAll();
+            });
         });
     }
 
+    private void confirmClearBlocks() {
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("清空屏蔽列表？")
+                .setMessage("屏蔽的频道 " + Prefs.lines(a, Prefs.BLOCK_CHANNELS).size() + " 个、关键词 " + Prefs.lines(a, Prefs.BLOCK_WORDS).size() + " 个会被删除。")
+                .setPositiveButton("清空", (d, w) -> {
+                    Prefs.clearBlockLists(a);
+                    applied();
+                    toastShort("已清空屏蔽列表");
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ===================== 4. 外观与交互 =====================
+
     private void lookPage() {
-        page("外观", box -> {
-            LinearLayout c = card(box);
+        page("外观与交互", box -> {
+            LinearLayout c = card(box, "主题");
             c.addView(toggle("纯黑主题（AMOLED）", "深色模式下背景纯黑，更省电、夜里不刺眼", Prefs.AMOLED));
             c.addView(choice("强调色", "进度条、按钮和开关的颜色", Prefs.ACCENT,
                     new String[]{"默认（YouTube 红 / 蓝）", "蓝", "青", "紫", "橙", "粉"},
                     new String[]{"", "#2F6BFF", "#00BFA5", "#9C6BFF", "#FF8A00", "#FF4F8B"}, ""));
-            c.addView(toggle("统一卡片样式", "缩略图圆角统一、标题两行、时长和进度条更醒目", Prefs.CARD_STYLE));
-            c.addView(toggle("深色模式压暗缩略图", "夜里看列表不刺眼", Prefs.DIM_THUMBS));
             c.addView(toggle("网页字体跟随系统大小", "使用系统字体缩放（限制在 85%–130%）", Prefs.FONT_FOLLOW));
-        });
-    }
-
-    private void controlPage() {
-        page("通知与操作", box -> {
-            LinearLayout c = card(box, "通知栏与耳机");
-            c.addView(toggle("通知栏用快退/快进", "把「上一个/下一个」换成「快退 10 秒/快进 30 秒」", Prefs.NOTIF_SEEK));
-            c.addView(toggle("通知栏「稍后观看」按钮", "听到好内容一键收藏（需登录；睡眠定时中让位给 +15 分钟）", Prefs.NOTIF_WL));
-            c.addView(toggle("耳机按键多击", "按一下暂停/播放，两下下一个，三下上一个", Prefs.HEADSET_MULTI));
-            LinearLayout t = card(box, "触控");
+            LinearLayout l = card(box, "列表样式");
+            l.addView(boolChoice("首页列表布局", "紧凑：小图在左、标题在右，一屏看更多", Prefs.COMPACT, "大图（默认）", "紧凑列表"));
+            l.addView(toggle("统一卡片样式", "缩略图圆角统一、标题两行、时长和进度条更醒目", Prefs.CARD_STYLE));
+            l.addView(toggle("深色模式压暗缩略图", "夜里看列表不刺眼", Prefs.DIM_THUMBS));
+            LinearLayout t = card(box, "交互");
             t.addView(toggle("长按视频卡片快捷菜单", "稍后观看、不再显示此频道、本地隐藏等", Prefs.LONG_PRESS));
-            t.addView(toggle("触感反馈", "开定时、刷新完成、长按菜单时轻震一下", Prefs.HAPTIC));
+            t.addView(toggle("轻震提示", "开定时、刷新完成、长按菜单时轻震一下", Prefs.HAPTIC));
+            t.addView(toggle("返回列表时保持位置", "从视频返回时回到刚才滑到的地方", Prefs.KEEP_SCROLL));
+            LinearLayout h = card(box, "高级");
+            h.addView(toggle("列表渲染优化", "屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭", Prefs.PERF_CSS));
         });
     }
 
-    private void backgroundPage() {
-        page("后台播放", box -> {
-            LinearLayout c = card(box);
-            c.addView(dyn("电池优化", () -> a.isIgnoringBattery() ? "已不受限制 ✓" : "点此关闭电池优化（熄屏持续播放必需）", v -> a.requestIgnoreBattery()));
-            c.addView(row("自启动 / 后台运行（ColorOS 等）", "打开系统的自启动管理；找不到时打开应用详情", v -> a.openAutostartSettings()));
-            c.addView(row("应用详情", "耗电管理 → 允许后台运行", v -> a.openAppDetails()));
+    // ===================== 5. 数据与更新 =====================
+
+    private void dataPage() {
+        page("数据与更新", box -> {
+            LinearLayout u = card(box, "更新");
+            u.addView(dyn("检查更新", () -> {
+                String r = Updater.readyTag(a);
+                return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + " · 每天自动检查一次（有新版只显示小红点）";
+            }, v -> Updater.checkNow(a)));
+            u.addView(toggle("国内网络用镜像下载", "下载慢时开启；安装包都会做 SHA-256 校验，失败自动改回直连", Prefs.UPDATE_MIRROR));
+            u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新 · " : "已关闭 · ") + RemoteRules.status(a), v -> rulesDialog()));
+            LinearLayout b = card(box, "备份与恢复");
+            b.addView(row("备份设置到剪贴板", "导出为一段文字，可存到备忘录（旧版本也能恢复）", v -> exportSettings()));
+            b.addView(row("从剪贴板恢复设置", "粘贴之前备份的那段文字后点这里；10 秒内可撤销", v -> importSettings()));
+            b.addView(row("恢复默认设置", "开关和选项回到默认；屏蔽列表、登录和记录不动；10 秒内可撤销", v -> confirmDefaults()));
+            LinearLayout p = card(box, "记录与隐私");
+            p.addView(row("观看记录和搜索记录", "打开 YouTube 的记录页，可暂停或清除（需登录）", v -> { closeAll(); a.loadInApp("https://m.youtube.com/feed/history"); }));
+            p.addView(row("本机数据说明", "设置、日志、屏蔽列表和本地进度只存在本机；登录信息只在 YouTube 页面里", null));
+            LinearLayout d = card(box, "诊断");
+            d.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
+            d.addView(nav("日志", "漏网广告记录、诊断日志（复制或清空）", this::logsPage));
+            LinearLayout ab = card(box);
+            ab.addView(nav("关于", "版本、WebView、刷新率、本机观看统计、开源许可", this::aboutPage));
         });
     }
 
-    private void privacyPage() {
-        page("隐私与记录", box -> {
-            LinearLayout c = card(box);
-            c.addView(row("观看记录和搜索记录", "打开 YouTube 的记录页，可暂停或清除（需登录）", v -> { closeAll(); a.loadInApp("https://m.youtube.com/feed/history"); }));
-            c.addView(row("恢复本地隐藏的视频", "长按菜单里「本地隐藏」过的视频重新显示", v -> {
-                MainActivity.js("ytl.unhideAll()");
-                toastShort("已恢复");
-            }));
-            c.addView(dyn("屏蔽的频道", () -> countLabel(Prefs.BLOCK_CHANNELS, "只存在本机"),
-                    v -> editLines("屏蔽的频道", "每行一个频道名", Prefs.BLOCK_CHANNELS)));
-            c.addView(row("说明", "设置、日志和本地进度只存在本机；登录信息只在 YouTube 页面里", null));
-        });
+    private void rulesDialog() {
+        final boolean on = Prefs.on(a, Prefs.REMOTE_RULES);
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("远程屏蔽规则")
+                .setMessage("只从本 App 的 GitHub 仓库拉取并校验（SHA-256），失败用内置规则。\n\n状态：" + RemoteRules.status(a))
+                .setPositiveButton("立即检查", (d, w) -> RemoteRules.checkNow(a, this::refreshAll))
+                .setNeutralButton(on ? "关闭自动更新" : "开启自动更新", (d, w) -> { Prefs.put(a, Prefs.REMOTE_RULES, !on); applied(); })
+                .setNegativeButton("关闭", null)
+                .show();
     }
 
-    private void diagPage() {
-        page("诊断与反馈", box -> {
+    private void logsPage() {
+        page("日志", box -> {
             LinearLayout c = card(box);
-            c.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
             c.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));
             c.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行", v -> copyLog(Diag.DIAG, "诊断日志")));
             c.addView(row("清空以上记录", "只清本机日志", v -> {
@@ -208,20 +491,6 @@ public class SettingsPage {
                 refreshAll();
                 toastShort("已清空");
             }));
-        });
-    }
-
-    private void updatePage() {
-        page("更新", box -> {
-            LinearLayout c = card(box);
-            c.addView(dyn("检查更新", () -> {
-                String r = Updater.readyTag(a);
-                return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + " · 每天自动检查一次（有新版只显示小红点）";
-            }, v -> Updater.checkNow(a)));
-            c.addView(toggle("国内网络用镜像下载", "下载慢时开启；安装包都会做 SHA-256 校验，失败自动改回直连", Prefs.UPDATE_MIRROR));
-            LinearLayout r = card(box, "远程规则");
-            r.addView(toggle("自动更新屏蔽规则", "只从本 App 的 GitHub 仓库拉取并校验，失败用内置规则", Prefs.REMOTE_RULES));
-            r.addView(dyn("规则状态", () -> RemoteRules.status(a) + " · 点此立即检查", v -> RemoteRules.checkNow(a, () -> refreshAll())));
         });
     }
 
@@ -248,6 +517,7 @@ public class SettingsPage {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Ui.BG);
         root.setFitsSystemWindows(true);
+        if (android.os.Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);   // already dark (392)
 
         LinearLayout bar = new LinearLayout(a);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -410,15 +680,67 @@ public class SettingsPage {
         return self[0];
     }
 
-    // the layout choice is stored as the COMPACT boolean
     private String currentStr(String key, String def) {
-        if ((Prefs.COMPACT + "_choice").equals(key)) return Prefs.on(a, Prefs.COMPACT) ? "compact" : "big";
         return Prefs.str(a, key, def);
     }
 
     private void putStr(String key, String v) {
-        if ((Prefs.COMPACT + "_choice").equals(key)) Prefs.put(a, Prefs.COMPACT, "compact".equals(v));
-        else Prefs.put(a, key, v);
+        Prefs.put(a, key, v);
+    }
+
+    /** Two-option row stored straight in a boolean key (236: no more pseudo key for the layout). */
+    private View boolChoice(final String title, final String note, final String key, final String offLabel, final String onLabel) {
+        return dyn(title, () -> (Prefs.on(a, key) ? onLabel : offLabel) + " · " + note,
+                v -> radio(title, new String[]{offLabel, onLabel}, Prefs.on(a, key) ? 1 : 0, which -> {
+                    Prefs.put(a, key, which == 1);
+                    applied();
+                }));
+    }
+
+    /** Row that opens a second-level page, with a summary of what is set there. */
+    private View sub(String title, Label label, final Runnable open) {
+        LinearLayout l = (LinearLayout) dyn(title, label, v -> open.run());
+        l.addView(Ui.text(a, "›", 22, Ui.TEXT_2));
+        return l;
+    }
+
+    private static String pick(String[] values, String[] labels, String cur) {
+        for (int i = 0; i < values.length; i++) if (values[i].equals(cur)) return labels[i];
+        return labels[0];
+    }
+
+    private interface IntCb { void on(int which); }
+
+    private void radio(String title, String[] labels, int sel, final IntCb cb) {
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle(title)
+                .setSingleChoiceItems(labels, sel, (d, which) -> {
+                    cb.on(which);
+                    d.dismiss();
+                })
+                .show();
+    }
+
+    private android.widget.RadioGroup radios(LinearLayout parent, String[] labels, int sel) {
+        android.widget.RadioGroup g = new android.widget.RadioGroup(a);
+        for (int i = 0; i < labels.length; i++) {
+            android.widget.RadioButton b = new android.widget.RadioButton(a);
+            b.setId(View.generateViewId());
+            b.setText(labels[i]);
+            b.setTextColor(Ui.TEXT);
+            b.setTextSize(15);
+            b.setPadding(dp(8), dp(8), dp(8), dp(8));
+            g.addView(b);
+            if (i == sel) g.check(b.getId());
+        }
+        parent.addView(g);
+        return g;
+    }
+
+    private static int checkedIndex(android.widget.RadioGroup g) {
+        int id = g.getCheckedRadioButtonId();
+        for (int i = 0; i < g.getChildCount(); i++) if (g.getChildAt(i).getId() == id) return i;
+        return -1;
     }
 
     private View choiceInt(final String title, final String note, final String key, final String[] labels, final int[] values, final int def) {
@@ -486,33 +808,12 @@ public class SettingsPage {
                 .show();
     }
 
-    private void pickSponsorCats() {
-        final String[] keys = Prefs.SB_CATS;
-        final List<String> cur = Prefs.sponsorCats(a);
-        final boolean[] checked = new boolean[keys.length];
-        for (int i = 0; i < keys.length; i++) checked[i] = cur.contains(keys[i]);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("SponsorBlock 跳过类别")
-                .setMultiChoiceItems(Prefs.SB_LABELS, checked, (d, which, isChecked) -> checked[which] = isChecked)
-                .setPositiveButton("确定", (d, w) -> {
-                    StringBuilder b = new StringBuilder();
-                    for (int i = 0; i < keys.length; i++) {
-                        if (!checked[i]) continue;
-                        if (b.length() > 0) b.append(',');
-                        b.append(keys[i]);
-                    }
-                    Prefs.put(a, Prefs.SPONSOR_CATS, b.toString());
-                    refreshAll();
-                })
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
     private void exportSettings() {
-        copy(a.getString(R.string.app_name) + " 设置备份", Prefs.exportJson(a));
+        copy(a.getString(R.string.app_name) + " 设置备份", Prefs.exportJson(a, version()));
         toastShort("已复制设置备份");
     }
 
+    /** Import (241): every value checked, snapshot first (406), then settings reopen with the new values. */
     private void importSettings() {
         String clip = "";
         try {
@@ -520,23 +821,35 @@ public class SettingsPage {
             ClipData d = cm.getPrimaryClip();
             if (d != null && d.getItemCount() > 0 && d.getItemAt(0).getText() != null) clip = d.getItemAt(0).getText().toString();
         } catch (Exception ignored) {}
-        int n = clip.isEmpty() ? -1 : Prefs.importJson(a, clip);
-        if (n < 0) { toastShort("剪贴板里没有 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        if (clip.isEmpty() || !looksLikeBackup(clip)) { toastShort("剪贴板里没有 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        Prefs.saveSnapshot(a);
+        PrefsModel.ImportResult r = Prefs.importJson(a, clip);
+        if (r == null) { toastShort("剪贴板里没有 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
         a.applySettings();
-        refreshAll();
-        Toast.makeText(a, "已恢复 " + n + " 项设置（部分页面需重新打开设置才显示新值）", Toast.LENGTH_LONG).show();
-        closeAll();
+        Toast.makeText(a, "已恢复 " + r.applied + " 项设置" + (r.ignored > 0 ? "，已忽略 " + r.ignored + " 项（取值不支持）" : ""), Toast.LENGTH_LONG).show();
+        offerUndo("从剪贴板恢复");
+    }
+
+    private static boolean looksLikeBackup(String s) {
+        return s.contains("\"app\"") && (s.contains("YiWei") || s.contains("YT Lite"));
+    }
+
+    private void offerUndo(String what) {
+        undoWhat = what;
+        undoUntil = System.currentTimeMillis() + 10_000L;
+        reopen();
     }
 
     private void confirmDefaults() {
         new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("恢复默认设置？")
-                .setMessage("所有开关和选项回到默认值。登录、观看记录、日志和屏蔽列表以外的本机数据不受影响。\n\n建议先「备份设置到剪贴板」。")
+                .setMessage("会恢复：所有开关和选项回到默认值。\n\n不会动：屏蔽的频道和关键词、登录、观看记录、本地隐藏的视频、日志。\n\n恢复后 10 秒内可在设置首页撤销。")
                 .setPositiveButton("恢复默认", (d, w) -> {
+                    Prefs.saveSnapshot(a);
                     Prefs.restoreDefaults(a);
                     a.applySettings();
                     toastShort("已恢复默认");
-                    closeAll();
+                    offerUndo("恢复默认");
                 })
                 .setNegativeButton("取消", null)
                 .show();
@@ -548,7 +861,8 @@ public class SettingsPage {
         b.append("WebView ").append(MainActivity.webViewVersion(a)).append(" · ").append(a.refreshRateLabel()).append('\n');
         b.append("电池优化豁免：").append(a.isIgnoringBattery()).append(" · 省电模式：").append(Prefs.powerSaving(a))
                 .append(" · 远程规则：").append(RemoteRules.status(a)).append('\n');
-        b.append("设置：").append(Prefs.exportJson(a).replace("\n", "")).append("\n\n");
+        b.append("通知：").append(a.notificationsOk() ? "正常" : "已关闭").append(" · 后台前台服务被拒：").append(a.fgsDeniedAt() > 0).append('\n');
+        b.append("设置：").append(Prefs.exportJson(a, version()).replace("\n", "")).append("\n\n");
         String diag = Diag.read(a, Diag.DIAG);
         String[] lines = diag.split("\n");
         b.append("—— 最近诊断日志 ——\n");

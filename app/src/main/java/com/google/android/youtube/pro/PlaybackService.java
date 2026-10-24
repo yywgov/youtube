@@ -32,8 +32,6 @@ import com.google.android.youtube.pro.receivers.NotificationActionReceiver;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Foreground media service: media session (lock screen, Bluetooth, headset),
@@ -60,7 +58,13 @@ public class PlaybackService extends Service {
     public static final String ACTION_DISMISS = "ytl.DISMISS";   // notification swiped away (290)
     /** Content intent extra: open the app and continue the last video (243). */
     public static final String EXTRA_RESUME = "ytl.resume";
-    private static final long SLEEP_DONE_STOP_MS = 2 * 60_000L;
+    /** After the timer stopped playback the session stays 10 minutes (302): one headset press plays on. */
+    private static final long SLEEP_DONE_STOP_MS = 10 * 60_000L;
+    /** Timer ended and nothing happened for 5 minutes: the page's timers are paused too (273). */
+    private static final long SLEEP_DONE_FREEZE_MS = 5 * 60_000L;
+    /** Inactivity guard (277): this long without any input while playing, no timer: 30 min timer. */
+    static final long IDLE_GUARD_MS = 3 * 3600_000L;
+    private static final int IDLE_GUARD_TIMER_MIN = 30;
     private static final long MULTI_CLICK_MS = 450L;
 
     private static final long IDLE_STOP_MS = 30 * 60_000L;
@@ -74,6 +78,7 @@ public class PlaybackService extends Service {
     static String title = "";
     static String artist = "";
     static String artUrl = "";
+    static String videoId = "";
     static long durationMs = 0;
     static int state = PlaybackState.STATE_NONE;
     static long positionMs = 0;
@@ -88,11 +93,16 @@ public class PlaybackService extends Service {
     private static boolean interrupted = false;
     private static boolean longBuffer = false;
     private static long lastDeniedLog = 0;
+    /** The page reported a network stall / gave up retrying (250): said in the notification. */
+    private static boolean netNote = false;
+    /** Last touch / key / media button / notification action (277), elapsedRealtime. */
+    private static long lastInputAt = SystemClock.elapsedRealtime();
+    /** Buffering events with the screen off (271): evidence for the Wi-Fi lock choice. */
+    private static int bgBuffering = 0;
 
     private static PlaybackService instance;
     private static boolean starting = false;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
     private NotificationManager nm;
     private MediaSession session;
@@ -104,9 +114,10 @@ public class PlaybackService extends Service {
 
     // ===================== static API (main thread) =====================
 
-    public static void onMeta(Context c, String t, String a, String art, long dur) {
+    public static void onMeta(Context c, String t, String a, String art, long dur, String id) {
         title = t == null ? "" : t;
         artist = a == null ? "" : a;
+        videoId = id == null ? "" : id;
         if (dur > 0) durationMs = dur;
         if (art != null && !art.equals(artUrl)) {
             artUrl = art;
@@ -126,7 +137,8 @@ public class PlaybackService extends Service {
             volumeHint(c);
         }
         if (st != PlaybackState.STATE_BUFFERING) longBuffer = false;
-        if (st == PlaybackState.STATE_PLAYING) interrupted = false;
+        if (st == PlaybackState.STATE_PLAYING) { interrupted = false; netNote = false; }
+        if (st == PlaybackState.STATE_BUFFERING && state == PlaybackState.STATE_PLAYING && !MainActivity.isVisible()) bgBuffering++;
         trackWatch(c, st == PlaybackState.STATE_PLAYING);
         state = st;
         positionMs = pos;
@@ -140,12 +152,50 @@ public class PlaybackService extends Service {
         if (instance != null) instance.update();
     }
 
+    /** Page says the network is gone / retries gave up (250); cleared by playback or the network coming back. */
+    public static void setNetNote(boolean on) {
+        if (netNote == on) return;
+        netNote = on;
+        if (on) Diag.log("net", "stalled while playing: shown in the notification");
+        if (instance != null) instance.update();
+    }
+
+    public static boolean netNote() { return netNote; }
+
+    /** Any touch, key or media command (277). */
+    public static void noteInput() { lastInputAt = SystemClock.elapsedRealtime(); }
+
+    /** Playback position now, extrapolated while playing (242). */
+    public static long positionNowMs() {
+        long p = positionMs;
+        if (state == PlaybackState.STATE_PLAYING && positionAt > 0) p += (long) ((SystemClock.elapsedRealtime() - positionAt) * rate);
+        return Math.max(0, p);
+    }
+
+    public static String videoId() { return videoId; }
+
+    /**
+     * A command for the page from the notification / media session. Without a page (the system took
+     * the activity, 296) it can't be carried out: the notification becomes "tap to continue".
+     */
+    static void cmd(Context c, String js) {
+        noteInput();
+        if (!MainActivity.hasPage()) {
+            Diag.log("cmd", "no page for " + js);
+            onActivityGone();
+            try { android.widget.Toast.makeText(c.getApplicationContext(), "点通知打开 App 继续播放", android.widget.Toast.LENGTH_SHORT).show(); } catch (Exception ignored) {}
+            return;
+        }
+        MainActivity.js(js);
+    }
+
     /**
      * The system destroyed the activity while something was playing (243): the WebView is gone, so
      * playback stopped. Keep a paused, dismissible "tap to continue" notification instead of
      * stopping everything; the sleep timer state is kept (and persisted, 244).
      */
     public static void onActivityGone() {
+        if (state == PlaybackState.STATE_NONE && instance == null) return;
         interrupted = true;
         state = PlaybackState.STATE_PAUSED;
         positionAt = SystemClock.elapsedRealtime();
@@ -218,8 +268,17 @@ public class PlaybackService extends Service {
     public static void onSleepEnded() {
         sleepDone = true;
         MainActivity.onSleepEnded();
-        if (instance != null) instance.update();
+        if (instance != null) {
+            instance.update();
+            MAIN.removeCallbacks(instance.freezeRun);
+            MAIN.postDelayed(instance.freezeRun, SLEEP_DONE_FREEZE_MS);
+        }
     }
+
+    /** 5 minutes after the timer stopped playback with nothing happening (273): pause the page's timers. */
+    private final Runnable freezeRun = () -> {
+        if (sleepDone && !isPlaying() && !MainActivity.isVisible()) MainActivity.freezeWeb();
+    };
 
     /** Playing with the media volume at 0: say so once in a while (150), only when the app is on screen. */
     private static void volumeHint(Context c) {
@@ -241,18 +300,19 @@ public class PlaybackService extends Service {
     }
 
     public static void handleAction(Context c, String action) {
+        noteInput();
         switch (action) {
-            case ACTION_PLAY: MainActivity.js("ytl.play()"); break;
-            case ACTION_PAUSE: MainActivity.js("ytl.pause()"); break;
-            case ACTION_NEXT: MainActivity.js("ytl.next()"); break;
-            case ACTION_PREV: MainActivity.js("ytl.prev()"); break;
+            case ACTION_PLAY: cmd(c, "ytl.play()"); break;
+            case ACTION_PAUSE: cmd(c, "ytl.pause()"); break;
+            case ACTION_NEXT: cmd(c, "ytl.next()"); break;
+            case ACTION_PREV: cmd(c, "ytl.prev()"); break;
             case ACTION_SLEEP: SleepTimer.cycle(c); break;
-            case ACTION_REW: MainActivity.js("ytl.seekBy(-10)"); break;
-            case ACTION_FWD: MainActivity.js("ytl.seekBy(30)"); break;
+            case ACTION_REW: cmd(c, "ytl.seekBy(-10)"); break;
+            case ACTION_FWD: cmd(c, "ytl.seekBy(30)"); break;
             case ACTION_EXTEND: SleepTimer.extend(c); break;
-            case ACTION_WL: MainActivity.js("ytl.watchLater()"); break;
+            case ACTION_WL: cmd(c, "ytl.watchLater()"); break;
             case ACTION_CLOSE:
-                MainActivity.js("ytl.pause()");
+                if (MainActivity.hasPage()) MainActivity.js("ytl.pause()");
                 stop(c);
                 break;
             case ACTION_DISMISS:
@@ -267,15 +327,14 @@ public class PlaybackService extends Service {
         starting = true;
         Intent i = new Intent(c.getApplicationContext(), PlaybackService.class);
         try {
-            if (Build.VERSION.SDK_INT >= 26) c.getApplicationContext().startForegroundService(i);
-            else c.getApplicationContext().startService(i);
+            c.getApplicationContext().startForegroundService(i);   // minSdk 26 (419)
         } catch (Exception e) {
             starting = false;
         }
     }
 
     private static void loadArt(final String url) {
-        IO.execute(() -> {
+        Bg.NET.execute(() -> {
             Bitmap bmp = null;
             HttpURLConnection conn = null;
             try {
@@ -329,7 +388,28 @@ public class PlaybackService extends Service {
         registerNoisy();
         registerNetwork();
         goForeground(buildNotification());
+        MAIN.removeCallbacks(idleGuardRun);
+        MAIN.postDelayed(idleGuardRun, IDLE_CHECK_MS);
     }
+
+    // ---- inactivity guard (277): checked every 10 minutes while the service runs ----
+    private static final long IDLE_CHECK_MS = 10 * 60_000L;
+    private final Runnable idleGuardRun = new Runnable() {
+        @Override public void run() {
+            try {
+                long now = SystemClock.elapsedRealtime();
+                if (Logic.idleDue(Prefs.on(PlaybackService.this, Prefs.IDLE_GUARD), state == PlaybackState.STATE_PLAYING,
+                        SleepTimer.active(), lastInputAt, now, IDLE_GUARD_MS)) {
+                    Diag.log("idle", "no input for 3 h while playing: 30 min sleep timer");
+                    SleepTimer.startAuto(PlaybackService.this, IDLE_GUARD_TIMER_MIN, "3 小时没有操作，已自动开 30 分钟睡眠定时");
+                    lastInputAt = now;   // once; the timer (and its fade) takes it from here
+                }
+            } catch (Throwable t) {
+                Diag.log("idle", String.valueOf(t));
+            }
+            MAIN.postDelayed(this, IDLE_CHECK_MS);
+        }
+    };
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -351,6 +431,10 @@ public class PlaybackService extends Service {
         MAIN.removeCallbacks(idleDetach);
         MAIN.removeCallbacks(longBufferRun);
         MAIN.removeCallbacks(clickDone);
+        MAIN.removeCallbacks(idleGuardRun);
+        MAIN.removeCallbacks(freezeRun);
+        if (bgBuffering > 0) Diag.log("net", "buffering with the screen off this session: " + bgBuffering + " (wifiSaver=" + Prefs.on(this, Prefs.WIFI_SAVER) + ")");
+        bgBuffering = 0;
         releaseLocks();
         try { if (noisyReceiver != null) unregisterReceiver(noisyReceiver); } catch (Exception ignored) {}
         try {
@@ -380,32 +464,31 @@ public class PlaybackService extends Service {
     }
 
     private void createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "后台播放", NotificationManager.IMPORTANCE_LOW);
-            ch.setShowBadge(false);
-            ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-            nm.createNotificationChannel(ch);
-        }
+        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "后台播放", NotificationManager.IMPORTANCE_LOW);
+        ch.setShowBadge(false);
+        ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        nm.createNotificationChannel(ch);
     }
 
     private void initSession() {
         session = new MediaSession(this, "YiWei");
         session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
         session.setCallback(new MediaSession.Callback() {
-            @Override public void onPlay() { MainActivity.js("ytl.play()"); }
-            @Override public void onPause() { MainActivity.js("ytl.pause()"); }
-            @Override public void onStop() { MainActivity.js("ytl.pause()"); }
-            @Override public void onSkipToNext() { MainActivity.js("ytl.next()"); }
-            @Override public void onSkipToPrevious() { MainActivity.js("ytl.prev()"); }
-            @Override public void onSeekTo(long pos) { MainActivity.js("ytl.seek(" + pos + ")"); }
-            @Override public void onRewind() { MainActivity.js("ytl.seekBy(-10)"); }
-            @Override public void onFastForward() { MainActivity.js("ytl.seekBy(30)"); }
+            @Override public void onPlay() { cmd(PlaybackService.this, "ytl.play()"); }
+            @Override public void onPause() { cmd(PlaybackService.this, "ytl.pause()"); }
+            @Override public void onStop() { cmd(PlaybackService.this, "ytl.pause()"); }
+            @Override public void onSkipToNext() { cmd(PlaybackService.this, "ytl.next()"); }
+            @Override public void onSkipToPrevious() { cmd(PlaybackService.this, "ytl.prev()"); }
+            @Override public void onSeekTo(long pos) { cmd(PlaybackService.this, "ytl.seek(" + pos + ")"); }
+            @Override public void onRewind() { cmd(PlaybackService.this, "ytl.seekBy(-10)"); }
+            @Override public void onFastForward() { cmd(PlaybackService.this, "ytl.seekBy(30)"); }
             @Override public void onCustomAction(String action, android.os.Bundle extras) {
+                noteInput();
                 if (ACTION_SLEEP.equals(action)) SleepTimer.cycle(PlaybackService.this);
                 else if (ACTION_EXTEND.equals(action)) SleepTimer.extend(PlaybackService.this);
-                else if (ACTION_REW.equals(action)) MainActivity.js("ytl.seekBy(-10)");
-                else if (ACTION_FWD.equals(action)) MainActivity.js("ytl.seekBy(30)");
-                else if (ACTION_WL.equals(action)) MainActivity.js("ytl.watchLater()");
+                else if (ACTION_REW.equals(action)) cmd(PlaybackService.this, "ytl.seekBy(-10)");
+                else if (ACTION_FWD.equals(action)) cmd(PlaybackService.this, "ytl.seekBy(30)");
+                else if (ACTION_WL.equals(action)) cmd(PlaybackService.this, "ytl.watchLater()");
             }
             @Override public boolean onMediaButtonEvent(Intent mediaButtonIntent) {
                 if (handleMultiClick(mediaButtonIntent)) return true;
@@ -422,9 +505,9 @@ public class PlaybackService extends Service {
     private final Runnable clickDone = () -> {
         int n = clicks;
         clicks = 0;
-        if (n >= 3) MainActivity.js("ytl.prev()");
-        else if (n == 2) MainActivity.js("ytl.next()");
-        else if (n == 1) MainActivity.js(state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING ? "ytl.pause()" : "ytl.play()");
+        if (n >= 3) cmd(this, "ytl.prev()");
+        else if (n == 2) cmd(this, "ytl.next()");
+        else if (n == 1) cmd(this, state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING ? "ytl.pause()" : "ytl.play()");
     };
 
     private boolean handleMultiClick(Intent intent) {
@@ -460,7 +543,15 @@ public class PlaybackService extends Service {
 
     private void acquireLocks() {
         try { if (wakeLock != null) wakeLock.acquire(WAKE_LOCK_MS); } catch (Exception ignored) {}
-        try { if (wifiLock != null && !wifiLock.isHeld()) wifiLock.acquire(); } catch (Exception ignored) {}
+        // Wi-Fi saver (271, off by default): with the screen off at the lowest background quality the
+        // high-performance Wi-Fi lock is not held; the wake lock still is. On screen / setting off: as before.
+        boolean wifiSaver = Prefs.on(this, Prefs.WIFI_SAVER) && Prefs.lowQualityBg(this) && !MainActivity.isVisible();
+        try {
+            if (wifiLock != null) {
+                if (wifiSaver) { if (wifiLock.isHeld()) wifiLock.release(); }
+                else if (!wifiLock.isHeld()) wifiLock.acquire();
+            }
+        } catch (Exception ignored) {}
     }
 
     private void releaseLocks() {
@@ -498,7 +589,8 @@ public class PlaybackService extends Service {
                             if (isPlaying()) acquireLocks();
                             update();
                         }
-                        MainActivity.js("ytl.onNet()");
+                        if (netNote) { netNote = false; update(); }
+                        if (MainActivity.hasPage()) MainActivity.js("ytl.onNet()");
                     }, 1500);
                 }
             };
@@ -519,13 +611,16 @@ public class PlaybackService extends Service {
         boolean playing = state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
         boolean hasArt = art != null && artUrl.equals(artLoadedFor);
 
-        String metaKey = title + "\u0001" + artist + "\u0001" + durationMs + "\u0001" + (hasArt ? artLoadedFor : "");
+        String metaKey = title + "\u0001" + artist + "\u0001" + durationMs + "\u0001" + (hasArt ? artLoadedFor : "") + "\u0001" + videoId;
         if (!metaKey.equals(lastMetaKey)) {
             lastMetaKey = metaKey;
             MediaMetadata.Builder mb = new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, title)
                     .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
+                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
+                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, artist)   // (295)
                     .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+            if (!videoId.isEmpty()) mb.putString(MediaMetadata.METADATA_KEY_MEDIA_ID, videoId);
             if (hasArt) {
                 mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
                 mb.putBitmap(MediaMetadata.METADATA_KEY_ART, art); // lock screen (117)
@@ -577,7 +672,7 @@ public class PlaybackService extends Service {
     private String notifKey() {
         return title + "|" + artist + "|" + isPlaying() + "|" + SleepTimer.buttonLabel() + "|" + SleepTimer.timed() + "|"
                 + Prefs.on(this, Prefs.NOTIF_SEEK) + "|" + Prefs.on(this, Prefs.NOTIF_WL) + "|" + (art != null && artUrl.equals(artLoadedFor) ? artLoadedFor : "")
-                + "|" + interrupted + "|" + longBuffer + "|" + foreground;
+                + "|" + interrupted + "|" + longBuffer + "|" + netNote + "|" + foreground;
     }
 
     private Notification notification() {
@@ -670,7 +765,7 @@ public class PlaybackService extends Service {
     }
 
     private static int piFlags() {
-        return PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+        return PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
     }
 
     private PendingIntent action(String a, int code) {
@@ -681,14 +776,12 @@ public class PlaybackService extends Service {
     @SuppressWarnings("deprecation")
     private Notification buildNotification() {
         boolean playing = state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, CHANNEL_ID)
-                : new Notification.Builder(this).setPriority(Notification.PRIORITY_LOW);
+        Notification.Builder b = new Notification.Builder(this, CHANNEL_ID);
 
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (interrupted) open.putExtra(EXTRA_RESUME, true);
         String sleep = SleepTimer.status();
-        String text = interrupted ? "播放被系统中断 · 点此继续" : longBuffer ? "网络中断，等待恢复后继续" : artist;
+        String text = interrupted ? "播放被系统中断 · 点此继续" : (longBuffer || netNote) ? "网络中断，恢复后自动继续" : artist;
 
         b.setSmallIcon(R.drawable.ic_stat_yiwei)
                 .setContentTitle(title.isEmpty() ? getString(R.string.app_name) : title)

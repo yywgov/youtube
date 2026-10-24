@@ -83,6 +83,12 @@ public final class SleepTimer {
         startInternal(c, minutes, -1L, -1, false);
     }
 
+    /** Started by the app itself (inactivity guard, 277): not remembered as the default, own message. */
+    public static void startAuto(Context c, int minutes, String message) {
+        startInternal(c, minutes, -1L, -1, true);
+        toast(c, message);
+    }
+
     /** Start (or bring back, 244/300) a timer; leftMs / count >= 0 resume a previous one. */
     private static void startInternal(Context c, int minutes, long leftMs, int count, boolean quiet) {
         reset();
@@ -165,6 +171,12 @@ public final class SleepTimer {
         MainActivity.js("ytl.stopAtEnd(false);ytl.countMode&&ytl.countMode(false);ytl.restoreVolume()");
         if (was && c != null) toast(c, "已关闭睡眠定时");
         pushState();
+    }
+
+    /** Fade sync for the page (299): "ends in leftMs, lasts fadeMs"; the page steps the volume itself. */
+    private static void sendFade(long left) {
+        MainActivity.js("ytl.fadeStart?ytl.fadeStart(" + Math.max(0, left) + "," + fadeMs + "):ytl.setVolume("
+                + String.format(java.util.Locale.US, "%.3f", Logic.fadeVolume(left, fadeMs)) + ")");
     }
 
     /** Notification "+15 min" (14): only for a running minutes timer; undoes a fade in progress. */
@@ -276,10 +288,11 @@ public final class SleepTimer {
                 return;
             }
             if (left <= fadeMs) {
+                // the page interpolates every 250 ms on (left / fade)² (298/299); every 5 s it gets the
+                // remaining time again, which also picks up a page reloaded during the fade
                 fading = true;
-                double vol = Logic.fadeVolume(left, fadeMs);   // audible from the start, no cliff at the end (298)
-                MainActivity.js("ytl.setVolume(" + String.format(java.util.Locale.US, "%.3f", vol) + ")");
-                H.postDelayed(this, 1000);
+                sendFade(left);
+                H.postDelayed(this, Math.min(5000L, Math.max(250L, left)));
             } else {
                 // refresh the notification once a minute, wake up exactly when the fade starts
                 long untilFade = left - fadeMs;

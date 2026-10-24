@@ -31,8 +31,6 @@ import java.lang.ref.WeakReference;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -53,7 +51,7 @@ public final class Updater {
     private static final String APK_MIME = "application/vnd.android.package-archive";
     private static final long AUTO_INTERVAL = 24L * 3600L * 1000L;
 
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    private static final java.util.concurrent.ExecutorService IO = Bg.NET;   // shared pool (262)
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicBoolean busy = new AtomicBoolean(false);
 
@@ -103,6 +101,13 @@ public final class Updater {
         }
         if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) return;
         Prefs.get(a).edit().remove(Prefs.PENDING_APK).apply();
+        if (Build.VERSION.SDK_INT >= 28 && "no".equals(sameSigner(a, f))) {   // (395)
+            Diag.log("update", "certificate mismatch: pending install refused");
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            Toast.makeText(a, "安装包签名不一致，已删除", Toast.LENGTH_LONG).show();
+            return;
+        }
         launchInstaller(a, f);
     }
 
@@ -121,6 +126,7 @@ public final class Updater {
 
     private static void check(MainActivity a, final boolean manual) {
         if (!busy.compareAndSet(false, true)) return;
+        appCtxHolder = a.getApplicationContext();
         final WeakReference<MainActivity> ref = new WeakReference<>(a);
         final String installed = installedVersion(a);
         IO.execute(() -> {
@@ -133,10 +139,15 @@ public final class Updater {
             }
             final Release fr = r;
             final String ferr = err;
+            // last check visible in settings (398), also when the activity is gone
+            String res = fr == null ? "失败：" + ferr : compareVersions(fr.version, installed) <= 0 ? "已是最新" : "有新版本 " + fr.tag;
+            String stamp = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.US).format(new java.util.Date());
+            Prefs.put(appCtx(ref), Prefs.UPDATE_LAST_RESULT, stamp + " " + res);
+            if (fr == null) Diag.log("update", "check failed: " + ferr);
             MAIN.post(() -> {
                 busy.set(false);
                 MainActivity act = ref.get();
-                if (act == null || act.isFinishing()) return;
+                if (!alive(act)) return;
                 if (fr == null) {
                     if (manual) {
                         new AlertDialog.Builder(act, android.R.style.Theme_Material_Dialog_Alert)
@@ -166,6 +177,19 @@ public final class Updater {
                 showUpdateDialog(act, fr, installed, manual);
             });
         });
+    }
+
+    private static android.content.Context appCtxHolder;
+
+    private static android.content.Context appCtx(WeakReference<MainActivity> ref) {
+        MainActivity a = ref.get();
+        if (a != null) appCtxHolder = a.getApplicationContext();
+        return appCtxHolder;
+    }
+
+    /** The activity can still show a dialog (255). */
+    private static boolean alive(Activity a) {
+        return a != null && !a.isFinishing() && !a.isDestroyed();
     }
 
     private static Release fetchLatest() throws Exception {
@@ -265,7 +289,7 @@ public final class Updater {
         if (!notes.isEmpty()) msg.append("\n\n").append(notes);
         AlertDialog.Builder b = new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("发现新版本 " + r.tag)
-                .setMessage(msg.toString())
+                .setMessage(styled(msg.toString(), r.notes))
                 .setNegativeButton("以后再说", null);
         if (r.apkUrl != null) {
             b.setPositiveButton("立即更新", (d, w) -> download(a, r));
@@ -274,6 +298,25 @@ public final class Updater {
         }
         if (!manual) b.setNeutralButton("跳过此版本", (d, w) -> Prefs.put(a, Prefs.SKIP_VERSION, r.tag));
         b.show();
+    }
+
+    /** Notes with their list bullets kept and heading lines in bold (399). */
+    static CharSequence styled(String text, String md) {
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(text);
+        try {
+            for (String h : Logic.noteHeadings(md)) {
+                int i = text.indexOf(h);
+                while (i >= 0) {
+                    boolean lineStart = i == 0 || text.charAt(i - 1) == '\n';
+                    int end = i + h.length();
+                    if (lineStart && (end == text.length() || text.charAt(end) == '\n')) {
+                        sb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), i, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
+                    i = text.indexOf(h, end);
+                }
+            }
+        } catch (Throwable ignored) {}
+        return sb;
     }
 
     /** Release notes are markdown; keep them readable as plain text (shared with tests, 397). */
@@ -305,7 +348,7 @@ public final class Updater {
         bar.setIndeterminate(r.apkSize <= 0);
         box.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         final TextView label = new TextView(a);
-        label.setTextColor(0xFFCCCCCC);
+        label.setTextColor(Ui.TEXT_3);
         label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         label.setText("准备下载…");
         box.addView(label);
@@ -380,9 +423,14 @@ public final class Updater {
             }
             final String ferr = error;
             MAIN.post(() -> {
-                try { dlg.dismiss(); } catch (Exception ignored) {}
                 MainActivity act = ref.get();
-                if (act == null || act.isFinishing()) return;
+                // the window may belong to an activity that is gone (255): dismiss only an attached dialog
+                try { if (dlg.isShowing() && dlg.getWindow() != null && dlg.getWindow().getDecorView().isAttachedToWindow()) dlg.dismiss(); } catch (Exception ignored) {}
+                if (!alive(act)) {
+                    // finished while the screen was gone: offered at the next start / resume
+                    if (ferr == null && out.exists()) Prefs.put(appCtx(ref), Prefs.PENDING_APK, out.getAbsolutePath());
+                    return;
+                }
                 if (ferr != null) {
                     if (!ferr.isEmpty()) {
                         new AlertDialog.Builder(act, android.R.style.Theme_Material_Dialog_Alert)
@@ -448,7 +496,7 @@ public final class Updater {
                     if (now - lastUi > 150) {
                         lastUi = now;
                         final long d0 = done, t0 = total;
-                        MAIN.post(() -> progress(bar, label, d0, t0));
+                        MAIN.post(() -> { if (bar.isAttachedToWindow()) progress(bar, label, d0, t0); });   // (255)
                     }
                 }
             }
@@ -520,7 +568,7 @@ public final class Updater {
         if (body.isEmpty()) return;
         new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("已更新到 " + version + " · 本次更新")
-                .setMessage(body)
+                .setMessage(styled(body, notes))
                 .setPositiveButton("知道了", null)
                 .show();
     }
@@ -547,6 +595,23 @@ public final class Updater {
                 return;
             }
         } catch (Exception ignored) {}
+        // same signing certificate as the installed app (395): a package signed by anyone else is refused
+        if (Build.VERSION.SDK_INT >= 28) {
+            String same = sameSigner(a, apk);
+            if ("no".equals(same)) {
+                Diag.log("update", "certificate mismatch: install refused");
+                //noinspection ResultOfMethodCallIgnored
+                apk.delete();
+                new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                        .setTitle("安装包签名不一致")
+                        .setMessage("下载的安装包不是用本 App 的证书签名的，已删除，没有安装。可以到 GitHub Releases 手动核对。")
+                        .setPositiveButton("打开 Releases", (d, w) -> a.openExternal(RELEASES))
+                        .setNegativeButton("关闭", null)
+                        .show();
+                return;
+            }
+            if (!"yes".equals(same)) Diag.log("update", "certificate not checked: " + same);
+        }
 
         if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) {
             Prefs.put(a, Prefs.PENDING_APK, apk.getAbsolutePath());
@@ -566,6 +631,35 @@ public final class Updater {
             return;
         }
         launchInstaller(a, apk);
+    }
+
+    /** "yes" / "no", or why it could not be told (then the system installer still checks it). */
+    @android.annotation.TargetApi(28)
+    static String sameSigner(Activity a, File apk) {
+        try {
+            PackageManager pm = a.getPackageManager();
+            PackageInfo arch = pm.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.GET_SIGNING_CERTIFICATES);
+            PackageInfo mine = pm.getPackageInfo(a.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+            if (arch == null || arch.signingInfo == null || mine.signingInfo == null) return "no signing info";
+            android.content.pm.Signature[] theirs = arch.signingInfo.hasMultipleSigners()
+                    ? arch.signingInfo.getApkContentsSigners() : arch.signingInfo.getSigningCertificateHistory();
+            android.content.pm.Signature[] ours = mine.signingInfo.hasMultipleSigners()
+                    ? mine.signingInfo.getApkContentsSigners() : mine.signingInfo.getSigningCertificateHistory();
+            if (theirs == null || ours == null || theirs.length == 0 || ours.length == 0) return "empty";
+            java.util.Set<String> mineSet = new java.util.HashSet<>();
+            for (android.content.pm.Signature s : ours) mineSet.add(sha256(s.toByteArray()));
+            for (android.content.pm.Signature s : theirs) if (mineSet.contains(sha256(s.toByteArray()))) return "yes";
+            return "no";
+        } catch (Throwable t) {
+            return String.valueOf(t);
+        }
+    }
+
+    private static String sha256(byte[] b) throws Exception {
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        StringBuilder sb = new StringBuilder();
+        for (byte x : md.digest(b)) sb.append(String.format(Locale.ROOT, "%02x", x & 0xff));
+        return sb.toString();
     }
 
     @SuppressWarnings("deprecation")

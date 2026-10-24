@@ -73,7 +73,7 @@ public class SettingsPage {
         String ready = Updater.readyTag(a);
         if (ready != null) rows.add(row("发现新版本 " + ready, "点此下载并安装（不会自动弹窗打扰）", v -> Updater.checkNow(a)));
         if (!a.notificationsOk()) rows.add(row("通知已关闭", "锁屏和通知栏无法控制播放 · 点此打开通知设置", v -> a.openNotificationSettings()));
-        if (!a.isIgnoringBattery()) rows.add(row("后台保活未完成", "电池优化仍在限制本 App，熄屏播放可能中断 · 点此设置", v -> keepAliveSheet()));
+        if (!a.isIgnoringBattery()) rows.add(row("后台保活未完成", "电池优化仍在限制本 App，息屏播放可能中断 · 点此设置", v -> keepAliveSheet()));
         if (a.fgsDeniedAt() > 0) rows.add(row("上次后台播放没能保持前台", "系统拒绝了后台播放服务 · 点此检查保活设置", v -> { a.clearFgsDenied(); keepAliveSheet(); }));
         if (rows.isEmpty()) return;
         LinearLayout card = card(box);
@@ -99,10 +99,10 @@ public class SettingsPage {
                     + " · 省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
             LinearLayout s = card(box, "声音与速度");
             s.addView(toggle("优先原声音轨", "有多条音轨（AI 自动配音）时切回原声", Prefs.ORIG_AUDIO));
-            s.addView(toggle("音量均衡（实验）", "压缩忽大忽小的音量；若关屏后没声音请关闭", Prefs.NORMALIZE));
+            s.addView(toggle("音量均衡（实验）", "压缩忽大忽小的音量；若息屏后没声音请关闭", Prefs.NORMALIZE));
             s.addView(toggle("记住播放速度", "下一个视频沿用上次选的速度（最高 2 倍）", Prefs.REMEMBER_RATE));
             LinearLayout c = card(box, "字幕与片段");
-            c.addView(sub("字幕", () -> pick(new String[]{"yt", "off", "zh"}, new String[]{"跟随 YouTube", "默认关闭", "有中文时打开"}, Prefs.str(a, Prefs.CAPTIONS, "yt"))
+            c.addView(sub("字幕", () -> pick(CAP_VALUES, CAP_SHORT, Prefs.str(a, Prefs.CAPTIONS, "yt"))
                     + " · 大小" + pick(new String[]{"default", "s", "l", "xl"}, new String[]{"默认", "小", "大", "特大"}, Prefs.str(a, Prefs.SUB_SIZE, "default"))
                     + " · 背景" + pick(new String[]{"default", "half", "none"}, new String[]{"默认", "半透明", "无"}, Prefs.str(a, Prefs.SUB_BG, "default")), this::captionsPage));
             c.addView(dyn("SponsorBlock", this::sponsorLabel, v -> pickSponsor()));
@@ -123,11 +123,16 @@ public class SettingsPage {
         });
     }
 
+    // captions (341): Chinese (any), simplified / traditional first, English; human captions before auto ones
+    private static final String[] CAP_VALUES = {"yt", "off", "zh", "zhHans", "zhHant", "en"};
+    private static final String[] CAP_SHORT = {"跟随 YouTube", "默认关闭", "有中文时打开", "简体优先", "繁体优先", "有英文时打开"};
+    private static final String[] CAP_LABELS = {"跟随 YouTube", "默认关闭", "有中文字幕时打开", "有简体中文时打开（无则其他中文）",
+            "有繁体中文时打开（无则其他中文）", "有英文字幕时打开"};
+
     private void captionsPage() {
         page("字幕", box -> {
             LinearLayout s = card(box);
-            s.addView(choice("默认字幕", "跟随 YouTube 时不做任何改动", Prefs.CAPTIONS,
-                    new String[]{"跟随 YouTube", "默认关闭", "有中文字幕时打开"}, new String[]{"yt", "off", "zh"}, "yt"));
+            s.addView(choice("默认字幕", "跟随 YouTube 时不做任何改动；人工字幕优先于自动字幕", Prefs.CAPTIONS, CAP_LABELS, CAP_VALUES, "yt"));
             s.addView(choice("字幕大小", "只改显示大小，不影响字幕内容", Prefs.SUB_SIZE,
                     new String[]{"默认", "小", "大", "特大"}, new String[]{"default", "s", "l", "xl"}, "default"));
             s.addView(choice("字幕背景", "夜里看可选半透明或无背景", Prefs.SUB_BG,
@@ -192,8 +197,9 @@ public class SettingsPage {
 
     private void sleepPage() {
         page("后台与睡眠", box -> {
-            LinearLayout k = card(box, "后台保活（熄屏续播必需）");
+            LinearLayout k = card(box, "后台保活（息屏续播必需）");
             k.addView(dyn("保活状态", this::keepAliveLabel, v -> keepAliveSheet()));
+            k.addView(toggle("息屏省电 Wi-Fi（实验）", "息屏且后台最低画质时不持高性能 Wi-Fi 锁；夜里断流请关闭", Prefs.WIFI_SAVER));
             LinearLayout c = card(box, "睡眠定时");
             c.addView(dyn("当前", () -> SleepTimer.active()
                     ? "正在定时：" + SleepTimer.optionLabel(SleepTimer.mode()) + "（在顶栏月亮按钮或通知栏关闭）"
@@ -202,7 +208,10 @@ public class SettingsPage {
             c.addView(choiceInt("淡出时长", "到点前音量逐渐变小的时间", Prefs.SLEEP_FADE,
                     new String[]{"10 秒", "30 秒", "60 秒"}, new int[]{10, 30, 60}, 60));
             c.addView(toggle("播放器角上显示剩余时间", "左上角小字，不挡画面", Prefs.SLEEP_BADGE));
-            c.addView(toggle("夜间打开时提示开定时", "22:00–5:00 打开 App 时提示，每晚最多一次", Prefs.NIGHT_PROMPT));
+            c.addView(dyn("夜间时段", () -> PrefsModel.nightLabel(Prefs.num(a, Prefs.NIGHT_START), Prefs.num(a, Prefs.NIGHT_END))
+                    + " · 夜间提示按这个时段", v -> pickNight()));
+            c.addView(toggle("夜间打开时提示开睡眠定时", "夜间时段内打开 App 时提示，每晚最多一次", Prefs.NIGHT_PROMPT));
+            c.addView(toggle("无操作保护", "连续 3 小时没碰手机、没按耳机键又没开定时，自动开 30 分钟睡眠定时", Prefs.IDLE_GUARD));
             LinearLayout n = card(box, "续播");
             n.addView(dyn("接下来播放", this::nextLabel, v -> pickNext()));
             LinearLayout h = card(box, "通知栏与耳机");
@@ -228,7 +237,7 @@ public class SettingsPage {
         head.setPadding(dp(20), dp(4), dp(20), dp(8));
         box.addView(head);
         final android.app.Dialog[] d = new android.app.Dialog[1];
-        box.addView(Ui.sheetRow(a, "电池优化", a.isIgnoringBattery() ? "已不受限制 ✓" : "点此关闭电池优化（熄屏持续播放必需）", v -> { d[0].dismiss(); a.requestIgnoreBattery(); }));
+        box.addView(Ui.sheetRow(a, "电池优化", a.isIgnoringBattery() ? "已不受限制 ✓" : "点此关闭电池优化（息屏持续播放必需）", v -> { d[0].dismiss(); a.requestIgnoreBattery(); }));
         box.addView(Ui.sheetRow(a, "自启动", "ColorOS 等系统的自启动管理；找不到时打开应用详情", v -> { d[0].dismiss(); a.openAutostartSettings(); }));
         box.addView(Ui.sheetRow(a, "后台运行（耗电管理）", "ColorOS：允许后台运行 / 耗电策略无限制", v -> { d[0].dismiss(); a.openBatterySettings(); }));
         box.addView(Ui.sheetRow(a, "通知", a.notificationsOk() ? "已开启 ✓（锁屏控制需要）" : "已关闭：锁屏和通知栏无法控制播放，点此打开", v -> { d[0].dismiss(); a.openNotificationSettings(); }));
@@ -263,11 +272,26 @@ public class SettingsPage {
         });
     }
 
+    /** Night window (307): start and end hour, one sheet each. */
+    private void pickNight() {
+        final String[] hours = new String[24];
+        for (int i = 0; i < 24; i++) hours[i] = i + ":00";
+        radio("夜间从几点开始", hours, Prefs.num(a, Prefs.NIGHT_START), start -> {
+            radio("到几点结束", hours, Prefs.num(a, Prefs.NIGHT_END), end -> {
+                if (start == end) { toastShort("开始和结束不能相同"); return; }
+                Prefs.put(a, Prefs.NIGHT_START, start);
+                Prefs.put(a, Prefs.NIGHT_END, end);
+                applied();
+            });
+        });
+    }
+
     private static final String[] NEXT_VALUES = {"rec", "channel", "playlist"};
     private static final String[] NEXT_LABELS = {"YouTube 推荐", "优先同频道", "只在播放列表内"};
 
     private String nextLabel() {
         return "平时：" + pick(NEXT_VALUES, NEXT_LABELS, Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))
+                + (Prefs.on(a, Prefs.SKIP_WATCHED_NEXT) && "rec".equals(Prefs.str(a, Prefs.NEXT_SOURCE, "rec")) ? "（跳过看过的）" : "")
                 + " · 睡眠时：" + (Prefs.on(a, Prefs.SLEEP_CALM) ? "同频道/列表" : "跟随平时")
                 + " · 一键睡眠模式总是同频道";
     }
@@ -279,6 +303,12 @@ public class SettingsPage {
         box.setPadding(dp(20), dp(4), dp(20), 0);
         box.addView(Ui.title(a, "平时"));
         final android.widget.RadioGroup g1 = radios(box, NEXT_LABELS, Math.max(0, java.util.Arrays.asList(NEXT_VALUES).indexOf(Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))));
+        // (311) off by default: recommended autoplay skips a target already watched
+        final android.widget.CheckBox skip = new android.widget.CheckBox(a);
+        skip.setText("推荐模式下跳过已看完的视频");
+        skip.setTextColor(Ui.TEXT);
+        skip.setChecked(Prefs.on(a, Prefs.SKIP_WATCHED_NEXT));
+        box.addView(skip);
         box.addView(Ui.title(a, "睡眠定时中"));
         final android.widget.RadioGroup g2 = radios(box, new String[]{"跟随平时", "优先同频道 / 列表（找不到时照常推荐）"}, Prefs.on(a, Prefs.SLEEP_CALM) ? 1 : 0);
         TextView note = Ui.text(a, "默认用 YouTube 自动播放；其他选项会关掉它由本 App 选。一键睡眠模式总是同频道。", 13, Ui.TEXT_2);
@@ -292,6 +322,7 @@ public class SettingsPage {
                 .setPositiveButton("确定", (d, w) -> {
                     Prefs.put(a, Prefs.NEXT_SOURCE, NEXT_VALUES[Math.max(0, checkedIndex(g1))]);
                     Prefs.put(a, Prefs.SLEEP_CALM, checkedIndex(g2) == 1);
+                    Prefs.put(a, Prefs.SKIP_WATCHED_NEXT, skip.isChecked());
                     applied();
                 })
                 .setNegativeButton("取消", null)
@@ -383,7 +414,7 @@ public class SettingsPage {
         page("内容过滤", box -> {
             LinearLayout f = card(box);
             f.addView(dyn("屏蔽的频道", () -> countLabel(Prefs.BLOCK_CHANNELS, "长按视频卡片 →「不再显示此频道」也能加"),
-                    v -> editLines("屏蔽的频道", "每行一个频道名（和卡片上显示的一致）", Prefs.BLOCK_CHANNELS)));
+                    v -> editLines("屏蔽的频道", "每行一个频道名；长按菜单加入的形如「@频道号|频道名」，改名后也有效", Prefs.BLOCK_CHANNELS)));
             f.addView(dyn("屏蔽的关键词", () -> countLabel(Prefs.BLOCK_WORDS, "标题含这些词就不显示，搜索结果也生效"),
                     v -> editLines("屏蔽的关键词", "每行一个词，不区分大小写", Prefs.BLOCK_WORDS)));
             f.addView(choiceInt("隐藏短视频", "按卡片上的时长判断", Prefs.MIN_DUR,
@@ -430,6 +461,7 @@ public class SettingsPage {
                     new String[]{"默认（YouTube 红 / 蓝）", "蓝", "青", "紫", "橙", "粉"},
                     new String[]{"", "#2F6BFF", "#00BFA5", "#9C6BFF", "#FF8A00", "#FF4F8B"}, ""));
             c.addView(toggle("网页字体跟随系统大小", "使用系统字体缩放（限制在 85%–130%）", Prefs.FONT_FOLLOW));
+            c.addView(toggle("允许超大字号", "跟随系统时上限放宽到 160%，标题最多三行；个别页面可能变挤", Prefs.FONT_LARGE));
             LinearLayout l = card(box, "列表样式");
             l.addView(boolChoice("首页列表布局", "紧凑：小图在左、标题在右，一屏看更多", Prefs.COMPACT, "大图（默认）", "紧凑列表"));
             l.addView(toggle("统一卡片样式", "缩略图圆角统一、标题两行、时长和进度条更醒目", Prefs.CARD_STYLE));
@@ -450,11 +482,15 @@ public class SettingsPage {
             LinearLayout u = card(box, "更新");
             u.addView(dyn("检查更新", () -> {
                 String r = Updater.readyTag(a);
-                return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + " · 每天自动检查一次（有新版只显示小红点）";
+                String last = Prefs.str(a, Prefs.UPDATE_LAST_RESULT, "");
+                return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + " · 每天自动检查一次"
+                        + (last.isEmpty() ? "（有新版只显示小红点）" : " · 上次：" + last);
             }, v -> Updater.checkNow(a)));
             u.addView(toggle("国内网络用镜像下载", "下载慢时开启；安装包都会做 SHA-256 校验，失败自动改回直连", Prefs.UPDATE_MIRROR));
             u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新 · " : "已关闭 · ") + RemoteRules.status(a), v -> rulesDialog()));
             LinearLayout b = card(box, "备份与恢复");
+            b.addView(row("备份设置到文件", "保存为 .json 文件（不经过剪贴板），换机、重装时用", v -> saveBackupFile()));
+            b.addView(row("从文件恢复设置", "选择之前保存的备份文件；10 秒内可撤销", v -> openBackupFile()));
             b.addView(row("备份设置到剪贴板", "导出为一段文字，可存到备忘录（旧版本也能恢复）", v -> exportSettings()));
             b.addView(row("从剪贴板恢复设置", "粘贴之前备份的那段文字后点这里；10 秒内可撤销", v -> importSettings()));
             b.addView(row("恢复默认设置", "开关和选项回到默认；屏蔽列表、登录和记录不动；10 秒内可撤销", v -> confirmDefaults()));
@@ -499,7 +535,11 @@ public class SettingsPage {
             LinearLayout c = card(box);
             c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
             c.addView(row("WebView", MainActivity.webViewVersion(a), null));
-            c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
+            if (a.refreshLimited()) {
+                c.addView(row("屏幕刷新率", a.refreshRateLabel() + " · 滑动时大多没到最高刷新率，可能被系统按应用限制了；点此打开显示设置，在「屏幕刷新率 → 应用」里设为高刷", v -> a.openDisplaySettings()));
+            } else {
+                c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
+            }
             c.addView(dyn("本机观看统计", () -> "近 7 天 " + fmtDuration(PlaybackService.weekSeconds(a)) + " · 今天 " + fmtDuration(PlaybackService.todaySeconds(a)), null));
             c.addView(row("开源许可", "基于 YTPro（MIT）· AndroidX（Apache 2.0）· SponsorBlock 数据（CC BY-NC-SA 4.0）", v -> licenses()));
         });
@@ -631,29 +671,66 @@ public class SettingsPage {
     }
 
     private View toggle(String title, String sub, final String key) {
-        LinearLayout l = baseRow();
+        final LinearLayout l = baseRow();
         l.addView(texts(title, Ui.text(a, sub, 13, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
         final Switch sw = new Switch(a);
         sw.setChecked(Prefs.on(a, key));
         tint(sw);
+        // screen reader (373): one stop per row, read once with its state; the switch itself is not a second stop
+        sw.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        sw.setFocusable(false);
+        l.setContentDescription(title + "，" + sub);
+        stateDesc(l, sw.isChecked());
         sw.setOnCheckedChangeListener((b, checked) -> {
             Prefs.put(a, key, checked);
+            stateDesc(l, checked);
             applied();
         });
-        sw.setContentDescription(title);
         l.addView(sw);
         Ui.ripple(l);
         l.setOnClickListener(v -> sw.toggle());
         return l;
     }
 
+    private static void stateDesc(View v, boolean on) {
+        if (android.os.Build.VERSION.SDK_INT >= 30) v.setStateDescription(on ? "已开启" : "已关闭");
+        else v.setContentDescription(String.valueOf(v.getContentDescription()).replaceAll("，已(开启|关闭)$", "") + (on ? "，已开启" : "，已关闭"));
+    }
+
     private void tint(Switch sw) {
         try {
             int acc = Ui.accent(a);
             int[][] states = {{android.R.attr.state_checked}, {}};
-            sw.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{acc, 0xFFBDBDBD}));
-            sw.setTrackTintList(new android.content.res.ColorStateList(states, new int[]{(acc & 0x00FFFFFF) | 0x80000000, 0x40FFFFFF}));
+            sw.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{acc, Ui.SWITCH_OFF}));
+            sw.setTrackTintList(new android.content.res.ColorStateList(states, new int[]{Ui.withAlpha(acc, 0x80), Ui.TRACK_OFF}));
         } catch (Throwable ignored) {}
+    }
+
+    /**
+     * Row with its current value at the right end in the accent colour (360); the explanation stays
+     * underneath, at most two lines.
+     */
+    private View valueRow(String title, String note, final Label value, View.OnClickListener click) {
+        LinearLayout l = baseRow();
+        TextView sub = note == null ? null : Ui.text(a, note, 13, Ui.TEXT_2);
+        if (sub != null) { sub.setMaxLines(2); sub.setEllipsize(android.text.TextUtils.TruncateAt.END); }
+        l.addView(texts(title, sub), new LinearLayout.LayoutParams(0, -2, 1f));
+        final TextView val = Ui.text(a, "", 14, Ui.accent(a));
+        val.setPadding(dp(12), 0, 0, 0);
+        val.setMaxWidth(dp(140));
+        val.setGravity(Gravity.END);
+        l.addView(val);
+        Runnable r = () -> {
+            try {
+                String s = value.get();
+                val.setText(s);
+                l.setContentDescription(title + "，当前：" + s + (note == null ? "" : "，" + note));
+            } catch (Exception ignored) {}
+        };
+        r.run();
+        refreshers.add(r);
+        if (click != null) { Ui.ripple(l); l.setOnClickListener(click); }
+        return l;
     }
 
     private View choice(final String title, final String note, final String key, final String[] labels, final String[] values, final String def) {
@@ -661,10 +738,10 @@ public class SettingsPage {
             String cur = currentStr(key, def);
             String label = labels[0];
             for (int i = 0; i < values.length; i++) if (values[i].equals(cur)) label = labels[i];
-            return note == null ? label : label + " · " + note;
+            return label;
         };
         final View[] self = new View[1];
-        self[0] = dyn(title, lab, v -> {
+        self[0] = valueRow(title, note, lab, v -> {
             String cur = currentStr(key, def);
             int sel = 0;
             for (int i = 0; i < values.length; i++) if (values[i].equals(cur)) sel = i;
@@ -690,7 +767,7 @@ public class SettingsPage {
 
     /** Two-option row stored straight in a boolean key (236: no more pseudo key for the layout). */
     private View boolChoice(final String title, final String note, final String key, final String offLabel, final String onLabel) {
-        return dyn(title, () -> (Prefs.on(a, key) ? onLabel : offLabel) + " · " + note,
+        return valueRow(title, note, () -> Prefs.on(a, key) ? onLabel : offLabel,
                 v -> radio(title, new String[]{offLabel, onLabel}, Prefs.on(a, key) ? 1 : 0, which -> {
                     Prefs.put(a, key, which == 1);
                     applied();
@@ -748,9 +825,9 @@ public class SettingsPage {
             int cur = Prefs.get(a).getInt(key, def);
             String label = String.valueOf(cur);
             for (int i = 0; i < values.length; i++) if (values[i] == cur) label = labels[i];
-            return note == null ? label : label + " · " + note;
+            return label;
         };
-        return dyn(title, lab, v -> {
+        return valueRow(title, note, lab, v -> {
             int cur = Prefs.get(a).getInt(key, def);
             int sel = 0;
             for (int i = 0; i < values.length; i++) if (values[i] == cur) sel = i;
@@ -786,7 +863,7 @@ public class SettingsPage {
         e.setText(Prefs.str(a, key, ""));
         e.setHint(hint);
         e.setTextColor(Ui.TEXT);
-        e.setHintTextColor(0xFF777777);
+        e.setHintTextColor(Ui.HINT);
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         e.setMinLines(4);
         e.setGravity(Gravity.TOP | Gravity.START);
@@ -809,8 +886,68 @@ public class SettingsPage {
     }
 
     private void exportSettings() {
-        copy(a.getString(R.string.app_name) + " 设置备份", Prefs.exportJson(a, version()));
+        copy(a, a.getString(R.string.app_name) + " 设置备份", Prefs.exportJson(a, version()));
         toastShort("已复制设置备份");
+    }
+
+    // ---- backup files (402): the system picker, no storage permission ----
+    private static SettingsPage filePage;   // the settings screen that started the picker
+
+    private void saveBackupFile() {
+        try {
+            String day = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(new java.util.Date());
+            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT)
+                    .addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("application/json")
+                    .putExtra(android.content.Intent.EXTRA_TITLE, a.getString(R.string.app_name) + "-设置-" + day + ".json");
+            filePage = this;
+            a.startActivityForResult(i, MainActivity.REQ_BACKUP_SAVE);
+        } catch (Exception e) {
+            toastShort("无法打开文件选择器");
+        }
+    }
+
+    private void openBackupFile() {
+        try {
+            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*")
+                    .putExtra(android.content.Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
+            filePage = this;
+            a.startActivityForResult(i, MainActivity.REQ_BACKUP_OPEN);
+        } catch (Exception e) {
+            toastShort("无法打开文件选择器");
+        }
+    }
+
+    public static void onBackupSaved(MainActivity a, android.net.Uri uri) {
+        try (java.io.OutputStream os = a.getContentResolver().openOutputStream(uri, "wt")) {
+            if (os == null) throw new java.io.IOException("no stream");
+            os.write(Prefs.exportJson(a, Updater.installedVersion(a)).getBytes("UTF-8"));
+            Toast.makeText(a, "设置已保存到文件", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Diag.log("backup", "save: " + e);
+            Toast.makeText(a, "保存失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    public static void onBackupOpened(MainActivity a, android.net.Uri uri) {
+        String text;
+        try (java.io.InputStream in = a.getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new java.io.IOException("no stream");
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                bos.write(buf, 0, n);
+                if (bos.size() > 256 * 1024) throw new java.io.IOException("文件太大");
+            }
+            text = bos.toString("UTF-8");
+        } catch (Exception e) {
+            Toast.makeText(a, "读取失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        SettingsPage p = filePage != null && filePage.a == a ? filePage : new SettingsPage(a);
+        filePage = null;
+        p.importText(text, "从文件恢复");
     }
 
     /** Import (241): every value checked, snapshot first (406), then settings reopen with the new values. */
@@ -821,13 +958,34 @@ public class SettingsPage {
             ClipData d = cm.getPrimaryClip();
             if (d != null && d.getItemCount() > 0 && d.getItemAt(0).getText() != null) clip = d.getItemAt(0).getText().toString();
         } catch (Exception ignored) {}
-        if (clip.isEmpty() || !looksLikeBackup(clip)) { toastShort("剪贴板里没有 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        importText(clip, "从剪贴板恢复");
+    }
+
+    /** Import from the clipboard or a file (241/402); says when / by which version it was made (408). */
+    private void importText(String text, String what) {
+        if (text == null || text.isEmpty() || !looksLikeBackup(text)) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        String made = backupMade(text);
         Prefs.saveSnapshot(a);
-        PrefsModel.ImportResult r = Prefs.importJson(a, clip);
-        if (r == null) { toastShort("剪贴板里没有 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        PrefsModel.ImportResult r = Prefs.importJson(a, text);
+        if (r == null) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
         a.applySettings();
-        Toast.makeText(a, "已恢复 " + r.applied + " 项设置" + (r.ignored > 0 ? "，已忽略 " + r.ignored + " 项（取值不支持）" : ""), Toast.LENGTH_LONG).show();
-        offerUndo("从剪贴板恢复");
+        Toast.makeText(a, "已恢复 " + r.applied + " 项设置" + (r.ignored > 0 ? "，已忽略 " + r.ignored + " 项（取值不支持）" : "")
+                + (made.isEmpty() ? "" : "\n备份于 " + made), Toast.LENGTH_LONG).show();
+        offerUndo(what);
+    }
+
+    /** "2026-10-24 21:30 · v1.7.0" from a v2 backup's header; "" for older ones (408). */
+    private static String backupMade(String json) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(json.trim());
+            long at = o.optLong("exportedAt", 0);
+            String v = o.optString("appVersion", "");
+            String when = at > 0 ? new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(new java.util.Date(at)) : "";
+            if (when.isEmpty() && v.isEmpty()) return "";
+            return when + (v.isEmpty() ? "" : (when.isEmpty() ? "" : " · ") + "v" + v);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private static boolean looksLikeBackup(String s) {
@@ -855,14 +1013,18 @@ public class SettingsPage {
                 .show();
     }
 
-    private void copyReport() {
+    private void copyReport() { copyReport(a); }
+
+    /** Problem report (139); also offered by the self-check bar (254). Block lists only as counts (413). */
+    public static void copyReport(MainActivity a) {
+        String version = Updater.installedVersion(a);
         StringBuilder b = new StringBuilder();
-        b.append(Diag.header(version()));
+        b.append(Diag.header(version));
         b.append("WebView ").append(MainActivity.webViewVersion(a)).append(" · ").append(a.refreshRateLabel()).append('\n');
         b.append("电池优化豁免：").append(a.isIgnoringBattery()).append(" · 省电模式：").append(Prefs.powerSaving(a))
                 .append(" · 远程规则：").append(RemoteRules.status(a)).append('\n');
         b.append("通知：").append(a.notificationsOk() ? "正常" : "已关闭").append(" · 后台前台服务被拒：").append(a.fgsDeniedAt() > 0).append('\n');
-        b.append("设置：").append(Prefs.exportJson(a, version()).replace("\n", "")).append("\n\n");
+        b.append("设置：").append(reportSettings(a, version)).append("\n\n");
         String diag = Diag.read(a, Diag.DIAG);
         String[] lines = diag.split("\n");
         b.append("—— 最近诊断日志 ——\n");
@@ -873,23 +1035,42 @@ public class SettingsPage {
             b.append("—— 漏网广告 ——\n");
             for (int i = Math.max(0, al.length - 30); i < al.length; i++) b.append(al[i]).append('\n');
         }
-        copy(a.getString(R.string.app_name) + " 问题报告", b.toString());
-        toastShort("已复制问题报告，粘贴发给我即可");
+        copy(a, a.getString(R.string.app_name) + " 问题报告", b.toString());
+        Toast.makeText(a, "已复制问题报告，粘贴发给我即可", Toast.LENGTH_SHORT).show();
+    }
+
+    private static String reportSettings(MainActivity a, String version) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(Prefs.exportJson(a, version));
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            java.util.Iterator<String> it = o.keys();
+            while (it.hasNext()) { String k = it.next(); m.put(k, o.opt(k)); }
+            return new org.json.JSONObject(PrefsModel.redactForReport(m)).toString();
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     private void copyLog(String file, String label) {
         String body = Diag.read(a, file);
         if (body.isEmpty()) { toastShort(label + "为空"); return; }
-        copy(a.getString(R.string.app_name) + " " + label, Diag.header(version()) + body);
+        copy(a, a.getString(R.string.app_name) + " " + label, Diag.header(version()) + body);
         toastShort("已复制" + label);
     }
 
-    private void copy(String label, String text) {
+    /** Clipboard copy marked sensitive (407): Android 13+ hides the preview of backups and reports. */
+    private static void copy(Context a, String label, String text) {
         try {
             ClipboardManager cm = (ClipboardManager) a.getSystemService(Context.CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText(label, text));
+            ClipData clip = ClipData.newPlainText(label, text);
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                android.os.PersistableBundle ex = new android.os.PersistableBundle();
+                ex.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true);
+                clip.getDescription().setExtras(ex);
+            }
+            cm.setPrimaryClip(clip);
         } catch (Exception e) {
-            toastShort("复制失败");
+            Toast.makeText(a, "复制失败", Toast.LENGTH_SHORT).show();
         }
     }
 

@@ -17,8 +17,6 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Remote rules (73): extra CSS hide selectors, so a YouTube redesign can be patched without a
@@ -38,7 +36,10 @@ public final class RemoteRules {
     private static final String LAST_CHECK = "rulesLastCheck";
     private static final String LAST_RESULT = "rulesLastResult";
 
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    private static final java.util.concurrent.ExecutorService IO = Bg.NET;   // shared pool (262)
+    /** Mainland fallback (287): the same mirror the updater offers; only ever trusted with a hash fetched elsewhere. */
+    static final String MIRROR = "https://ghfast.top/";
+    static final String API_SHA = "https://api.github.com/repos/yywgov/youtube/contents/rules/rules.json.sha256?ref=main";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile String cache = null;
 
@@ -97,10 +98,18 @@ public final class RemoteRules {
         IO.execute(() -> {
             String result;
             try {
-                String body = get(BASE + FILE);
-                String sum = get(BASE + FILE + ".sha256").trim().split("\\s+")[0].toLowerCase(Locale.ROOT);
-                if (!sum.matches("[0-9a-f]{64}")) throw new Exception("校验文件无效");
-                if (!sum.equals(sha256(body))) throw new Exception("校验不通过");
+                // direct first; if raw.githubusercontent.com is unreachable (common on mainland networks, 287)
+                // the file comes from the mirror and its SHA-256 from GitHub directly (raw or API), so the
+                // mirror can never change the rules
+                String body = null, sum = null, route = "直连";
+                try { body = get(BASE + FILE); } catch (Exception e) { Diag.log("rules", "direct: " + e.getMessage()); }
+                try { sum = parseSum(get(BASE + FILE + ".sha256")); } catch (Exception e) { /* API below */ }
+                if (sum == null) {
+                    try { sum = parseSum(apiSha()); route = body == null ? "镜像" : "直连+API"; } catch (Exception e) { Diag.log("rules", "api: " + e.getMessage()); }
+                }
+                if (sum == null) throw new Exception("拿不到校验值");
+                if (body == null) { body = get(MIRROR + BASE + FILE); route = "镜像"; }
+                if (!sum.equals(sha256(body))) throw new Exception("校验不通过（" + route + "）");
                 String err = validate(body);
                 if (err != null) throw new Exception(err);
                 int ver = new JSONObject(body).optInt("version", 0);
@@ -113,10 +122,10 @@ public final class RemoteRules {
                     try (FileOutputStream os = new FileOutputStream(tmp)) { os.write(body.getBytes("UTF-8")); }
                     if (!tmp.renameTo(new File(c.getFilesDir(), FILE))) throw new Exception("保存失败");
                     cache = body;
-                    result = "已更新到版本 " + ver + "（下次打开页面生效）";
-                    Diag.log("rules", "updated to v" + ver);
+                    result = "已更新到版本 " + ver + "（下次打开页面生效）· " + route;
+                    Diag.log("rules", "updated to v" + ver + " via " + route);
                 } else {
-                    result = "已是最新";
+                    result = "已是最新 · " + route;
                 }
             } catch (Exception e) {
                 result = "检查失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
@@ -131,6 +140,31 @@ public final class RemoteRules {
                 }
             });
         });
+    }
+
+    static String parseSum(String s) {
+        if (s == null) return null;
+        String t = s.trim().split("\\s+")[0].toLowerCase(Locale.ROOT);
+        return t.matches("[0-9a-f]{64}") ? t : null;
+    }
+
+    /** rules.json.sha256 through the GitHub contents API (base64), used when raw is blocked (287). */
+    private static String apiSha() throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(API_SHA).openConnection();
+        try {
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setInstanceFollowRedirects(false);
+            conn.setRequestProperty("User-Agent", "YiWei-rules");
+            conn.setRequestProperty("Accept", "application/vnd.github+json");
+            int code = conn.getResponseCode();
+            if (code != 200) throw new Exception("HTTP " + code);
+            JSONObject o = new JSONObject(read(conn.getInputStream()));
+            String b64 = o.optString("content", "").replace("\n", "");
+            return new String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), "UTF-8");
+        } finally {
+            conn.disconnect();
+        }
     }
 
     /** null when acceptable, else the reason. */
@@ -149,6 +183,15 @@ public final class RemoteRules {
                 String s = (String) x;
                 if (s.length() == 0 || s.length() > 200) return "规则长度不符";
                 for (char ch : s.toCharArray()) if ("{}<>;@\\".indexOf(ch) >= 0 || ch < 0x20) return "规则含不允许的字符";
+            }
+            // optional sponsored-card labels for the page's text fallback (285)
+            JSONArray t = o.optJSONArray("adText");
+            if (t != null) {
+                if (t.length() > 20) return "广告文字太多";
+                for (int i = 0; i < t.length(); i++) {
+                    Object x = t.get(i);
+                    if (!(x instanceof String) || ((String) x).trim().isEmpty() || ((String) x).length() > 20) return "广告文字不符";
+                }
             }
             return null;
         } catch (Exception e) {

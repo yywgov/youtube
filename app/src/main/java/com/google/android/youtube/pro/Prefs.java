@@ -105,6 +105,8 @@ public final class Prefs {
     public static final String SLEEP_MODE_BLACK = "sleepModeBlack";  // one-tap sleep mode: black screen after 10 s (306)
     public static final String LIST_END_NEXT = "listEndNext";        // playlist finished: go on with a recommendation (313)
     public static final String SLEEP_STRICT = "sleepStrict";         // sleeping, same channel only: stop when none (315)
+    public static final String PRE_RASTER = "preRaster";             // WebView offscreen pre-raster (267, experimental)
+    public static final String LANDSCAPE_LAYOUT = "landscapeLayout"; // landscape, not full screen: player 70 % high (387)
     // state (not settings)
     public static final String UPDATE_READY = "updateReady";         // tag of a newer release found by the daily check (137)
     public static final String LAST_RUN_VERSION = "lastRunVersion";  // (138)
@@ -134,6 +136,8 @@ public final class Prefs {
     public static final String SLEEP_BATTERY = "sleepBattery";
     /** Network blocking hits per rule today (281): {"day":"yyyyMMdd","c":{rule:count}}. */
     public static final String BLOCK_STATS = "blockStats";
+    /** Update mirror that worked last time (400): tried first next time. */
+    public static final String MIRROR_OK = "mirrorOk";
 
     private Prefs() {}
 
@@ -264,6 +268,36 @@ public final class Prefs {
             if (v != null && v != JSONObject.NULL) m.put(k, v);
         }
         return m;
+    }
+
+    /** What importing {@code json} would change (404); null when it is not a backup. */
+    public static java.util.List<String[]> importDiff(Context c, String json) {
+        try {
+            return PrefsModel.importDiff(toMap(new JSONObject(json.trim())), new PrefStore(get(c)));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Settings backup plus this phone's hidden videos / local positions (403), "local" in the same file. */
+    public static String exportJsonWithLocal(Context c, String appVersion, String localJson) {
+        try {
+            JSONObject o = new JSONObject(exportJson(c, appVersion));
+            if (localJson != null && localJson.startsWith("{")) o.put("local", new JSONObject(localJson));
+            return o.toString(1);
+        } catch (Exception e) {
+            return exportJson(c, appVersion);
+        }
+    }
+
+    /** The "local" part of a backup (403), or null. */
+    public static String backupLocal(String json) {
+        try {
+            JSONObject l = new JSONObject(json.trim()).optJSONObject("local");
+            return l == null ? null : l.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -427,6 +461,9 @@ public final class Prefs {
             o.put("lightRefresh", on(c, LIGHT_REFRESH));
             o.put("listEndNext", on(c, LIST_END_NEXT));
             o.put("sleepStrict", on(c, SLEEP_STRICT));
+            // landscape layout (387): only while the screen is landscape
+            o.put("landscape", on(c, LANDSCAPE_LAYOUT)
+                    && c.getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE);
             return o.toString();
         } catch (Exception e) {
             return "{}";

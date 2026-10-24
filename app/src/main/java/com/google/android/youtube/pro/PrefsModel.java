@@ -38,7 +38,7 @@ public final class PrefsModel {
             Prefs.POWER_SAVE_AUTO, Prefs.NOTIF_WL,
             Prefs.WIFI_SAVER, Prefs.IDLE_GUARD, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER,
             Prefs.HIDE_WATCHED_RELATED, Prefs.HIDE_SEARCH_MIX, Prefs.LIGHT_REFRESH, Prefs.SLEEP_HOLD, Prefs.SLEEP_MODE_BLACK,
-            Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT};
+            Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT, Prefs.PRE_RASTER, Prefs.LANDSCAPE_LAYOUT};
     public static final String[] INT_KEYS = {Prefs.SLEEP_DEFAULT, Prefs.SLEEP_FADE, Prefs.SEEN_MIN, Prefs.MIN_DUR, Prefs.MAX_AGE,
             Prefs.NIGHT_START, Prefs.NIGHT_END, Prefs.ORIENT_LOCK, Prefs.EXTEND_STEP};
     public static final String[] STR_KEYS = {Prefs.SPONSOR_CATS, Prefs.NEXT_SOURCE, Prefs.QUALITY, Prefs.RATE, Prefs.CAPTIONS,
@@ -59,6 +59,7 @@ public final class PrefsModel {
             case Prefs.WIFI_SAVER: case Prefs.SKIP_WATCHED_NEXT: case Prefs.FONT_LARGE: case Prefs.ORIENT_REMEMBER:
             case Prefs.HIDE_WATCHED_RELATED: case Prefs.HIDE_SEARCH_MIX: case Prefs.LIGHT_REFRESH:
             case Prefs.SLEEP_HOLD: case Prefs.SLEEP_MODE_BLACK: case Prefs.LIST_END_NEXT: case Prefs.SLEEP_STRICT:
+            case Prefs.PRE_RASTER: case Prefs.LANDSCAPE_LAYOUT:
                 return false;
             default: return true;
         }
@@ -181,6 +182,76 @@ public final class PrefsModel {
         @Override public Object get(String key) { return map.get(key); }
         @Override public void put(String key, Object value) { map.put(key, value); }
         @Override public void remove(String key) { map.remove(key); }
+    }
+
+    // ---------- import preview (404) ----------
+
+    /** Short Chinese name of each setting for the import preview; the key itself when missing. */
+    static final Map<String, String> LABELS = new java.util.HashMap<>();
+    static {
+        String[] kv = {
+                Prefs.SPONSOR_BLOCK, "SponsorBlock 自动跳过", Prefs.LOW_QUALITY_BG, "后台/息屏最低画质", Prefs.HIDE_WATCHED, "隐藏已看完",
+                Prefs.PERF_CSS, "列表渲染优化", Prefs.SLEEP_REMEMBER, "睡眠默认时长沿用上次", Prefs.SLEEP_BADGE, "播放器角上剩余时间",
+                Prefs.NIGHT_PROMPT, "夜间提示开睡眠定时", Prefs.SLEEP_CALM, "睡眠时优先同频道", Prefs.NOTIF_SEEK, "通知栏快退/快进键",
+                Prefs.HEADSET_MULTI, "耳机按键多击", Prefs.RESUME_PROMPT, "重开时提示继续", Prefs.RESUME_LOCAL, "未登录记住进度",
+                Prefs.REMEMBER_RATE, "记住播放速度", Prefs.ORIG_AUDIO, "优先原声音轨", Prefs.NO_END_WALL, "不显示片尾推荐墙",
+                Prefs.NORMALIZE, "音量均衡", Prefs.HIDE_LIVE, "隐藏直播", Prefs.HIDE_SHELVES, "隐藏首页货架", Prefs.SUBS_ONLY_VIDEOS, "订阅页只看视频",
+                Prefs.REFRESH_COUNT, "刷新后提示新视频数", Prefs.HIDE_SEARCH_EXTRAS, "搜索隐藏插入模块", Prefs.REMOTE_RULES, "远程屏蔽规则",
+                Prefs.UPDATE_MIRROR, "镜像下载更新", Prefs.AMOLED, "纯黑主题", Prefs.FONT_FOLLOW, "字体跟随系统", Prefs.COMPACT, "紧凑列表",
+                Prefs.CARD_STYLE, "统一卡片样式", Prefs.DIM_THUMBS, "压暗缩略图", Prefs.LONG_PRESS, "长按菜单", Prefs.SEARCH_FOCUS, "搜索自动弹键盘",
+                Prefs.SEARCH_CHIPS, "搜索快捷筛选", Prefs.KEEP_SCROLL, "返回保持位置", Prefs.HAPTIC, "轻震提示", Prefs.POWER_SAVE_AUTO, "省电模式降画质",
+                Prefs.NOTIF_WL, "通知栏稍后观看", Prefs.WIFI_SAVER, "息屏省电 Wi-Fi", Prefs.IDLE_GUARD, "无操作保护",
+                Prefs.SKIP_WATCHED_NEXT, "推荐跳过看过的", Prefs.FONT_LARGE, "允许超大字号", Prefs.ORIENT_REMEMBER, "记住屏幕方向",
+                Prefs.HIDE_WATCHED_RELATED, "相关视频也隐藏已看完", Prefs.HIDE_SEARCH_MIX, "搜索隐藏合辑", Prefs.LIGHT_REFRESH, "轻量刷新",
+                Prefs.SLEEP_HOLD, "暂停时定时也暂停", Prefs.SLEEP_MODE_BLACK, "睡眠模式自动黑屏", Prefs.LIST_END_NEXT, "列表播完接推荐",
+                Prefs.SLEEP_STRICT, "睡眠时只同频道", Prefs.PRE_RASTER, "预渲染屏外内容", Prefs.LANDSCAPE_LAYOUT, "横屏播放器 70% 高",
+                Prefs.SLEEP_DEFAULT, "睡眠默认时长", Prefs.SLEEP_FADE, "淡出时长", Prefs.SEEN_MIN, "看过多少算已看", Prefs.MIN_DUR, "隐藏短视频",
+                Prefs.MAX_AGE, "隐藏旧视频", Prefs.NIGHT_START, "夜间开始", Prefs.NIGHT_END, "夜间结束", Prefs.ORIENT_LOCK, "屏幕方向锁定",
+                Prefs.EXTEND_STEP, "延长按钮步长", Prefs.SPONSOR_CATS, "SponsorBlock 类别", Prefs.NEXT_SOURCE, "接下来播放",
+                Prefs.QUALITY, "默认画质", Prefs.RATE, "播放速度", Prefs.CAPTIONS, "默认字幕", Prefs.SUB_SIZE, "字幕大小", Prefs.SUB_BG, "字幕背景",
+                Prefs.BLOCK_CHANNELS, "屏蔽的频道", Prefs.BLOCK_WORDS, "屏蔽的关键词", Prefs.START_PAGE, "启动页", Prefs.ACCENT, "强调色"};
+        for (int i = 0; i + 1 < kv.length; i += 2) LABELS.put(kv[i], kv[i + 1]);
+    }
+
+    public static String label(String key) {
+        String l = LABELS.get(key);
+        return l == null ? key : l;
+    }
+
+    private static Object effective(Store s, String k) {
+        Object v = s.get(k);
+        if (v != null) return v;
+        if (isBool(k)) return defBool(k);
+        if (isInt(k)) return defInt(k);
+        return defStr(k);
+    }
+
+    private static String show(String k, Object v) {
+        if (v instanceof Boolean) return (Boolean) v ? "开" : "关";
+        String s = String.valueOf(v);
+        if (Prefs.BLOCK_CHANNELS.equals(k) || Prefs.BLOCK_WORDS.equals(k)) {
+            int n = 0;
+            for (String x : s.split("\n")) if (!x.trim().isEmpty()) n++;
+            return n + " 个";
+        }
+        return s.isEmpty() ? "默认" : s.length() > 24 ? s.substring(0, 24) + "…" : s;
+    }
+
+    /**
+     * What an import would change (404), as {key, label, before, after} rows, using the same checks as
+     * {@link #importMap}; null when the text is not a backup.
+     */
+    public static List<String[]> importDiff(Map<String, Object> b, Store cur) {
+        MapStore copy = new MapStore();
+        for (String k : allKeys()) { Object v = cur.get(k); if (v != null) copy.put(k, v); }
+        ImportResult r = importMap(b, copy, false);
+        if (r.notBackup) return null;
+        List<String[]> out = new java.util.ArrayList<>();
+        for (String k : allKeys()) {
+            Object x = effective(cur, k), y = effective(copy, k);
+            if (!String.valueOf(x).equals(String.valueOf(y))) out.add(new String[]{k, label(k), show(k, x), show(k, y)});
+        }
+        return out;
     }
 
     public static List<String> allKeys() {

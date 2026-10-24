@@ -168,6 +168,13 @@ public final class Logic {
         return true;
     }
 
+    /** Result line of the smoothness self test (268). */
+    public static String smoothSummary(long frames, long janky, long longestMs, float hz) {
+        if (frames <= 0) return "没有记录到帧";
+        double pct = janky * 100.0 / frames;
+        return String.format(java.util.Locale.ROOT, "%d 帧（屏幕 %.0f Hz），掉帧 %d 次（%.1f%%），最长一帧 %d ms", frames, hz, janky, pct, longestMs);
+    }
+
     /** Sleep badge for a minutes timer (308): minutes, and in the last minute seconds in steps of 5. */
     public static String sleepBadge(long leftMs) {
         if (leftMs < 60_000L) {

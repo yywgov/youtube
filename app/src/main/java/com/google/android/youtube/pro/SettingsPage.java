@@ -490,6 +490,8 @@ public class SettingsPage {
             t.addView(toggle("返回列表时保持位置", "从视频返回时回到刚才滑到的地方", Prefs.KEEP_SCROLL));
             LinearLayout h = card(box, "高级");
             h.addView(toggle("列表渲染优化", "屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭", Prefs.PERF_CSS));
+            h.addView(toggle("预渲染屏外内容（实验）", "滑动更跟手，但更耗内存和电；可用「关于 → 流畅度自测」对比", Prefs.PRE_RASTER));
+            h.addView(toggle("横屏时播放器不占满（实验）", "横屏但不全屏时播放器最高 70%，标题和推荐留在屏幕上", Prefs.LANDSCAPE_LAYOUT));
         });
     }
 
@@ -530,10 +532,11 @@ public class SettingsPage {
             u.addView(toggle("国内网络用镜像下载", "下载慢时开启；安装包都会做 SHA-256 校验，失败自动改回直连", Prefs.UPDATE_MIRROR));
             u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新 · " : "已关闭 · ") + RemoteRules.status(a), v -> rulesDialog()));
             LinearLayout b = card(box, "备份与恢复");
-            b.addView(row("备份设置到文件", "保存为 .json 文件（不经过剪贴板），换机、重装时用", v -> saveBackupFile()));
-            b.addView(row("从文件恢复设置", "选择之前保存的备份文件；10 秒内可撤销", v -> openBackupFile()));
-            b.addView(row("备份设置到剪贴板", "导出为一段文字，可存到备忘录（旧版本也能恢复）", v -> exportSettings()));
-            b.addView(row("从剪贴板恢复设置", "粘贴之前备份的那段文字后点这里；10 秒内可撤销", v -> importSettings()));
+            b.addView(row("备份设置到文件", "保存为 .json 文件（不经过剪贴板），可选带上本地隐藏和进度", v -> withLocal(this::saveBackupFile)));
+            b.addView(row("从文件恢复设置", "选择之前保存的备份文件，先看会改哪些；10 秒内可撤销", v -> openBackupFile()));
+            b.addView(row("备份设置到剪贴板", "导出为一段文字，可存到备忘录（旧版本也能恢复）", v -> withLocal(this::exportSettings)));
+            b.addView(row("从剪贴板恢复设置", "粘贴之前备份的那段文字后点这里，先看会改哪些；10 秒内可撤销", v -> importSettings()));
+            b.addView(row("系统备份与换机", "设置会随系统备份和手机搬家带走；登录、缓存和日志不会", null));
             b.addView(row("恢复默认设置", "开关和选项回到默认；屏蔽列表、登录和记录不动；10 秒内可撤销", v -> confirmDefaults()));
             LinearLayout p = card(box, "记录与隐私");
             p.addView(row("观看记录和搜索记录", "打开 YouTube 的记录页，可暂停或清除（需登录）", v -> { closeAll(); a.loadInApp("https://m.youtube.com/feed/history"); }));
@@ -590,6 +593,7 @@ public class SettingsPage {
                 String n = NightLog.last(a);
                 return n.isEmpty() ? "开睡眠定时睡一晚后显示（充电中或不到 10 分钟的不记）" : n;
             }, null));
+            c.addView(row("流畅度自测", "在首页列表上自动滚动 10 秒，统计掉帧并写入诊断日志", v -> { closeAll(); a.runSmoothTest(); }));
             c.addView(row("开源许可", "基于 YTPro（MIT）· AndroidX（Apache 2.0）· SponsorBlock 数据（CC BY-NC-SA 4.0）", v -> licenses()));
         });
     }
@@ -1000,9 +1004,30 @@ public class SettingsPage {
                 .show();
     }
 
+    // ---- local data in a backup (403): hidden videos + local resume positions, chosen per backup ----
+    private static String pendingLocal = null;
+
+    /** Ask what goes into the backup, read the page's local data if wanted, then run {@code next}. */
+    private void withLocal(final Runnable next) {
+        Ui.choiceSheet(a, "备份内容", new String[]{"只备份设置", "设置 + 本地隐藏的视频和观看进度"}, null, -1, which -> {
+            if (which == 0) { pendingLocal = null; next.run(); return; }
+            a.evalJs("window.ytl&&ytl.localData?JSON.stringify(ytl.localData()):''", r -> {
+                pendingLocal = jsString(r);
+                if (pendingLocal == null || !pendingLocal.startsWith("{")) { pendingLocal = null; toastShort("页面还没准备好，只备份了设置"); }
+                next.run();
+            });
+        });
+    }
+
+    /** evaluateJavascript hands back a JSON-encoded string: decode it. */
+    private static String jsString(String r) {
+        try { return r == null || "null".equals(r) ? null : new org.json.JSONArray("[" + r + "]").getString(0); } catch (Exception e) { return null; }
+    }
+
     private void exportSettings() {
-        copy(a, a.getString(R.string.app_name) + " 设置备份", Prefs.exportJson(a, version()));
-        toastShort("已复制设置备份");
+        copy(a, a.getString(R.string.app_name) + " 设置备份", Prefs.exportJsonWithLocal(a, version(), pendingLocal));
+        toastShort(pendingLocal != null ? "已复制设置备份（含本地隐藏和进度）" : "已复制设置备份");
+        pendingLocal = null;
     }
 
     // ---- backup files (402): the system picker, no storage permission ----
@@ -1036,8 +1061,9 @@ public class SettingsPage {
     public static void onBackupSaved(MainActivity a, android.net.Uri uri) {
         try (java.io.OutputStream os = a.getContentResolver().openOutputStream(uri, "wt")) {
             if (os == null) throw new java.io.IOException("no stream");
-            os.write(Prefs.exportJson(a, Updater.installedVersion(a)).getBytes("UTF-8"));
-            Toast.makeText(a, "设置已保存到文件", Toast.LENGTH_SHORT).show();
+            os.write(Prefs.exportJsonWithLocal(a, Updater.installedVersion(a), pendingLocal).getBytes("UTF-8"));
+            Toast.makeText(a, pendingLocal != null ? "设置和本地数据已保存到文件" : "设置已保存到文件", Toast.LENGTH_SHORT).show();
+            pendingLocal = null;
         } catch (Exception e) {
             Diag.log("backup", "save: " + e);
             Toast.makeText(a, "保存失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -1076,16 +1102,47 @@ public class SettingsPage {
         importText(clip, "从剪贴板恢复");
     }
 
-    /** Import from the clipboard or a file (241/402); says when / by which version it was made (408). */
-    private void importText(String text, String what) {
+    /**
+     * Import from the clipboard or a file (241/402); says when / by which version it was made (408) and,
+     * before anything changes, which settings it would change (404).
+     */
+    private void importText(final String text, final String what) {
         if (text == null || text.isEmpty() || !looksLikeBackup(text)) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        java.util.List<String[]> diff = Prefs.importDiff(a, text);
+        if (diff == null) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
+        final String local = Prefs.backupLocal(text);
+        if (diff.isEmpty() && local == null) { toastShort("备份里的设置和现在完全一样"); return; }
+        String made = backupMade(text);
+        StringBuilder m = new StringBuilder();
+        if (!made.isEmpty()) m.append("备份于 ").append(made).append("\n\n");
+        if (diff.isEmpty()) m.append("设置和现在一样。\n");
+        else {
+            m.append("会改 ").append(diff.size()).append(" 项：\n");
+            for (int i = 0; i < Math.min(25, diff.size()); i++) {
+                String[] d = diff.get(i);
+                m.append("· ").append(d[1]).append("：").append(d[2]).append(" → ").append(d[3]).append('\n');
+            }
+            if (diff.size() > 25) m.append("……还有 ").append(diff.size() - 25).append(" 项\n");
+        }
+        if (local != null) m.append("\n另含本地隐藏的视频和观看进度，会合并到本机（不会删掉现有的）。\n");
+        m.append("\n恢复后 10 秒内可在设置首页撤销设置的改动。");
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("从备份恢复？")
+                .setMessage(m.toString())
+                .setPositiveButton("恢复", (d, w) -> applyImport(text, what, local))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void applyImport(String text, String what, String local) {
         String made = backupMade(text);
         Prefs.saveSnapshot(a);
         PrefsModel.ImportResult r = Prefs.importJson(a, text);
         if (r == null) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
         a.applySettings();
+        if (local != null) MainActivity.js("window.ytl&&ytl.importLocal&&ytl.importLocal(" + org.json.JSONObject.quote(local) + ")");
         Toast.makeText(a, "已恢复 " + r.applied + " 项设置" + (r.ignored > 0 ? "，已忽略 " + r.ignored + " 项（取值不支持）" : "")
-                + (made.isEmpty() ? "" : "\n备份于 " + made), Toast.LENGTH_LONG).show();
+                + (local != null ? "，本地数据已合并" : "") + (made.isEmpty() ? "" : "\n备份于 " + made), Toast.LENGTH_LONG).show();
         offerUndo(what);
     }
 

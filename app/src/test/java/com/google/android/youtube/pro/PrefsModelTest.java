@@ -29,7 +29,7 @@ public class PrefsModelTest {
         return s;
     }
 
-    static final int B6_BOOL = 7, B6_INT = 1;
+    static final int B6_BOOL = 9, B6_INT = 1;
 
     @Test public void keyListsUnchanged() {
         // v1.5.1's 51 keys + batch 5's 8 + batch 6's new ones (never a rename)
@@ -196,7 +196,7 @@ public class PrefsModelTest {
                 Prefs.WIFI_SAVER, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER,
                 // batch 6: new behaviour is opt-in
                 Prefs.HIDE_WATCHED_RELATED, Prefs.HIDE_SEARCH_MIX, Prefs.LIGHT_REFRESH, Prefs.SLEEP_HOLD, Prefs.SLEEP_MODE_BLACK,
-                Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT};
+                Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT, Prefs.PRE_RASTER, Prefs.LANDSCAPE_LAYOUT};
         java.util.List<String> offL = java.util.Arrays.asList(off);
         for (String k : PrefsModel.BOOL_KEYS) assertEquals(k, !offL.contains(k), PrefsModel.defBool(k));
         assertEquals(30, PrefsModel.defInt(Prefs.SLEEP_DEFAULT));

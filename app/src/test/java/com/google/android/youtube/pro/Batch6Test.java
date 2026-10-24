@@ -32,7 +32,7 @@ public class Batch6Test {
     /** 303 / 305 / 306 / 313 / 315 / 316 / 327 / 333: new keys, defaults keep the old behaviour, values checked. */
     @Test public void newSettings() {
         for (String k : new String[]{Prefs.HIDE_WATCHED_RELATED, Prefs.HIDE_SEARCH_MIX, Prefs.LIGHT_REFRESH, Prefs.SLEEP_HOLD,
-                Prefs.SLEEP_MODE_BLACK, Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT}) {
+                Prefs.SLEEP_MODE_BLACK, Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT, Prefs.PRE_RASTER, Prefs.LANDSCAPE_LAYOUT}) {
             assertTrue(k, PrefsModel.isBool(k));
             assertFalse(k + " is off by default", PrefsModel.defBool(k));
         }
@@ -122,5 +122,35 @@ public class Batch6Test {
         assertFalse(f.contains("t2 "));
         assertTrue(f.startsWith("=== t3 "));
         assertTrue(f.contains("=== t5 thread=main\nat X.y(X.java:5)"));
+    }
+
+    /** 404: the preview lists exactly what an import would change, with the same checks as the import. */
+    @Test public void importPreview() {
+        PrefsModel.MapStore cur = new PrefsModel.MapStore();
+        cur.put(Prefs.QUALITY, "720");
+        cur.put(Prefs.BLOCK_WORDS, "a\nb");
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("app", "YiWei");
+        b.put("v", 2);
+        b.put(Prefs.QUALITY, "1080");              // changes
+        b.put(Prefs.SPONSOR_BLOCK, true);          // same as the default: no row
+        b.put(Prefs.EXTEND_STEP, 30);              // changes from the default 15
+        b.put(Prefs.SLEEP_FADE, 45);               // not an allowed value: ignored, no row
+        b.put(Prefs.BLOCK_WORDS, "a\nb\nc");      // shown as a count
+        java.util.List<String[]> d = PrefsModel.importDiff(b, cur);
+        assertEquals(3, d.size());
+        java.util.Map<String, String[]> byKey = new java.util.HashMap<>();
+        for (String[] r : d) byKey.put(r[0], r);
+        assertEquals("默认画质", byKey.get(Prefs.QUALITY)[1]);
+        assertEquals("720", byKey.get(Prefs.QUALITY)[2]);
+        assertEquals("1080", byKey.get(Prefs.QUALITY)[3]);
+        assertEquals("15", byKey.get(Prefs.EXTEND_STEP)[2]);
+        assertEquals("2 个", byKey.get(Prefs.BLOCK_WORDS)[2]);
+        assertEquals("3 个", byKey.get(Prefs.BLOCK_WORDS)[3]);
+        assertEquals("720", cur.get(Prefs.QUALITY));   // the preview never writes
+        Map<String, Object> notBackup = new LinkedHashMap<>();
+        notBackup.put("app", "Other");
+        assertNull(PrefsModel.importDiff(notBackup, cur));
+        for (String k : PrefsModel.allKeys()) assertFalse("label for " + k, PrefsModel.label(k).equals(k));
     }
 }

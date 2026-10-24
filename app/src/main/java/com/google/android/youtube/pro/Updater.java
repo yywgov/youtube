@@ -46,8 +46,13 @@ public final class Updater {
     private static final String API_TAG = "https://api.github.com/repos/yywgov/youtube/releases/tags/";
     public static final String RELEASES = "https://github.com/yywgov/youtube/releases";
     private static final String LATEST_PAGE = "https://github.com/yywgov/youtube/releases/latest";
-    /** Optional download mirror for mainland networks (87); only used when the APK hash is known. */
-    private static final String MIRROR = "https://ghfast.top/";
+    /**
+     * Optional download mirrors for mainland networks (87/400), tried in turn (the one that worked last
+     * time first), one attempt each; only used when the APK hash is known, so none of them can change the file.
+     */
+    static final String[] MIRRORS = {"https://ghfast.top/", "https://gh-proxy.com/", "https://ghproxy.net/"};
+    private static final String UPDATE_CHANNEL = "updates";
+    private static final int UPDATE_NOTIF_ID = 2;
     private static final String APK_MIME = "application/vnd.android.package-archive";
     private static final long AUTO_INTERVAL = 24L * 3600L * 1000L;
 
@@ -101,6 +106,7 @@ public final class Updater {
         }
         if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) return;
         Prefs.get(a).edit().remove(Prefs.PENDING_APK).apply();
+        cancelProgress(a);   // the "downloaded, tap to install" notification has done its job (396)
         if (Build.VERSION.SDK_INT >= 28 && "no".equals(sameSigner(a, f))) {   // (395)
             Diag.log("update", "certificate mismatch: pending install refused");
             //noinspection ResultOfMethodCallIgnored
@@ -284,6 +290,9 @@ public final class Updater {
         msg.append("当前版本：").append(installed).append('\n');
         msg.append("最新版本：").append(r.version);
         if (r.apkSize > 0) msg.append(String.format(Locale.ROOT, "（%.1f MB）", r.apkSize / 1048576.0));
+        // on mobile data say how much it costs (401)
+        if (metered(a)) msg.append(r.apkSize > 0 ? String.format(Locale.ROOT, "\n当前是移动数据，下载约用 %.1f MB 流量", r.apkSize / 1048576.0)
+                : "\n当前是移动数据，下载会使用流量");
         if (r.sha256 != null || r.shaUrl != null) msg.append("\n下载后会校验 SHA-256");
         String notes = cleanNotes(r.notes);
         if (!notes.isEmpty()) msg.append("\n\n").append(notes);
@@ -324,6 +333,57 @@ public final class Updater {
         return Logic.cleanNotes(md);
     }
 
+    private static boolean metered(android.content.Context c) {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) c.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            return cm != null && cm.isActiveNetworkMetered();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Mirrors in the order to try (400): last good one first. */
+    static java.util.List<String> mirrorOrder(String lastGood) {
+        java.util.List<String> l = new java.util.ArrayList<>();
+        if (lastGood != null) for (String m : MIRRORS) if (m.equals(lastGood)) l.add(m);
+        for (String m : MIRRORS) if (!l.contains(m)) l.add(m);
+        return l;
+    }
+
+    // ---- background download (396): progress in a notification, the install offered when done ----
+    private static void notifyProgress(android.content.Context c, String tag, long done, long total, String text, boolean finished, boolean ok) {
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager) c.getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            if (nm.getNotificationChannel(UPDATE_CHANNEL) == null) {
+                android.app.NotificationChannel ch = new android.app.NotificationChannel(UPDATE_CHANNEL, "应用更新", android.app.NotificationManager.IMPORTANCE_LOW);
+                ch.setShowBadge(false);
+                nm.createNotificationChannel(ch);
+            }
+            Intent open = new Intent(c, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(c, 20, open,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+            android.app.Notification.Builder b = new android.app.Notification.Builder(c, UPDATE_CHANNEL)
+                    .setSmallIcon(R.drawable.ic_stat_yiwei)
+                    .setContentTitle(finished ? (ok ? "新版本 " + tag + " 已下载" : "更新下载失败") : "正在下载 " + tag)
+                    .setContentText(text)
+                    .setContentIntent(pi)
+                    .setOnlyAlertOnce(true)
+                    .setShowWhen(false)
+                    .setOngoing(!finished)
+                    .setAutoCancel(finished);
+            if (!finished) b.setProgress(1000, total > 0 ? (int) Math.min(1000, done * 1000 / total) : 0, total <= 0);
+            nm.notify(UPDATE_NOTIF_ID, b.build());
+        } catch (Throwable ignored) {}
+    }
+
+    private static void cancelProgress(android.content.Context c) {
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager) c.getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(UPDATE_NOTIF_ID);
+        } catch (Throwable ignored) {}
+    }
+
     // ===================== download =====================
 
     private static File downloadDir(Activity a) {
@@ -339,6 +399,8 @@ public final class Updater {
 
     private static void download(MainActivity a, Release r) {
         final AtomicBoolean cancelled = new AtomicBoolean(false);
+        final AtomicBoolean background = new AtomicBoolean(false);
+        final android.content.Context appCtx = a.getApplicationContext();
         int pad = Math.round(20 * a.getResources().getDisplayMetrics().density);
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -357,6 +419,11 @@ public final class Updater {
                 .setView(box)
                 .setCancelable(false)
                 .setNegativeButton("取消", (d, w) -> cancelled.set(true))
+                // keep using the app (396): progress moves to a notification, the install is offered when done
+                .setNeutralButton("后台下载", (d, w) -> {
+                    background.set(true);
+                    notifyProgress(appCtx, r.tag, 0, r.apkSize, "下载完成后点此安装", false, false);
+                })
                 .show();
         final WeakReference<MainActivity> ref = new WeakReference<>(a);
         final String safe = r.apkName.replaceAll("[^A-Za-z0-9._-]", "_");
@@ -374,17 +441,21 @@ public final class Updater {
                 String expect = r.sha256;
                 if (expect == null && r.shaUrl != null) expect = fetchSha(r.shaUrl);
                 java.util.List<String> urls = new java.util.ArrayList<>();
-                // mirror only when the result can be verified (87)
-                if (expect != null && Prefs.on(a, Prefs.UPDATE_MIRROR)) urls.add(MIRROR + r.apkUrl);
+                // mirrors only when the result can be verified (87/400), one try each, last good first
+                int mirrors = 0;
+                if (expect != null && Prefs.on(a, Prefs.UPDATE_MIRROR)) {
+                    for (String m : mirrorOrder(Prefs.str(appCtx, Prefs.MIRROR_OK, ""))) { urls.add(m + r.apkUrl); mirrors++; }
+                }
                 urls.add(r.apkUrl);
                 if (r.altApkUrl != null) urls.add(r.altApkUrl);
                 Exception last = null;
                 boolean ok = false;
                 for (int u = 0; u < urls.size() && !ok; u++) {
-                    for (int attempt = 0; attempt < 3 && !ok; attempt++) {
+                    int tries = u < mirrors ? 1 : 3;
+                    for (int attempt = 0; attempt < tries && !ok; attempt++) {
                         if (cancelled.get()) throw new InterruptedException();
                         try {
-                            fetchTo(urls.get(u), part, r.apkSize, cancelled, bar, label);
+                            fetchTo(urls.get(u), part, r.apkSize, cancelled, bar, label, background, appCtx, r.tag);
                             String bad = null;
                             if (r.apkSize > 0 && part.length() != r.apkSize) bad = "下载不完整";
                             else if (expect != null && !expect.equalsIgnoreCase(fileSha(part))) bad = "安装包校验失败（SHA-256 不一致）";
@@ -396,6 +467,7 @@ public final class Updater {
                                 break;                   // this source gave a bad file: next source
                             }
                             ok = true;
+                            if (u < mirrors) Prefs.put(appCtx, Prefs.MIRROR_OK, urls.get(u).substring(0, urls.get(u).length() - r.apkUrl.length()));
                         } catch (InterruptedException ie) {
                             throw ie;
                         } catch (java.io.FileNotFoundException nf) {
@@ -426,6 +498,16 @@ public final class Updater {
                 MainActivity act = ref.get();
                 // the window may belong to an activity that is gone (255): dismiss only an attached dialog
                 try { if (dlg.isShowing() && dlg.getWindow() != null && dlg.getWindow().getDecorView().isAttachedToWindow()) dlg.dismiss(); } catch (Exception ignored) {}
+                if (background.get()) {
+                    // (396) on screen: install now as before; otherwise the notification offers it
+                    if (ferr == null && out.exists() && (!alive(act) || !MainActivity.isVisible())) {
+                        Prefs.put(appCtx, Prefs.PENDING_APK, out.getAbsolutePath());
+                        notifyProgress(appCtx, r.tag, 1, 1, "点此安装", true, true);
+                        return;
+                    }
+                    if (ferr != null && !ferr.isEmpty()) notifyProgress(appCtx, r.tag, 0, 0, ferr, true, false);
+                    else cancelProgress(appCtx);
+                }
                 if (!alive(act)) {
                     // finished while the screen was gone: offered at the next start / resume
                     if (ferr == null && out.exists()) Prefs.put(appCtx(ref), Prefs.PENDING_APK, out.getAbsolutePath());
@@ -449,7 +531,8 @@ public final class Updater {
     }
 
     /** One download attempt into part (resuming it with a Range request when possible). */
-    private static void fetchTo(String src, File part, long size, AtomicBoolean cancelled, ProgressBar bar, TextView label) throws Exception {
+    private static void fetchTo(String src, File part, long size, AtomicBoolean cancelled, ProgressBar bar, TextView label,
+                                AtomicBoolean background, android.content.Context appCtx, String tag) throws Exception {
         HttpURLConnection c = null;
         try {
             URL url = new URL(src);
@@ -484,7 +567,7 @@ public final class Updater {
             if (!append) have = 0;
             long len = c.getContentLength();
             long total = len > 0 ? len + have : size;
-            long done = have, lastUi = 0;
+            long done = have, lastUi = 0, lastNotif = 0;
             try (InputStream in = c.getInputStream(); OutputStream os = new FileOutputStream(part, append)) {
                 byte[] buf = new byte[65536];
                 int n;
@@ -497,6 +580,10 @@ public final class Updater {
                         lastUi = now;
                         final long d0 = done, t0 = total;
                         MAIN.post(() -> { if (bar.isAttachedToWindow()) progress(bar, label, d0, t0); });   // (255)
+                    }
+                    if (background.get() && now - lastNotif > 1000) {   // (396) at most once a second
+                        lastNotif = now;
+                        notifyProgress(appCtx, tag, done, total, String.format(Locale.ROOT, "%.1f / %.1f MB", done / 1048576.0, total / 1048576.0), false, false);
                     }
                 }
             }

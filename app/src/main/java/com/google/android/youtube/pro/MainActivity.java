@@ -276,6 +276,8 @@ public class MainActivity extends Activity {
     public void onConfigurationChanged(android.content.res.Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         requestHighRefreshRate();
+        // landscape player layout (387) follows the orientation
+        if (Prefs.on(this, Prefs.LANDSCAPE_LAYOUT)) js("ytl.cfg({landscape:" + (newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) + "})");
     }
 
     // ===================== high refresh rate (120 Hz LTPO etc.) =====================
@@ -816,10 +818,53 @@ public class MainActivity extends Activity {
     /** A setting changed: push it to the page, the notification and the native bits that follow it. */
     public void applySettings() {
         js("ytl.cfg(" + Prefs.jsConfig(this) + ")");
+        applyPreRaster();
         PlaybackService.refresh();
         applyTextZoom();
         applyTheme(pageTheme);
         if (swipe != null) swipe.setColorSchemeColors(Ui.accent(this));
+    }
+
+    // ---- smoothness self test (268): 10 s of scripted scrolling, frames counted by the Choreographer ----
+    private boolean smoothRunning = false;
+
+    public void runSmoothTest() {
+        if (smoothRunning || web == null) return;
+        evalJs("window.ytl&&ytl.selfScroll?ytl.selfScroll(10000):false", r -> {
+            if (!"true".equals(r)) { say("请在首页、订阅或搜索结果列表上运行"); return; }
+            smoothRunning = true;
+            say("流畅度自测中，10 秒内请不要触摸屏幕");
+            final float hz = Math.max(30f, getWindowManager().getDefaultDisplay().getRefreshRate());
+            final long budget = (long) (1e9 / hz);
+            final long[] st = {0, 0, 0, 0};   // last frame ns, frames, janky, longest ns
+            final long endAt = System.nanoTime() + 10_000_000_000L;
+            android.view.Choreographer.getInstance().postFrameCallback(new android.view.Choreographer.FrameCallback() {
+                @Override public void doFrame(long t) {
+                    if (st[0] > 0) {
+                        long d = t - st[0];
+                        st[1]++;
+                        if (d > budget * 3 / 2) st[2]++;
+                        if (d > st[3]) st[3] = d;
+                    }
+                    st[0] = t;
+                    if (t < endAt && !isFinishing()) android.view.Choreographer.getInstance().postFrameCallback(this);
+                    else {
+                        smoothRunning = false;
+                        String msg = Logic.smoothSummary(st[1], st[2], st[3] / 1_000_000L, hz);
+                        Diag.log("smooth", msg + " · perfCss=" + Prefs.on(MainActivity.this, Prefs.PERF_CSS)
+                                + " preRaster=" + Prefs.on(MainActivity.this, Prefs.PRE_RASTER));
+                        if (!isFinishing()) new android.app.AlertDialog.Builder(MainActivity.this, android.R.style.Theme_Material_Dialog_Alert)
+                                .setTitle("流畅度自测结果").setMessage(msg + "\n\n已写入诊断日志，可在「复制问题报告」里一起发给我。")
+                                .setPositiveButton("好", null).show();
+                    }
+                }
+            });
+        });
+    }
+
+    /** Offscreen pre-raster (267, experimental): smoother first scroll, more memory; off by default. */
+    private void applyPreRaster() {
+        try { if (web != null) web.getSettings().setOffscreenPreRaster(Prefs.on(this, Prefs.PRE_RASTER)); } catch (Throwable ignored) {}
     }
 
     /** Load a YouTube page inside the app (settings links). */

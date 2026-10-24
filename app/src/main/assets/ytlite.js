@@ -85,7 +85,8 @@
     hideSearchMix: false,   // search results: no auto-generated mixes (333)
     lightRefresh: false,    // refresh keeps the service worker / static caches (316, experimental)
     listEndNext: false,     // a playlist played to its end goes on with a recommendation (313)
-    sleepStrict: false      // sleeping with the same-channel rule: stop when there is none (315)
+    sleepStrict: false,     // sleeping with the same-channel rule: stop when there is none (315)
+    landscape: false        // landscape, not full screen: player at most 70 % of the height (387, experimental)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
@@ -276,7 +277,8 @@
       mixLink: 'a[href*="list=RD"]',
       mixCard: 'ytm-compact-radio-renderer, ytm-radio-renderer, ytm-compact-playlist-renderer, ytm-playlist-renderer,' +
         ' ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-rich-item-renderer, yt-lockup-view-model',
-      listImg: 'img:not([decoding])'
+      listImg: 'img:not([decoding])',
+      playerBox: '#player-container-id'
     },
     // every on-page text the script matches, by language, in one place (382); mode: full = the whole
     // text, start = the text starts with it, any = anywhere. rules.json "text" can append plain words.
@@ -399,6 +401,10 @@
     out.push('#ytl-tools[data-ytl-off]{display:none!important}');
     // one-tap sleep mode (340): no comments under the player (related videos stay: the same-channel rule reads them)
     rule(RULES.sleepHide.map(function (x) { return 'html[data-ytl-sleepmode][data-ytl-page="watch"] ' + x; }), 'display:none!important');
+    // landscape, not full screen (387): the player is as wide as a 70 %-high 16:9 picture, centred, so
+    // the title and the related list stay in view; the player keeps its own aspect ratio inside
+    out.push('html[data-ytl-landscape][data-ytl-page="watch"]:not([data-ytl-fs]) ' + RULES.sel.playerBox +
+      '{max-width:calc(70vh * 16 / 9)!important;margin-left:auto!important;margin-right:auto!important}');
     // empty feed note (326)
     out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
       'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +
@@ -805,6 +811,11 @@
     retryOnce('player-error');
   }
   window.addEventListener('online', function () { setTimeout(onNet, 1500); });
+  // full screen video (387): the landscape layout rule steps aside
+  document.addEventListener('fullscreenchange', function () {
+    var on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (on) document.documentElement.setAttribute('data-ytl-fs', ''); else document.documentElement.removeAttribute('data-ytl-fs');
+  });
   window.addEventListener('offline', function () { var v = video(); if (v && !v.paused) stalled = true; });
 
   /* ---------- 6. SponsorBlock: skip + 2 s undo prompt (9/10) ---------- */
@@ -882,6 +893,51 @@
     },
     onNet: onNet,
     netChanged: function () { netChanged(); },
+    /* backup with local data (403): hidden videos and local resume positions, only from this phone */
+    localData: function () {
+      var o = { hidden: hiddenIds().filter(function (x) { return /^[\w-]{6,20}$/.test(x); }).slice(0, 300) };
+      var p = posStore(), out = {};
+      for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k) && /^[\w-]{6,20}$/.test(k) && Array.isArray(p[k])) out[k] = p[k];
+      o.pos = out;
+      return o;
+    },
+    /* restore it: merged into what is here, never replacing it; returns how many entries were added */
+    importLocal: guard('import-local', function (json) {
+      var o = typeof json === 'string' ? JSON.parse(json) : json, added = 0;
+      if (!o || typeof o !== 'object') return 0;
+      if (Array.isArray(o.hidden)) {
+        hiddenList = hiddenIds();
+        o.hidden.forEach(function (id) { if (/^[\w-]{6,20}$/.test(id) && hiddenList.indexOf(id) < 0) { hiddenList.push(id); added++; } });
+        if (hiddenList.length > 300) hiddenList.length = 300;
+        saveHidden();
+        filterKey = '';
+      }
+      if (o.pos && typeof o.pos === 'object') {
+        var st = posStore();
+        for (var id in o.pos) {
+          if (!Object.prototype.hasOwnProperty.call(o.pos, id) || !/^[\w-]{6,20}$/.test(id)) continue;
+          var e = o.pos[id];
+          if (!Array.isArray(e) || !(e[0] > 0) || !(e[1] > 0)) continue;
+          if (!st[id] || st[id][1] < e[1]) { st[id] = [Math.floor(e[0]), e[1]]; added++; }
+        }
+        posSave(st);
+      }
+      if (started) filterCards();
+      return added;
+    }),
+    /* smoothness self test (268): scroll the list up and down for a while; Java counts the frames */
+    selfScroll: function (ms) {
+      if (!listPage(pageType())) return false;
+      var end = Date.now() + Math.min(15000, ms || 10000), dir = 1;
+      (function f() {
+        if (Date.now() > end) return;
+        var y = window.scrollY || 0;
+        window.scrollBy(0, dir * 24);
+        if ((window.scrollY || 0) === y) dir = -dir;
+        requestAnimationFrame(f);
+      })();
+      return true;
+    },
     /* fresh verified rules from Java (288): applied at once instead of on the next page load */
     remote: guard('remote-apply', function (json) {
       var r;
@@ -1325,6 +1381,7 @@
     setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
     setAttr('data-ytl-nomix', cfg.hideSearchMix ? '1' : '');            // (333)
     setAttr('data-ytl-sleepmode', sleepMode ? '1' : '');                // (340)
+    setAttr('data-ytl-landscape', cfg.landscape ? '1' : '');            // (387)
     var gear = document.getElementById('ytl-gear');
     if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';

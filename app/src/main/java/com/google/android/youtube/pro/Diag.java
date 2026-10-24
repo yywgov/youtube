@@ -26,7 +26,8 @@ public final class Diag {
     public static final String ADS = "ads.log";
     private static final int MAX_BYTES = 48 * 1024;
     private static final Charset UTF8 = Charset.forName("UTF-8");
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    // shared serial disk thread (262); the class also builds alone for the JVM tests
+    private static final ExecutorService IO = diskExecutor();
     private static volatile Context app;
     private static volatile boolean crashHandlerInstalled = false;
     // simple flood guard for messages coming from the page
@@ -56,9 +57,20 @@ public final class Diag {
         return ++windowCount <= 40;
     }
 
-    public static void ad(String videoId, String type, String page) {
+    public static void ad(String videoId, String type, String page) { ad(videoId, type, page, null); }
+
+    /** Missed ad with what is needed to tell which layer failed (280): self check, login, rules, native rewrite, WebView. */
+    public static void ad(String videoId, String type, String page, String context) {
         append(ADS, now() + "\t" + clean(videoId, 20) + "\t" + clean(type, 32) + "\t" + clean(page, 16)
-                + "\thttps://youtu.be/" + clean(videoId, 20));
+                + "\thttps://youtu.be/" + clean(videoId, 20) + (context == null || context.isEmpty() ? "" : "\t" + clean(context, 300)));
+    }
+
+    private static ExecutorService diskExecutor() {
+        try {
+            return Bg.DISK;
+        } catch (Throwable t) {
+            return Executors.newSingleThreadExecutor();
+        }
     }
 
     private static String clean(String s, int max) {

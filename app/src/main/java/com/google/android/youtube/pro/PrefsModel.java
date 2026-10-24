@@ -35,8 +35,10 @@ public final class PrefsModel {
             Prefs.HIDE_LIVE, Prefs.HIDE_SHELVES, Prefs.SUBS_ONLY_VIDEOS, Prefs.REFRESH_COUNT, Prefs.HIDE_SEARCH_EXTRAS,
             Prefs.REMOTE_RULES, Prefs.UPDATE_MIRROR, Prefs.AMOLED, Prefs.FONT_FOLLOW, Prefs.COMPACT, Prefs.CARD_STYLE,
             Prefs.DIM_THUMBS, Prefs.LONG_PRESS, Prefs.SEARCH_FOCUS, Prefs.SEARCH_CHIPS, Prefs.KEEP_SCROLL, Prefs.HAPTIC,
-            Prefs.POWER_SAVE_AUTO, Prefs.NOTIF_WL};
-    public static final String[] INT_KEYS = {Prefs.SLEEP_DEFAULT, Prefs.SLEEP_FADE, Prefs.SEEN_MIN, Prefs.MIN_DUR, Prefs.MAX_AGE};
+            Prefs.POWER_SAVE_AUTO, Prefs.NOTIF_WL,
+            Prefs.WIFI_SAVER, Prefs.IDLE_GUARD, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER};
+    public static final String[] INT_KEYS = {Prefs.SLEEP_DEFAULT, Prefs.SLEEP_FADE, Prefs.SEEN_MIN, Prefs.MIN_DUR, Prefs.MAX_AGE,
+            Prefs.NIGHT_START, Prefs.NIGHT_END, Prefs.ORIENT_LOCK};
     public static final String[] STR_KEYS = {Prefs.SPONSOR_CATS, Prefs.NEXT_SOURCE, Prefs.QUALITY, Prefs.RATE, Prefs.CAPTIONS,
             Prefs.SUB_SIZE, Prefs.SUB_BG, Prefs.BLOCK_CHANNELS, Prefs.BLOCK_WORDS, Prefs.START_PAGE, Prefs.ACCENT};
 
@@ -52,6 +54,7 @@ public final class PrefsModel {
             case Prefs.NORMALIZE: case Prefs.REMEMBER_RATE: case Prefs.SLEEP_CALM: case Prefs.NOTIF_SEEK:
             case Prefs.HIDE_LIVE: case Prefs.HIDE_SHELVES: case Prefs.SUBS_ONLY_VIDEOS: case Prefs.UPDATE_MIRROR: case Prefs.AMOLED:
             case Prefs.COMPACT: case Prefs.CARD_STYLE: case Prefs.DIM_THUMBS:
+            case Prefs.WIFI_SAVER: case Prefs.SKIP_WATCHED_NEXT: case Prefs.FONT_LARGE: case Prefs.ORIENT_REMEMBER:
                 return false;
             default: return true;
         }
@@ -62,6 +65,8 @@ public final class PrefsModel {
             case Prefs.SLEEP_DEFAULT: return 30;
             case Prefs.SLEEP_FADE: return 60;
             case Prefs.SEEN_MIN: return 80;
+            case Prefs.NIGHT_START: return 22;
+            case Prefs.NIGHT_END: return 5;
             default: return 0;
         }
     }
@@ -86,7 +91,7 @@ public final class PrefsModel {
     static {
         ENUMS.put(Prefs.NEXT_SOURCE, set("rec", "channel", "playlist"));
         ENUMS.put(Prefs.QUALITY, set("auto", "wifiMax", "1080", "720", "480"));
-        ENUMS.put(Prefs.CAPTIONS, set("yt", "off", "zh"));
+        ENUMS.put(Prefs.CAPTIONS, set("yt", "off", "zh", "zhHans", "zhHant", "en"));
         ENUMS.put(Prefs.SUB_SIZE, set("default", "s", "l", "xl"));
         ENUMS.put(Prefs.SUB_BG, set("default", "half", "none"));
         ENUMS.put(Prefs.START_PAGE, set("home", "subs"));
@@ -94,6 +99,11 @@ public final class PrefsModel {
         INT_SETS.put(Prefs.SEEN_MIN, new HashSet<>(Arrays.asList(50, 80, 95)));
         INT_SETS.put(Prefs.MIN_DUR, new HashSet<>(Arrays.asList(0, 1, 3, 5, 10)));
         INT_SETS.put(Prefs.MAX_AGE, new HashSet<>(Arrays.asList(0, 7, 30, 180, 365)));
+        Set<Integer> hours = new HashSet<>();
+        for (int h = 0; h < 24; h++) hours.add(h);
+        INT_SETS.put(Prefs.NIGHT_START, hours);
+        INT_SETS.put(Prefs.NIGHT_END, hours);
+        INT_SETS.put(Prefs.ORIENT_LOCK, new HashSet<>(Arrays.asList(0, 1, 2)));
     }
 
     private static Set<String> set(String... v) { return new HashSet<>(Arrays.asList(v)); }
@@ -285,6 +295,27 @@ public final class PrefsModel {
             s.put(Prefs.HIDE_WATCHED, true);
             s.put(Prefs.SEEN_MIN, choice);
         }
+    }
+
+    /**
+     * Settings as they go into a problem report (413): the block lists only as counts, so a report
+     * never carries the user's channels and keywords.
+     */
+    public static Map<String, Object> redactForReport(Map<String, Object> m) {
+        Map<String, Object> out = new LinkedHashMap<>(m);
+        for (String k : KEEP_ON_DEFAULTS) {
+            Object v = out.get(k);
+            if (v == null) continue;
+            int n = 0;
+            for (String line : String.valueOf(v).split("\n")) if (!line.trim().isEmpty()) n++;
+            out.put(k, n + " 条（内容不随报告发送）");
+        }
+        return out;
+    }
+
+    /** Night window label (307), e.g. "22:00–5:00". */
+    public static String nightLabel(int start, int end) {
+        return start + ":00–" + end + ":00";
     }
 
     /** Notification buttons, as the row summary shows them (237). */

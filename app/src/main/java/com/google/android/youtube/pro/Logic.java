@@ -80,4 +80,74 @@ public final class Logic {
         String h = m.group(1).toLowerCase(java.util.Locale.ROOT);
         return h.equals("youtube.com") || h.endsWith(".youtube.com");
     }
+
+    /** Night window (307): hours [start, end) on a 24 h clock, wrapping past midnight (22–5). */
+    public static boolean inNight(int hour, int start, int end) {
+        if (start == end) return false;
+        return start < end ? hour >= start && hour < end : hour >= start || hour < end;
+    }
+
+    /** The night a time belongs to (307): before the window's end it is still the previous evening's. */
+    public static boolean nightBelongsToYesterday(int hour, int start, int end) {
+        return start > end && hour < end;
+    }
+
+    /**
+     * Inactivity guard (277): playing, no sleep timer, the guard on, and no touch / key / media
+     * button for {@code limitMs}.
+     */
+    public static boolean idleDue(boolean enabled, boolean playing, boolean timerActive, long lastInputMs, long nowMs, long limitMs) {
+        return enabled && playing && !timerActive && lastInputMs > 0 && nowMs - lastInputMs >= limitMs;
+    }
+
+    /** SponsorBlock privacy lookup (410): first 4 hex digits of sha256(videoId). */
+    public static String sbPrefix(String videoId) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(videoId.getBytes("UTF-8"));
+            return String.format(java.util.Locale.ROOT, "%02x%02x", d[0] & 0xff, d[1] & 0xff);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Bridge methods that act on the app (409) are refused while the main frame is a known
+     * non-YouTube page (Google sign-in and friends). Unknown / empty means "not known", which is
+     * allowed, so a YouTube page is never refused because a navigation was not reported yet.
+     */
+    public static boolean bridgeAllowed(String host) {
+        if (host == null || host.isEmpty()) return true;
+        String h = host.toLowerCase(java.util.Locale.ROOT);
+        return h.equals("youtube.com") || h.endsWith(".youtube.com");
+    }
+
+    /** Host of a URL, lower case, "" when there is none. */
+    public static String hostOf(String url) {
+        if (url == null) return "";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#:]+)").matcher(url);
+        return m.find() ? m.group(1).toLowerCase(java.util.Locale.ROOT) : "";
+    }
+
+    /** Microphone for voice search (411): only YouTube pages, by host, not by substring. */
+    public static boolean micOriginOk(String origin) {
+        String h = hostOf(origin);
+        return h.equals("youtube.com") || h.endsWith(".youtube.com");
+    }
+
+    /** Release-note lines that were markdown headings (399), so they can be shown in bold. */
+    public static java.util.List<String> noteHeadings(String md) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (md == null) return out;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?m)^#{1,6}\\s*(.+?)\\s*$").matcher(md.replace("\r", ""));
+        while (m.find()) {
+            String h = m.group(1).replaceAll("\\*\\*(.+?)\\*\\*", "$1").trim();
+            if (!h.isEmpty() && !h.startsWith("What's Changed") && !h.startsWith("New Contributors")) out.add(h);
+        }
+        return out;
+    }
+
+    /** Refresh-rate samples while scrolling (391): mostly below the panel's best = held back. */
+    public static boolean refreshLimited(int samples, int low, float maxHz) {
+        return maxHz > 90f && samples >= 10 && low * 10 >= samples * 8;
+    }
 }

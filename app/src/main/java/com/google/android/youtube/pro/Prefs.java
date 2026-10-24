@@ -87,6 +87,15 @@ public final class Prefs {
     public static final String HAPTIC = "haptic";                    // (120)
     public static final String POWER_SAVE_AUTO = "powerSaveAuto";    // (147)
     public static final String NOTIF_WL = "notifWatchLater";         // (100)
+    // ---- batch 5 (v1.7.0): new keys only, every older key keeps its name / type / meaning ----
+    public static final String WIFI_SAVER = "wifiSaver";             // screen off: no high-perf Wi-Fi lock (271), off by default
+    public static final String IDLE_GUARD = "idleGuard";             // 3 h without input: 30 min timer (277)
+    public static final String NIGHT_START = "nightStart";           // night window start hour (307)
+    public static final String NIGHT_END = "nightEnd";               // night window end hour (307)
+    public static final String SKIP_WATCHED_NEXT = "skipWatchedNext"; // recommended: skip watched autoplay targets (311)
+    public static final String FONT_LARGE = "fontLarge";             // text zoom up to 160 % (378)
+    public static final String ORIENT_REMEMBER = "orientRemember";   // keep the orientation lock across starts (388)
+    public static final String ORIENT_LOCK = "orientLock";           // 0 follow system, 1 portrait, 2 landscape (388)
     // state (not settings)
     public static final String UPDATE_READY = "updateReady";         // tag of a newer release found by the daily check (137)
     public static final String LAST_RUN_VERSION = "lastRunVersion";  // (138)
@@ -104,6 +113,13 @@ public final class Prefs {
     public static final String SLEEP_STATE = "sleepState";
     /** Wall time the last foreground-service start was refused (291); 0 = fine. */
     public static final String FGS_DENIED_AT = "fgsDeniedAt";
+    // batch 5 (v1.7.0) state – never part of a backup
+    /** Version for which the "ad blocking component failed" bar was shown (254). */
+    public static final String SELFCHECK_WARNED = "selfCheckWarned";
+    /** Last update check: "MM-dd HH:mm · result" (398). */
+    public static final String UPDATE_LAST_RESULT = "updateLastResult";
+    /** Sign-in was refused as "browser not secure": send Chrome-like client hints from now on (344). */
+    public static final String CH_UA_FIX = "chUaFix";
 
     private Prefs() {}
 
@@ -145,6 +161,7 @@ public final class Prefs {
     }
 
     public static int sleepDefault(Context c) { return get(c).getInt(SLEEP_DEFAULT, 30); }
+    public static int num(Context c, String key) { return get(c).getInt(key, PrefsModel.defInt(key)); }
     public static int sleepFade(Context c) {
         int v = get(c).getInt(SLEEP_FADE, 60);
         return v == 10 || v == 30 || v == 60 ? v : 60;
@@ -305,6 +322,24 @@ public final class Prefs {
         return a;
     }
 
+    /** System "remove animations" (animator duration scale 0, 367). */
+    public static boolean animationsOff(Context c) {
+        try {
+            return android.provider.Settings.Global.getFloat(c.getContentResolver(), android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Display name (一维视频), without a compile-time dependency on R (JVM tests build this file alone). */
+    public static String appName(Context c) {
+        try {
+            int res = c.getApplicationInfo().labelRes;
+            if (res != 0) return c.getString(res);
+        } catch (Throwable ignored) {}
+        return "一维视频";
+    }
+
     /** Battery saver currently on (147). */
     public static boolean powerSaving(Context c) {
         try {
@@ -365,6 +400,11 @@ public final class Prefs {
             o.put("keepScroll", on(c, KEEP_SCROLL));
             o.put("powerSave", on(c, POWER_SAVE_AUTO) && powerSaving(c));
             o.put("updateDot", !str(c, UPDATE_READY, "").isEmpty());
+            // batch 5 (v1.7.0)
+            o.put("lowMotion", animationsOff(c));
+            o.put("fontLarge", on(c, FONT_LARGE) && on(c, FONT_FOLLOW));
+            o.put("skipWatchedNext", on(c, SKIP_WATCHED_NEXT));
+            o.put("appName", appName(c));
             return o.toString();
         } catch (Exception e) {
             return "{}";

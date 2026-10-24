@@ -17,7 +17,7 @@ android {
 
     defaultConfig {
         applicationId "com.yywgov.ytlite"
-        minSdkVersion 21
+        minSdkVersion 26   // Android 8+ (419); the phone this is for runs Android 14+
         targetSdkVersion 36
         versionCode ciRun
         versionName verName

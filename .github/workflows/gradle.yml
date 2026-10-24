@@ -11,6 +11,11 @@ on:
 permissions:
   contents: write
 
+# a newer push to the same branch cancels the older build (426); release tags always run to the end
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,6 +40,9 @@ jobs:
           if not isinstance(hide, list) or len(hide) > 200: sys.exit('rules.json: hide must be a list of at most 200')
           for s in hide:
               if not isinstance(s, str) or not s.strip() or len(s) >= 200: sys.exit('rules.json: bad selector %r' % (s,))
+          ad_text = r.get('adText', [])
+          if not isinstance(ad_text, list) or len(ad_text) > 20 or any(not isinstance(t, str) or not t.strip() or len(t) > 20 for t in ad_text):
+              sys.exit('rules.json: adText must be at most 20 short strings')
           try:
               changed = subprocess.run(['git', 'diff', '--quiet', 'HEAD~1', '--', 'rules/rules.json']).returncode == 1
               if changed:
@@ -49,6 +57,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm                                   # (426)
+          cache-dependency-path: tests/js/package-lock.json
 
       - name: JS unit tests (jsdom) – a failure stops the build
         working-directory: tests/js
@@ -69,6 +79,33 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace testReleaseUnitTest assembleRelease
+
+      - name: Release APK still has every JS bridge method (429)
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, subprocess, sys, zipfile
+          src = open('app/src/main/java/com/google/android/youtube/pro/webview/WebAppInterface.java', encoding='utf-8').read()
+          want = sorted(set(re.findall(r'@JavascriptInterface\s+public\s+[\w<>]+\s+(\w+)\(', src)))
+          tools = sorted(glob.glob(os.path.join(os.environ.get('ANDROID_HOME', '/usr/local/lib/android/sdk'), 'build-tools', '*', 'dexdump')))
+          if not tools:
+              print('::warning::dexdump not found, bridge check skipped'); sys.exit(0)
+          apk = 'app/build/outputs/apk/release/app-release-unsigned.apk'
+          os.makedirs('dexcheck', exist_ok=True)
+          with zipfile.ZipFile(apk) as z:
+              dexes = [z.extract(n, 'dexcheck') for n in z.namelist() if re.match(r'classes\d*\.dex$', n)]
+          classes = {}
+          for d in dexes:
+              out = subprocess.run([tools[-1], d], capture_output=True, text=True).stdout
+              for block in out.split('Class #')[1:]:
+                  m = re.search(r"Class descriptor\s*:\s*'([^']+)'", block)
+                  if m: classes[m.group(1)] = set(re.findall(r"name\s*:\s*'([^']+)'", block))
+          # the bridge class is the one holding getConfig + getRemoteRules (its own name may be obfuscated)
+          hits = [c for c, names in classes.items() if 'getConfig' in names and 'getRemoteRules' in names]
+          if not hits: sys.exit('bridge class not found in the release dex: proguard rules dropped @JavascriptInterface methods')
+          missing = [m for m in want if m not in classes[hits[0]]]
+          if missing: sys.exit('release APK lost bridge methods: %s' % missing)
+          print('bridge ok: %d methods in %s' % (len(want), hits[0]))
+          PY
 
       - name: Keep the R8 mapping (422) – decodes crash stacks from the diagnostics log
         uses: actions/upload-artifact@v4

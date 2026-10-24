@@ -4,7 +4,7 @@ apply plugin: 'com.android.application'
 // versionName = the release tag without "v" on tag builds (v1.1.0 -> 1.1.0); the in-app
 // updater compares it with the latest GitHub release. Other builds are "<next>-dev.<run>".
 def ciRun = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
-def baseVersion = "1.8.0"
+def baseVersion = "1.8.1"
 def refName = System.getenv("GITHUB_REF_NAME") ?: ""
 def isTagBuild = System.getenv("GITHUB_REF_TYPE") == "tag" && refName ==~ /v\d+(\.\d+)*.*/
 def verName = isTagBuild ? refName.substring(1) : (baseVersion + "-dev." + ciRun)

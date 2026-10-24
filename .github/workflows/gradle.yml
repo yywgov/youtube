@@ -90,6 +90,18 @@ jobs:
           npm ci --no-audit --no-fund
           npm test
 
+      - name: Minify the page script (259/421) – chrome90 syntax check, test the minified copy, ship it
+        run: |
+          node tools/minify-js.js build/js
+          (cd tests/js && YTL_SRC="$GITHUB_WORKSPACE/build/js/ytlite.min.js" npm test)
+          cp build/js/ytlite.min.js app/src/main/assets/ytlite.js
+
+      - name: Keep the JS source map (259)
+        uses: actions/upload-artifact@v4
+        with:
+          name: jsmap-${{ github.ref_name }}-${{ github.run_number }}
+          path: build/js/ytlite.min.js.map
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

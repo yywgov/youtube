@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older (405): only the settings file is backed up; cookies, WebView data,
+     logs and downloaded updates never are. -->
+<full-backup-content>
+	<include domain="sharedpref" path="ytlite.xml" />
+</full-backup-content>

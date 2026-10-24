@@ -166,6 +166,12 @@ public final class Ui {
         return b;
     }
 
+    /** "#RRGGBB" to an opaque colour, the default accent when it is not one. */
+    public static int parseColor(String hex) {
+        try { if (hex != null && hex.matches("#[0-9a-fA-F]{6}")) return 0xFF000000 | Integer.parseInt(hex.substring(1), 16); } catch (Exception ignored) {}
+        return DEFAULT_ACCENT;
+    }
+
     /** Native motion length (367): 0 when the system's "remove animations" is on. */
     public static int anim(Context c, int ms) {
         return Prefs.animationsOff(c) ? 0 : ms;

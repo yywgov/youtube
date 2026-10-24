@@ -45,11 +45,12 @@ public class SettingsPage {
         page(a.getString(R.string.app_name) + " 设置", box -> {
             statusCard(box);
             LinearLayout c = card(box);
-            c.addView(nav("播放", "画质、声音与速度、字幕、SponsorBlock、断点续播", this::playPage));
-            c.addView(nav("后台与睡眠", "保活、睡眠定时、接下来播放、通知栏与耳机", this::sleepPage));
-            c.addView(nav("首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
-            c.addView(nav("外观与交互", "主题、列表样式、长按菜单、轻震、保持位置", this::lookPage));
-            c.addView(nav("数据与更新", "更新、备份与恢复、记录与隐私、诊断、关于", this::dataPage));
+            // a line icon per group (359), same family as the app icon
+            c.addView(nav(R.drawable.ic_set_play, "播放", "画质、声音与速度、字幕、SponsorBlock、断点续播", this::playPage));
+            c.addView(nav(R.drawable.ic_moon_white, "后台与睡眠", "保活、睡眠定时、接下来播放、通知栏与耳机", this::sleepPage));
+            c.addView(nav(R.drawable.ic_set_home, "首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
+            c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、列表样式、长按菜单、轻震、保持位置", this::lookPage));
+            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "更新、备份与恢复、记录与隐私、诊断、关于", this::dataPage));
         });
     }
 
@@ -476,9 +477,7 @@ public class SettingsPage {
         page("外观与交互", box -> {
             LinearLayout c = card(box, "主题");
             c.addView(toggle("纯黑主题（AMOLED）", "深色模式下背景纯黑，更省电、夜里不刺眼", Prefs.AMOLED));
-            c.addView(choice("强调色", "进度条、按钮和开关的颜色", Prefs.ACCENT,
-                    new String[]{"默认（YouTube 红 / 蓝）", "蓝", "青", "紫", "橙", "粉"},
-                    new String[]{"", "#2F6BFF", "#00BFA5", "#9C6BFF", "#FF8A00", "#FF4F8B"}, ""));
+            c.addView(accentRow());
             c.addView(toggle("网页字体跟随系统大小", "使用系统字体缩放（限制在 85%–130%）", Prefs.FONT_FOLLOW));
             c.addView(toggle("允许超大字号", "跟随系统时上限放宽到 160%，标题最多三行；个别页面可能变挤", Prefs.FONT_LARGE));
             LinearLayout l = card(box, "列表样式");
@@ -491,6 +490,29 @@ public class SettingsPage {
             t.addView(toggle("返回列表时保持位置", "从视频返回时回到刚才滑到的地方", Prefs.KEEP_SCROLL));
             LinearLayout h = card(box, "高级");
             h.addView(toggle("列表渲染优化", "屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭", Prefs.PERF_CSS));
+        });
+    }
+
+    // accent (103/351/361): the brand blue is the default; "天蓝" is the old default, kept for whoever liked it
+    private static final String[] ACCENT_LABELS = {"品牌蓝（默认）", "天蓝", "青", "紫", "橙", "粉"};
+    private static final String[] ACCENT_VALUES = {"", "#3EA6FF", "#00BFA5", "#9C6BFF", "#FF8A00", "#FF4F8B"};
+
+    private View accentRow() {
+        return valueRow("强调色", "进度条、按钮和开关的颜色", () -> {
+            String cur = Prefs.str(a, Prefs.ACCENT, "");
+            if ("#2F6BFF".equalsIgnoreCase(cur)) return ACCENT_LABELS[0];
+            return pick(ACCENT_VALUES, ACCENT_LABELS, cur);
+        }, v -> {
+            String cur = Prefs.str(a, Prefs.ACCENT, "");
+            int sel = 0;
+            for (int i = 0; i < ACCENT_VALUES.length; i++) if (ACCENT_VALUES[i].equalsIgnoreCase(cur)) sel = i;
+            int[] dots = new int[ACCENT_VALUES.length];
+            for (int i = 0; i < dots.length; i++) dots[i] = ACCENT_VALUES[i].isEmpty() ? Ui.DEFAULT_ACCENT : Ui.parseColor(ACCENT_VALUES[i]);
+            Ui.choiceSheet(a, "强调色", ACCENT_LABELS, dots, sel, which -> {
+                Prefs.put(a, Prefs.ACCENT, ACCENT_VALUES[which]);
+                applied();
+                reopen();   // titles, switches and values pick the new colour up
+            });
         });
     }
 
@@ -518,9 +540,9 @@ public class SettingsPage {
             p.addView(row("本机数据说明", "设置、日志、屏蔽列表和本地进度只存在本机；登录信息只在 YouTube 页面里", null));
             LinearLayout d = card(box, "诊断");
             d.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
-            d.addView(nav("日志", "漏网广告记录、诊断日志（复制或清空）", this::logsPage));
+            d.addView(nav(0, "日志", "漏网广告记录、诊断日志、网络拦截统计（复制或清空）", this::logsPage));
             LinearLayout ab = card(box);
-            ab.addView(nav("关于", "版本、WebView、刷新率、本机观看统计、开源许可", this::aboutPage));
+            ab.addView(nav(0, "关于", "版本、WebView、刷新率、本机观看统计、开源许可", this::aboutPage));
         });
     }
 
@@ -539,10 +561,14 @@ public class SettingsPage {
         page("日志", box -> {
             LinearLayout c = card(box);
             c.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));
-            c.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行", v -> copyLog(Diag.DIAG, "诊断日志")));
+            c.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行 · 只保留最近 30 天", v -> copyLog(Diag.DIAG, "诊断日志")));
+            c.addView(dyn("复制崩溃记录", () -> { String k = Diag.lastCrash(a); return k.isEmpty() ? "没有崩溃记录" : "最近 3 次崩溃的完整堆栈"; },
+                    v -> copyLog(Diag.CRASH, "崩溃记录")));
+            c.addView(dyn("网络拦截统计", com.google.android.youtube.pro.webview.AdBlocker::summary, null));
             c.addView(row("清空以上记录", "只清本机日志", v -> {
                 Diag.clear(a, Diag.ADS);
                 Diag.clear(a, Diag.DIAG);
+                Diag.clear(a, Diag.CRASH);
                 refreshAll();
                 toastShort("已清空");
             }));
@@ -572,15 +598,55 @@ public class SettingsPage {
 
     private interface Body { void build(LinearLayout box); }
 
-    private final List<Dialog> open = new ArrayList<>();
+    /*
+     * One full-screen window for every settings page (365): pages are views stacked in it, a new one
+     * slides in from the right in 200 ms (property animations, smooth at 120 Hz), back slides it out.
+     * Playback, background quality and the page script keep running underneath as before.
+     */
+    private Dialog win;
+    private FrameLayout stack;
+    private final List<View> pages = new ArrayList<>();
+    private final List<Integer> pageRefreshers = new ArrayList<>();
+    private Object backCb;
+
+    private void ensureWindow() {
+        if (win != null) return;
+        final Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_NoActionBar);
+        stack = new FrameLayout(a);
+        stack.setBackgroundColor(Ui.BG);
+        stack.setFitsSystemWindows(true);
+        if (android.os.Build.VERSION.SDK_INT >= 29) stack.setForceDarkAllowed(false);   // already dark (392)
+        d.setContentView(stack);
+        Window w = d.getWindow();
+        if (w != null) {
+            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            w.setBackgroundDrawableResource(android.R.color.transparent);
+            w.setWindowAnimations(android.R.style.Animation_Activity);
+            w.setStatusBarColor(Ui.BG);
+            w.setNavigationBarColor(Ui.BG);
+        }
+        // back goes one page up, the last page closes the window
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            android.window.OnBackInvokedCallback cb = this::pop;
+            d.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, cb);
+            backCb = cb;
+        }
+        d.setOnKeyListener((dlg, code, ev) -> {
+            if (code != android.view.KeyEvent.KEYCODE_BACK) return false;
+            if (ev.getAction() == android.view.KeyEvent.ACTION_UP) pop();
+            return true;
+        });
+        d.setOnDismissListener(x -> { win = null; stack = null; pages.clear(); pageRefreshers.clear(); refreshers.clear(); });
+        win = d;
+        d.show();
+    }
 
     private void page(String title, Body body) {
-        final Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_NoActionBar);
+        ensureWindow();
         LinearLayout root = new LinearLayout(a);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Ui.BG);
-        root.setFitsSystemWindows(true);
-        if (android.os.Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);   // already dark (392)
+        root.setClickable(true);   // a page under the top one never gets its touches
 
         LinearLayout bar = new LinearLayout(a);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -588,13 +654,15 @@ public class SettingsPage {
         bar.setPadding(dp(4), dp(4), dp(16), dp(4));
         ImageButton back = new ImageButton(a);
         back.setImageResource(R.drawable.ic_arrow_back_white);
+        back.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT));
         back.setBackground(null);
         Ui.ripple(back);
         back.setContentDescription("返回");
-        back.setOnClickListener(v -> d.dismiss());
+        back.setOnClickListener(v -> pop());
         bar.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
         TextView t = Ui.text(a, title, 20, Ui.TEXT);
         t.setPadding(dp(8), 0, 0, 0);
+        Ui.heading(t);   // (379)
         bar.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(bar);
 
@@ -602,28 +670,51 @@ public class SettingsPage {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, 0, 0, dp(24));
-        scroll.addView(box);
+        // at most 720 dp wide, centred, on a tablet or in landscape (385)
+        FrameLayout center = new FrameLayout(a);
+        center.addView(box, new FrameLayout.LayoutParams(Ui.pageMaxWidth(a), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
+        scroll.addView(center);
         root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        pageRefreshers.add(refreshers.size());
         body.build(box);
 
-        d.setContentView(root);
-        Window w = d.getWindow();
-        if (w != null) {
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-            w.setBackgroundDrawableResource(android.R.color.transparent);
-            w.setWindowAnimations(android.R.style.Animation_Activity);
-            if (android.os.Build.VERSION.SDK_INT >= 21) {
-                w.setStatusBarColor(Ui.BG);
-                w.setNavigationBarColor(Ui.BG);
-            }
+        final View under = pages.isEmpty() ? null : pages.get(pages.size() - 1);
+        stack.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        pages.add(root);
+        if (under != null) {
+            int ms = Ui.anim(a, Ui.ANIM_MS);
+            root.setTranslationX(dp(48));
+            root.setAlpha(0f);
+            root.animate().translationX(0f).alpha(1f).setDuration(ms).withEndAction(() -> under.setVisibility(View.INVISIBLE)).start();
+            if (ms == 0) under.setVisibility(View.INVISIBLE);
+            root.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
         }
-        d.setOnDismissListener(x -> { open.remove(d); refreshAll(); });
-        open.add(d);
-        d.show();
+    }
+
+    /** One page back; the root page closes the window. */
+    private void pop() {
+        if (win == null) return;
+        if (pages.size() <= 1) { closeAll(); return; }
+        final View top = pages.remove(pages.size() - 1);
+        int keep = pageRefreshers.remove(pageRefreshers.size() - 1);
+        while (refreshers.size() > keep) refreshers.remove(refreshers.size() - 1);
+        View under = pages.get(pages.size() - 1);
+        under.setVisibility(View.VISIBLE);
+        refreshAll();
+        final FrameLayout st = stack;
+        top.animate().translationX(dp(48)).alpha(0f).setDuration(Ui.anim(a, 150)).withEndAction(() -> {
+            if (st != null) st.removeView(top);
+        }).start();
+        under.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
     }
 
     private void closeAll() {
-        for (Dialog d : new ArrayList<>(open)) { try { d.dismiss(); } catch (Exception ignored) {} }
+        Dialog d = win;
+        if (d == null) return;
+        if (android.os.Build.VERSION.SDK_INT >= 33 && backCb != null) {
+            try { d.getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((android.window.OnBackInvokedCallback) backCb); } catch (Exception ignored) {}
+        }
+        try { d.dismiss(); } catch (Exception ignored) {}
     }
 
     private LinearLayout card(LinearLayout parent) { return card(parent, null); }
@@ -682,11 +773,19 @@ public class SettingsPage {
         return l;
     }
 
-    private View nav(String title, String sub, final Runnable open) {
+    private View nav(int icon, String title, String sub, final Runnable open) {
         LinearLayout l = baseRow();
+        if (icon != 0) {
+            android.widget.ImageView iv = new android.widget.ImageView(a);
+            iv.setImageResource(icon);
+            iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+            iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(24), dp(24));
+            ip.rightMargin = dp(16);
+            l.addView(iv, ip);
+        }
         l.addView(texts(title, Ui.text(a, sub, 13, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView chev = Ui.text(a, "›", 22, Ui.TEXT_2);
-        l.addView(chev);
+        l.addView(chevron());
         Ui.ripple(l);
         l.setOnClickListener(v -> open.run());
         l.setContentDescription(title + "，" + sub);
@@ -721,12 +820,7 @@ public class SettingsPage {
     }
 
     private void tint(Switch sw) {
-        try {
-            int acc = Ui.accent(a);
-            int[][] states = {{android.R.attr.state_checked}, {}};
-            sw.setThumbTintList(new android.content.res.ColorStateList(states, new int[]{acc, Ui.SWITCH_OFF}));
-            sw.setTrackTintList(new android.content.res.ColorStateList(states, new int[]{Ui.withAlpha(acc, 0x80), Ui.TRACK_OFF}));
-        } catch (Throwable ignored) {}
+        Ui.styleSwitch(sw);   // (355)
     }
 
     /**
@@ -738,7 +832,7 @@ public class SettingsPage {
         TextView sub = note == null ? null : Ui.text(a, note, 13, Ui.TEXT_2);
         if (sub != null) { sub.setMaxLines(2); sub.setEllipsize(android.text.TextUtils.TruncateAt.END); }
         l.addView(texts(title, sub), new LinearLayout.LayoutParams(0, -2, 1f));
-        final TextView val = Ui.text(a, "", 14, Ui.accent(a));
+        final TextView val = Ui.text(a, "", 14, Ui.accentText(a));
         val.setPadding(dp(12), 0, 0, 0);
         val.setMaxWidth(dp(140));
         val.setGravity(Gravity.END);
@@ -768,14 +862,10 @@ public class SettingsPage {
             String cur = currentStr(key, def);
             int sel = 0;
             for (int i = 0; i < values.length; i++) if (values[i].equals(cur)) sel = i;
-            new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                    .setTitle(title)
-                    .setSingleChoiceItems(labels, sel, (d, which) -> {
-                        putStr(key, values[which]);
-                        applied();
-                        d.dismiss();
-                    })
-                    .show();
+            Ui.choiceSheet(a, title, labels, null, sel, which -> {   // bottom sheet (353)
+                putStr(key, values[which]);
+                applied();
+            });
         });
         return self[0];
     }
@@ -800,8 +890,20 @@ public class SettingsPage {
     /** Row that opens a second-level page, with a summary of what is set there. */
     private View sub(String title, Label label, final Runnable open) {
         LinearLayout l = (LinearLayout) dyn(title, label, v -> open.run());
-        l.addView(Ui.text(a, "›", 22, Ui.TEXT_2));
+        l.addView(chevron());
         return l;
+    }
+
+    /** Vector chevron instead of a "›" character (354). */
+    private View chevron() {
+        android.widget.ImageView iv = new android.widget.ImageView(a);
+        iv.setImageResource(R.drawable.ic_chevron_right);
+        iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+        iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        lp.leftMargin = dp(8);
+        iv.setLayoutParams(lp);
+        return iv;
     }
 
     private static String pick(String[] values, String[] labels, String cur) {
@@ -812,13 +914,7 @@ public class SettingsPage {
     private interface IntCb { void on(int which); }
 
     private void radio(String title, String[] labels, int sel, final IntCb cb) {
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle(title)
-                .setSingleChoiceItems(labels, sel, (d, which) -> {
-                    cb.on(which);
-                    d.dismiss();
-                })
-                .show();
+        Ui.choiceSheet(a, title, labels, null, sel, cb::on);   // bottom sheet (353)
     }
 
     private android.widget.RadioGroup radios(LinearLayout parent, String[] labels, int sel) {
@@ -854,14 +950,10 @@ public class SettingsPage {
             int cur = Prefs.get(a).getInt(key, def);
             int sel = 0;
             for (int i = 0; i < values.length; i++) if (values[i] == cur) sel = i;
-            new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                    .setTitle(title)
-                    .setSingleChoiceItems(labels, sel, (d, which) -> {
-                        Prefs.put(a, key, values[which]);
-                        applied();
-                        d.dismiss();
-                    })
-                    .show();
+            Ui.choiceSheet(a, title, labels, null, sel, which -> {   // bottom sheet (353)
+                Prefs.put(a, key, values[which]);
+                applied();
+            });
         });
     }
 
@@ -1043,11 +1135,14 @@ public class SettingsPage {
         String version = Updater.installedVersion(a);
         StringBuilder b = new StringBuilder();
         b.append(Diag.header(version));
+        String crash = Diag.lastCrash(a);   // newest crash on top (251)
+        if (!crash.isEmpty()) b.append("—— 最近一次崩溃 ——\n").append(crash.length() > 2500 ? crash.substring(0, 2500) : crash).append("\n\n");
         b.append("WebView ").append(MainActivity.webViewVersion(a)).append(" · ").append(a.refreshRateLabel()).append('\n');
         b.append("电池优化豁免：").append(a.isIgnoringBattery()).append(" · 省电模式：").append(Prefs.powerSaving(a))
                 .append(" · 远程规则：").append(RemoteRules.status(a)).append('\n');
         b.append("通知：").append(a.notificationsOk() ? "正常" : "已关闭").append(" · 后台前台服务被拒：").append(a.fgsDeniedAt() > 0).append('\n');
-        b.append("设置：").append(reportSettings(a, version)).append("\n\n");
+        b.append("设置：").append(reportSettings(a, version)).append('\n');
+        b.append("今日拦截：").append(com.google.android.youtube.pro.webview.AdBlocker.report()).append("\n\n");   // (281)
         String diag = Diag.read(a, Diag.DIAG);
         String[] lines = diag.split("\n");
         b.append("—— 最近诊断日志 ——\n");

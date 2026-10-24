@@ -132,6 +132,8 @@ public final class Prefs {
     // batch 6 (v1.8.0) state – never part of a backup
     /** Sleep nights for the about page (276): {"cur":[startMs,battery%],"log":[[atMs,minutes,drop%],…]}. */
     public static final String SLEEP_BATTERY = "sleepBattery";
+    /** Network blocking hits per rule today (281): {"day":"yyyyMMdd","c":{rule:count}}. */
+    public static final String BLOCK_STATS = "blockStats";
 
     private Prefs() {}
 

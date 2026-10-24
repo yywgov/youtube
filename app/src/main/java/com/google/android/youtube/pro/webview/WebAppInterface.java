@@ -308,11 +308,32 @@ public class WebAppInterface {
     @JavascriptInterface
     public void fetchSegments(final String videoId) {
         if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,20}")) return;
+        fetchSegments(videoId, 0);
+    }
+
+    // SponsorBlock answers (286): the last 50 videos for 6 hours, so replays / back-and-forth cost nothing
+    private static final int SB_CACHE = 50;
+    private static final long SB_TTL = 6 * 3600_000L;
+    private static final java.util.LinkedHashMap<String, Object[]> SB = new java.util.LinkedHashMap<String, Object[]>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, Object[]> e) { return size() > SB_CACHE; }
+    };
+
+    private void fetchSegments(final String videoId, final int attempt) {
+        final java.util.List<String> chosen = Prefs.sponsorCats(app);
+        final String key = videoId + "|" + chosen;
+        synchronized (SB) {
+            Object[] hit = SB.get(key);
+            if (hit != null && System.currentTimeMillis() - (Long) hit[0] < SB_TTL) {
+                final String js = "ytl.onSegments(" + JSONObject.quote(videoId) + "," + hit[1] + ")";
+                main.post(() -> MainActivity.js(js));
+                return;
+            }
+        }
         com.google.android.youtube.pro.Bg.NET.execute(() -> {
             JSONArray out = new JSONArray();
             HttpURLConnection c = null;
+            boolean answered = false;   // a real answer (200 or 404 = "no segments") can be cached
             try {
-                java.util.List<String> chosen = Prefs.sponsorCats(app);
                 if (chosen.isEmpty()) throw new Exception("no categories");
                 JSONArray catArr = new JSONArray();
                 for (String k : chosen) catArr.put(k);
@@ -324,8 +345,11 @@ public class WebAppInterface {
                 c.setConnectTimeout(6000);
                 c.setReadTimeout(6000);
                 c.setRequestProperty("User-Agent", "YiWei");
-                if (c.getResponseCode() == 200) {
+                int code = c.getResponseCode();
+                if (code == 404) answered = true;
+                if (code == 200) {
                     JSONArray arr = new JSONArray(read(c.getInputStream()));
+                    answered = true;
                     for (int v = 0; v < arr.length(); v++) {
                         JSONObject vo = arr.optJSONObject(v);
                         if (vo == null || !videoId.equals(vo.optString("videoID", ""))) continue;
@@ -344,6 +368,14 @@ public class WebAppInterface {
             } catch (Exception ignored) {
             } finally {
                 if (c != null) c.disconnect();
+            }
+            if (answered) {
+                synchronized (SB) { SB.put(key, new Object[]{System.currentTimeMillis(), out.toString()}); }
+            } else if (attempt == 0 && !chosen.isEmpty()) {
+                // network hiccup: one more try 30 s later, only if that video is still the one playing
+                main.postDelayed(() -> {
+                    if (videoId.equals(PlaybackService.videoId())) fetchSegments(videoId, 1);
+                }, 30_000L);
             }
             final String js = "ytl.onSegments(" + JSONObject.quote(videoId) + "," + out + ")";
             main.post(() -> MainActivity.js(js));

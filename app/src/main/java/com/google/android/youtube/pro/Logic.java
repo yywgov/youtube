@@ -146,6 +146,28 @@ public final class Logic {
         return out;
     }
 
+    /**
+     * Paths YouTube's own pages and player need (278): a remote block path may never be one of them,
+     * a prefix of one, or under one.
+     */
+    static final String[] PROTECTED_PATHS = {"/youtubei/v1/player", "/youtubei/v1/next", "/youtubei/v1/browse",
+            "/youtubei/v1/search", "/youtubei/v1/guide", "/youtubei/v1/reel", "/youtubei/v1/account", "/youtubei/v1/get_watch",
+            "/youtubei/v1/updated_metadata", "/youtubei/v1/live_chat", "/youtubei/v1/notification", "/youtubei/v1/att",
+            "/youtubei/v1/feedback", "/youtubei/v1/like", "/youtubei/v1/subscription", "/youtubei/v1/playlist",
+            "/youtubei/v1/get_transcript", "/youtubei/v1/music", "/watch", "/results", "/feed", "/playlist", "/shorts",
+            "/live", "/s/", "/sw.js", "/manifest", "/api/stats/watchtime", "/api/stats/playback", "/api/timedtext",
+            "/signin", "/logout", "/embed", "/iframe_api", "/channel", "/c/", "/user/", "/@", "/videoplayback", "/generate_204"};
+
+    /** A block path from rules.json is acceptable (278): narrow, plain, never touching playback / login / lists. */
+    public static boolean validBlockPath(String p) {
+        if (p == null || p.length() < 6 || p.length() > 80) return false;
+        if (!p.matches("/[A-Za-z0-9_./-]+") || p.contains("//") || p.contains("..")) return false;
+        for (String k : PROTECTED_PATHS) {
+            if (k.startsWith(p) || p.startsWith(k)) return false;
+        }
+        return true;
+    }
+
     /** Sleep badge for a minutes timer (308): minutes, and in the last minute seconds in steps of 5. */
     public static String sleepBadge(long leftMs) {
         if (leftMs < 60_000L) {

@@ -1,19 +1,13 @@
 package com.google.android.youtube.pro;
 
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.pm.ActivityInfo;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,7 +23,8 @@ public final class PlayerTools {
     private final MainActivity a;
     private JSONObject st;
     private Dialog dialog;
-    private ScrollView scroll;
+    /** What the shared sheet frame (352) holds; redrawn in place after a toggle (335). */
+    private LinearLayout holder;
 
     private PlayerTools(MainActivity a, JSONObject st) {
         this.a = a;
@@ -45,46 +40,24 @@ public final class PlayerTools {
         MainActivity.MAIN_HANDLER.postDelayed(() -> a.toolState(s -> {
             if (dialog == null || !dialog.isShowing()) return;
             st = s == null ? new JSONObject() : s;
-            scroll.removeAllViews();
-            scroll.addView(content());
+            holder.removeAllViews();
+            holder.addView(content());
         }), 120);
     }
 
+    /** The same bottom-sheet frame as every other sheet (352): handle, corners, dim, width on tablets. */
     private void build() {
-        scroll = new ScrollView(a);
-        scroll.addView(content());
-        dialog = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
-        dialog.setContentView(scroll);
-        dialog.setCanceledOnTouchOutside(true);
-        Window w = dialog.getWindow();
-        if (w != null) {
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(Ui.SHEET);
-            float r = dp(16);
-            bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
-            w.setBackgroundDrawable(bg);
-            w.setGravity(Gravity.BOTTOM);
-            w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (!Prefs.animationsOff(a)) w.setWindowAnimations(android.R.style.Animation_InputMethod);
-            WindowManager.LayoutParams lp = w.getAttributes();
-            lp.dimAmount = 0.4f;
-            w.setAttributes(lp);
-            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-        }
+        holder = new LinearLayout(a);
+        holder.setOrientation(LinearLayout.VERTICAL);
+        holder.addView(content());
+        dialog = Ui.sheet(a, holder);
         dialog.show();
     }
 
     private LinearLayout content() {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(10), 0, dp(16));
-
-        TextView handle = new TextView(a);
-        handle.setBackground(Ui.round(Ui.HANDLE, dp(2)));
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(36), dp(4));
-        hp.gravity = Gravity.CENTER_HORIZONTAL;
-        hp.bottomMargin = dp(6);
-        box.addView(handle, hp);
+        box.setPadding(0, 0, 0, dp(4));
 
         box.addView(header("睡眠"));
         String sleep = SleepTimer.active() ? "睡眠定时：" + SleepTimer.optionLabel(SleepTimer.mode()) : "睡眠定时…";
@@ -105,8 +78,8 @@ public final class PlayerTools {
             LinearLayout seekRow = new LinearLayout(a);
             seekRow.setOrientation(LinearLayout.HORIZONTAL);
             seekRow.setPadding(dp(12), dp(4), dp(12), dp(4));
-            seekRow.addView(seekChip("快退 10 秒", -10), weight());
-            seekRow.addView(seekChip("快进 30 秒", 30), weight());
+            seekRow.addView(seekChip("快退 10 秒", -10), Ui.chipWeight(a));
+            seekRow.addView(seekChip("快进 30 秒", 30), Ui.chipWeight(a));
             box.addView(seekRow);
 
             double rate = st.optDouble("rate", 1);
@@ -125,17 +98,17 @@ public final class PlayerTools {
             LinearLayout abRow = new LinearLayout(a);
             abRow.setOrientation(LinearLayout.HORIZONTAL);
             abRow.setPadding(dp(12), 0, dp(12), dp(4));
-            abRow.addView(chip("设 A 点", v -> { MainActivity.js("ytl.ab('a')"); refresh(); }), weight());
-            abRow.addView(chip("设 B 点", v -> { MainActivity.js("ytl.ab('b')"); refresh(); }), weight());
-            abRow.addView(chip("清除", v -> { MainActivity.js("ytl.ab('clear')"); refresh(); }), weight());
+            abRow.addView(Ui.chip(a, "设 A 点", v -> { MainActivity.js("ytl.ab('a')"); refresh(); }), Ui.chipWeight(a));
+            abRow.addView(Ui.chip(a, "设 B 点", v -> { MainActivity.js("ytl.ab('b')"); refresh(); }), Ui.chipWeight(a));
+            abRow.addView(Ui.chip(a, "清除", v -> { MainActivity.js("ytl.ab('clear')"); refresh(); }), Ui.chipWeight(a));
             box.addView(abRow);
 
             if (st.optBoolean("list", false) && st.optBoolean("shuffle", false)) {
                 LinearLayout sh = new LinearLayout(a);
                 sh.setOrientation(LinearLayout.HORIZONTAL);
                 sh.setPadding(dp(12), dp(4), dp(12), dp(4));
-                sh.addView(chip("列表随机播放", v -> { MainActivity.js("ytl.shuffle(true)"); toast("已开启随机播放"); }), weight());
-                sh.addView(chip("顺序播放", v -> { MainActivity.js("ytl.shuffle(false)"); toast("已恢复顺序播放"); }), weight());
+                sh.addView(Ui.chip(a, "列表随机播放", v -> { MainActivity.js("ytl.shuffle(true)"); toast("已开启随机播放"); }), Ui.chipWeight(a));
+                sh.addView(Ui.chip(a, "顺序播放", v -> { MainActivity.js("ytl.shuffle(false)"); toast("已恢复顺序播放"); }), Ui.chipWeight(a));
                 box.addView(sh);
             }
         }
@@ -145,12 +118,9 @@ public final class PlayerTools {
         LinearLayout or = new LinearLayout(a);
         or.setOrientation(LinearLayout.HORIZONTAL);
         or.setPadding(dp(12), dp(4), dp(12), dp(4));
-        or.addView(chip(mark("跟随系统", lock == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED),
-                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED); refresh(); }), weight());
-        or.addView(chip(mark("锁定竖屏", lock == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT),
-                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT); refresh(); }), weight());
-        or.addView(chip(mark("锁定横屏", lock == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE),
-                v -> { a.setOrientationLock(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE); refresh(); }), weight());
+        or.addView(orient("跟随系统", ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, lock), Ui.chipWeight(a));
+        or.addView(orient("锁定竖屏", ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, lock), Ui.chipWeight(a));
+        or.addView(orient("锁定横屏", ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, lock), Ui.chipWeight(a));
         box.addView(or);
         // remembered across starts (388)
         final boolean remember = Prefs.on(a, Prefs.ORIENT_REMEMBER);
@@ -169,8 +139,16 @@ public final class PlayerTools {
         if (seekShown != null) { seekShown.setText((String) seekShown.getTag()); seekShown = null; }
     };
 
+    /** Orientation chip: the current one carries a check icon (354). */
+    private Button orient(String label, final int o, int cur) {
+        Button b = Ui.chip(a, label, v -> { a.setOrientationLock(o); refresh(); });
+        Ui.markChip(b, o == cur);
+        if (o == cur) b.setContentDescription(label + "，当前");
+        return b;
+    }
+
     private Button seekChip(String label, final int sec) {
-        final Button b = chip(label, null);
+        final Button b = Ui.chip(a, label, null);
         b.setTag(label);
         b.setOnClickListener(v -> {
             MainActivity.js("ytl.seekBy(" + sec + ")");
@@ -210,50 +188,80 @@ public final class PlayerTools {
         for (final int m : SleepTimer.OPTIONS) {
             boolean cur = running && SleepTimer.mode() == m;
             String sub = cur ? "正在使用" + (m == def ? " · 默认" : "") : m == def ? "默认" : null;
-            box.addView(Ui.sheetRow(a, SleepTimer.optionLabel(m) + (cur ? " ✓" : ""), sub, v -> { d[0].dismiss(); cb.pick(m); }));
+            box.addView(Ui.sheetRow(a, cur ? R.drawable.ic_check : 0, SleepTimer.optionLabel(m), sub, v -> { d[0].dismiss(); cb.pick(m); }));
         }
         d[0] = Ui.sheet(a, box);
         d[0].show();
     }
 
+    /**
+     * Speed (334): a bottom sheet like the others, common speeds as chips, the fine slider underneath.
+     * Dragging sends at most one change per 100 ms; letting go always sends the final value.
+     */
     private void pickSpeed(double current) {
         final int min = 5, max = 40; // x 0.05
         int cur = (int) Math.round(Math.max(0.25, Math.min(2, current)) / 0.05);
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(12), dp(20), 0);
+        box.setPadding(dp(12), 0, dp(12), dp(8));
+        TextView head = Ui.text(a, "播放速度", 18, Ui.TEXT);
+        head.setPadding(dp(8), dp(4), dp(8), dp(4));
+        Ui.heading(head);
+        box.addView(head);
         final TextView label = text(fmtRate(cur * 0.05), 22, Ui.TEXT);
         label.setGravity(Gravity.CENTER);
         box.addView(label);
         final SeekBar bar = new SeekBar(a);
         bar.setMax(max - min);
         bar.setProgress(cur - min);
-        box.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+        bar.setContentDescription("播放速度");
+        final long[] lastSent = {0};
+        final Runnable[] sendLater = new Runnable[1];
+        final double[] pending = {cur * 0.05};
+        sendLater[0] = () -> { send(pending[0]); lastSent[0] = android.os.SystemClock.uptimeMillis(); };
+        LinearLayout common = new LinearLayout(a);
+        common.setOrientation(LinearLayout.HORIZONTAL);
+        for (final double r : new double[]{0.75, 1.0, 1.25, 1.5, 2.0}) {
+            common.addView(Ui.chip(a, fmtShort(r), v -> bar.setProgress((int) Math.round(r / 0.05) - min)), Ui.chipWeight(a));
+        }
+        box.addView(common);
+        box.addView(bar, new LinearLayout.LayoutParams(-1, dp(48)));
         LinearLayout btns = new LinearLayout(a);
         btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.addView(chip("−0.05", v -> bar.setProgress(Math.max(0, bar.getProgress() - 1))), weight());
-        btns.addView(chip("1.0x", v -> bar.setProgress(20 - min)), weight());
-        btns.addView(chip("+0.05", v -> bar.setProgress(Math.min(max - min, bar.getProgress() + 1))), weight());
+        btns.addView(Ui.chip(a, "−0.05", v -> bar.setProgress(Math.max(0, bar.getProgress() - 1))), Ui.chipWeight(a));
+        btns.addView(Ui.chip(a, "+0.05", v -> bar.setProgress(Math.min(max - min, bar.getProgress() + 1))), Ui.chipWeight(a));
         box.addView(btns);
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
                 double r = (p + min) * 0.05;
                 label.setText(fmtRate(r));
-                MainActivity.js("ytl.setRate(" + String.format(java.util.Locale.US, "%.2f", r) + ")");
+                pending[0] = r;
+                long now = android.os.SystemClock.uptimeMillis();
+                MainActivity.MAIN_HANDLER.removeCallbacks(sendLater[0]);
+                if (now - lastSent[0] >= 100) sendLater[0].run();
+                else MainActivity.MAIN_HANDLER.postDelayed(sendLater[0], 100 - (now - lastSent[0]));
             }
             @Override public void onStartTrackingTouch(SeekBar s) {}
-            @Override public void onStopTrackingTouch(SeekBar s) {}
+            @Override public void onStopTrackingTouch(SeekBar s) {
+                MainActivity.MAIN_HANDLER.removeCallbacks(sendLater[0]);
+                sendLater[0].run();
+            }
         });
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("播放速度")
-                .setView(box)
-                .setPositiveButton("完成", null)
-                .show();
+        Dialog d = Ui.sheet(a, box);
+        d.setOnDismissListener(x -> MainActivity.MAIN_HANDLER.removeCallbacks(sendLater[0]));
+        d.show();
+    }
+
+    private static void send(double r) {
+        MainActivity.js("ytl.setRate(" + String.format(java.util.Locale.US, "%.2f", r) + ")");
+    }
+
+    private static String fmtShort(double r) {
+        String s = String.format(java.util.Locale.US, "%.2f", r).replaceAll("0+$", "").replaceAll("\\.$", ".0");
+        return s + "x";
     }
 
     // ===================== views =====================
-
-    private static String mark(String s, boolean on) { return on ? "✓ " + s : s; }
 
     private static String fmtRate(double r) {
         return String.format(java.util.Locale.US, "%.2fx", r);
@@ -264,24 +272,6 @@ public final class PlayerTools {
         int h = s / 3600, m = (s % 3600) / 60, ss = s % 60;
         return h > 0 ? String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, ss)
                 : String.format(java.util.Locale.US, "%d:%02d", m, ss);
-    }
-
-    private LinearLayout.LayoutParams weight() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        lp.setMargins(dp(4), dp(2), dp(4), dp(2));
-        return lp;
-    }
-
-    private Button chip(String label, View.OnClickListener click) {
-        Button b = new Button(a, null, android.R.attr.borderlessButtonStyle);
-        b.setText(label);
-        b.setAllCaps(false);
-        b.setTextColor(Ui.TEXT);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        b.setBackground(Ui.round(Ui.CHIP, dp(20)));
-        b.setMinHeight(dp(48));
-        b.setOnClickListener(click);
-        return b;
     }
 
     private View row(String title, String sub, View.OnClickListener click) {
@@ -301,10 +291,7 @@ public final class PlayerTools {
     }
 
     private TextView header(String label) {
-        TextView t = text(label, 13, Ui.accent(a));
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setPadding(dp(20), dp(12), dp(20), dp(2));
-        return t;
+        return Ui.header(a, label);
     }
 
     private TextView text(String s, int sp, int color) {
@@ -316,7 +303,7 @@ public final class PlayerTools {
     }
 
     private void toast(String s) {
-        Toast.makeText(a, s, Toast.LENGTH_SHORT).show();
+        a.say(s);
     }
 
     private int dp(int v) {

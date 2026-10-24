@@ -245,7 +245,7 @@ const STATE = ['nightShown', 'lastVideo', 'lastPos', 'lastTitle', 'lastAt', 'upd
   // batch 5 (v1.7.0)
   'selfCheckWarned', 'updateLastResult', 'chUaFix',
   // batch 6 (v1.8.0)
-  'sleepBattery'];
+  'sleepBattery', 'blockStats'];
 // keys added after v1.5.1 (new names only; never a rename of an old one)
 const ADDED = {
   bool: ['wifiSaver', 'idleGuard', 'skipWatchedNext', 'fontLarge', 'orientRemember',

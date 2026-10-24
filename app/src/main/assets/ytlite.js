@@ -882,6 +882,20 @@
     },
     onNet: onNet,
     netChanged: function () { netChanged(); },
+    /* fresh verified rules from Java (288): applied at once instead of on the next page load */
+    remote: guard('remote-apply', function (json) {
+      var r;
+      try { r = parseRemote(JSON.parse(json)); } catch (e) { return false; }
+      if ((r.version || 0) < (remote.version || 0)) return false;
+      remote = r;
+      var old = document.getElementById('ytl-css-remote');
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      filterKey = '';
+      fullNeeded = true;
+      if (started) { addRemoteCss(); queuePass(); }
+      log('rules', 'applied v' + r.version);
+      return true;
+    }),
     noisy: function () { pause(); },
     trim: function () { trimCaches(); },
     seekBy: function (s) { seekBy(s); },

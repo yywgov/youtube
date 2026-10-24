@@ -365,3 +365,17 @@ test('texts handed over by Java replace the built-in ones', async () => {
   env.w.ytl._.refresh(true);
   assert.ok(env.calls.some((c) => c[0] === 'toast' && c[1] === 'OFFLINE!'));
 });
+
+/* ---------- 288: fresh rules apply without a reload ---------- */
+test('rules handed over by Java apply at once; an older version is ignored', async () => {
+  const body = '<ytm-app><div class="new-ad-thing" id=x></div></ytm-app>';
+  const env = await load({ path: '/', body, remote: { schema: 1, version: 2, hide: [] } });
+  const { w } = env;
+  assert.equal(w.document.getElementById('ytl-css-remote'), null);
+  assert.equal(w.ytl.remote(JSON.stringify({ schema: 1, version: 3, hide: ['.new-ad-thing'] })), true);
+  const st = w.document.getElementById('ytl-css-remote');
+  assert.ok(st && /\.new-ad-thing\{display:none/.test(st.textContent));
+  assert.equal(w.ytl.remote(JSON.stringify({ schema: 1, version: 1, hide: ['.other'] })), false, 'older rules never replace newer');
+  assert.equal(w.ytl.remote('not json'), false);
+  assert.equal(jsErrors(env.calls).length, 0);
+});

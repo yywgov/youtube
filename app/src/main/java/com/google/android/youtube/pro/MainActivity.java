@@ -211,7 +211,9 @@ public class MainActivity extends Activity {
         setupSwipe();
         setupBack();
         setupOverlay();
+        Diag.session(appVersion());   // separator line per run (251)
         Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
+        com.google.android.youtube.pro.webview.AdBlocker.load(this);   // today's block counts so far (281)
         restoreOrientation();
         String startUrl = urlFromIntent(getIntent());
         coldStart = savedInstanceState == null && HOME.equals(startUrl);
@@ -388,6 +390,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        com.google.android.youtube.pro.webview.AdBlocker.flush(this, false);   // (281) at most hourly
         super.onStop();
         visible = false;
         js("ytl.bg(true)");
@@ -442,7 +445,8 @@ public class MainActivity extends Activity {
         s.setAllowFileAccessFromFileURLs(false);
         s.setAllowUniversalAccessFromFileURLs(false);
         s.setGeolocationEnabled(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // everything YouTube loads is https; plain-http sub-resources are never needed (412)
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         // Google blocks sign-in from embedded WebViews ("This browser or app may not be secure")
         // based on the "; wv" token in the user agent – present as plain Chrome instead.
         s.setUserAgentString(s.getUserAgentString()

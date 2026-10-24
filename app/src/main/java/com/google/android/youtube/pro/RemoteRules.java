@@ -58,7 +58,20 @@ public final class RemoteRules {
             s = "";
         }
         cache = s;
+        applyBlockPaths(s);
         return s;
+    }
+
+    /** Extra network block paths (278) from verified rules, "" clears them. */
+    private static void applyBlockPaths(String body) {
+        java.util.List<String> l = new java.util.ArrayList<>();
+        try {
+            if (body != null && !body.isEmpty()) {
+                JSONArray a = new JSONObject(body).optJSONArray("blockPaths");
+                if (a != null) for (int i = 0; i < a.length(); i++) l.add(a.optString(i, ""));
+            }
+        } catch (Exception ignored) {}
+        com.google.android.youtube.pro.webview.AdBlocker.setExtraPaths(l);
     }
 
     public static String status(Context c) {
@@ -73,7 +86,9 @@ public final class RemoteRules {
             }
         } catch (Exception ignored) {}
         String last = Prefs.str(c, LAST_RESULT, "");
-        return (ver > 0 ? "规则版本 " + ver + "（" + n + " 条）" : "使用内置规则") + (last.isEmpty() ? "" : " · " + last);
+        int bp = com.google.android.youtube.pro.webview.AdBlocker.extraCount();
+        return (ver > 0 ? "规则版本 " + ver + "（" + n + " 条" + (bp > 0 ? "，拦截路径 " + bp + " 条" : "") + "）" : "使用内置规则")
+                + (last.isEmpty() ? "" : " · " + last);
     }
 
     public static void autoCheck(Context c) {
@@ -122,7 +137,11 @@ public final class RemoteRules {
                     try (FileOutputStream os = new FileOutputStream(tmp)) { os.write(body.getBytes("UTF-8")); }
                     if (!tmp.renameTo(new File(c.getFilesDir(), FILE))) throw new Exception("保存失败");
                     cache = body;
-                    result = "已更新到版本 " + ver + "（下次打开页面生效）· " + route;
+                    applyBlockPaths(body);
+                    // straight into the page (288): selectors and texts apply now, no reload needed
+                    final String fresh = body;
+                    MAIN.post(() -> MainActivity.js("window.ytl&&ytl.remote&&ytl.remote(" + JSONObject.quote(fresh) + ")"));
+                    result = "已更新到版本 " + ver + "（已生效）· " + route;
                     Diag.log("rules", "updated to v" + ver + " via " + route);
                 } else {
                     result = "已是最新 · " + route;
@@ -183,6 +202,15 @@ public final class RemoteRules {
                 String s = (String) x;
                 if (s.length() == 0 || s.length() > 200) return "规则长度不符";
                 for (char ch : s.toCharArray()) if ("{}<>;@\\".indexOf(ch) >= 0 || ch < 0x20) return "规则含不允许的字符";
+            }
+            // optional network block paths (278): each one narrow and never touching playback / lists / login
+            JSONArray bp = o.optJSONArray("blockPaths");
+            if (bp != null) {
+                if (bp.length() > 30) return "拦截路径太多";
+                for (int i = 0; i < bp.length(); i++) {
+                    Object x = bp.get(i);
+                    if (!(x instanceof String) || !Logic.validBlockPath((String) x)) return "拦截路径不允许：" + x;
+                }
             }
             // optional sponsored-card labels for the page's text fallback (285)
             JSONArray t = o.optJSONArray("adText");

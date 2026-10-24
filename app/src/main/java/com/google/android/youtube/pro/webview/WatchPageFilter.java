@@ -94,6 +94,7 @@ public final class WatchPageFilter {
     static WebResourceResponse fetch(WebResourceRequest req) {
         String url = req.getUrl().toString();
         HttpURLConnection c = null;
+        boolean streaming = false;
         long t0 = System.currentTimeMillis();
         try {
             c = (HttpURLConnection) new URL(url).openConnection();
@@ -138,16 +139,6 @@ public final class WatchPageFilter {
             if (i >= 0) {
                 try { cs = Charset.forName(ct.substring(i + 8).replace("\"", "").split(";")[0].trim()); } catch (Exception ignored) {}
             }
-            byte[] body;
-            try (InputStream in = c.getInputStream()) {
-                ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 20);
-                byte[] buf = new byte[32768];
-                int n;
-                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-                body = bos.toByteArray();
-            }
-            String html = strip(new String(body, cs));
-
             Map<String, String> headers = new HashMap<>();
             if (hf != null) {
                 for (Map.Entry<String, List<String>> e : hf.entrySet()) {
@@ -161,6 +152,25 @@ public final class WatchPageFilter {
             }
             headers.put("Cache-Control", "no-store");
             failsInRow.set(0);
+            if ("UTF-8".equals(cs.name())) {
+                // UTF-8 (every YouTube page): renamed while it streams (260), the WebView starts parsing
+                // with the first bytes instead of after the whole page; the connection closes with the stream
+                InputStream raw = c.getInputStream();
+                streaming = true;
+                lastResult = "ok(stream)";
+                return new WebResourceResponse("text/html", "utf-8", 200, "OK", headers,
+                        new com.google.android.youtube.pro.KeyRenameStream(raw, adKeys));
+            }
+            // any other charset: read it whole and rename as text, as before
+            byte[] body;
+            try (InputStream in = c.getInputStream()) {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 20);
+                byte[] buf = new byte[32768];
+                int n;
+                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                body = bos.toByteArray();
+            }
+            String html = strip(new String(body, cs));
             lastResult = "ok";
             return new WebResourceResponse("text/html", "utf-8", 200, "OK", headers,
                     new ByteArrayInputStream(html.getBytes(Charset.forName("UTF-8"))));
@@ -173,7 +183,7 @@ public final class WatchPageFilter {
             if (n >= FAIL_LIMIT) disabled = true;
             return null;
         } finally {
-            if (c != null) try { c.disconnect(); } catch (Exception ignored) {}
+            if (c != null && !streaming) try { c.disconnect(); } catch (Exception ignored) {}
         }
     }
 

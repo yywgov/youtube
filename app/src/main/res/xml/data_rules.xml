@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ (405): cloud backup and phone-to-phone transfer carry the settings file only;
+     login cookies, WebView storage, logs and downloaded updates stay on the old phone. -->
+<data-extraction-rules>
+	<cloud-backup>
+		<include domain="sharedpref" path="ytlite.xml" />
+	</cloud-backup>
+	<device-transfer>
+		<include domain="sharedpref" path="ytlite.xml" />
+	</device-transfer>
+</data-extraction-rules>

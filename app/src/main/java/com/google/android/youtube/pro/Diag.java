@@ -24,6 +24,10 @@ import java.util.concurrent.Executors;
 public final class Diag {
     public static final String DIAG = "diag.log";
     public static final String ADS = "ads.log";
+    /** The last 3 crashes, newest last (251); shown first in a problem report. */
+    public static final String CRASH = "crash.log";
+    /** Lines older than this many days are dropped once per start (414). */
+    static final int KEEP_DAYS = 30;
     private static final int MAX_BYTES = 48 * 1024;
     private static final Charset UTF8 = Charset.forName("UTF-8");
     // shared serial disk thread (262); the class also builds alone for the JVM tests
@@ -39,6 +43,69 @@ public final class Diag {
     public static void init(Context c) {
         app = c.getApplicationContext();
         installCrashHandler();
+        final Context a = app;
+        IO.execute(() -> { prune(a, DIAG); prune(a, ADS); });   // (414)
+    }
+
+    /** One separator line per start (251), so a report shows where each run begins. */
+    public static void session(String version) {
+        append(DIAG, now() + " [start] ====== v" + clean(version, 40) + " · " + Build.MANUFACTURER + " " + Build.MODEL
+                + " · SDK " + Build.VERSION.SDK_INT + " ======");
+    }
+
+    /** Lines whose "yyyy-MM-dd" stamp is before {@code cutoff} go; lines without a stamp stay (414). */
+    static String dropBefore(String text, String cutoff) {
+        if (text == null || text.isEmpty()) return "";
+        StringBuilder b = new StringBuilder(text.length());
+        int i = 0, n = text.length();
+        while (i < n) {
+            int e = text.indexOf('\n', i);
+            if (e < 0) e = n - 1;
+            String line = text.substring(i, e + 1);
+            boolean stamped = line.length() >= 10 && line.charAt(4) == '-' && line.charAt(7) == '-'
+                    && Character.isDigit(line.charAt(0)) && Character.isDigit(line.charAt(9));
+            if (!stamped || line.substring(0, 10).compareTo(cutoff) >= 0) b.append(line);
+            i = e + 1;
+        }
+        return b.toString();
+    }
+
+    private static void prune(Context c, String name) {
+        try {
+            File f = new File(c.getFilesDir(), name);
+            if (!f.exists() || f.length() == 0) return;
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            cal.add(java.util.Calendar.DAY_OF_MONTH, -KEEP_DAYS);
+            String cutoff = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.getTime());
+            String old = new String(readBytes(f), UTF8);
+            String kept = dropBefore(old, cutoff);
+            if (kept.length() == old.length()) return;
+            synchronized (Diag.class) {
+                try (FileOutputStream out = new FileOutputStream(f, false)) { out.write(kept.getBytes(UTF8)); }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    /** Newest crash block, "" when there is none (251). */
+    public static String lastCrash(Context c) {
+        java.util.List<String> b = crashBlocks(read(c, CRASH));
+        return b.isEmpty() ? "" : "=== " + b.get(b.size() - 1);
+    }
+
+    private static java.util.List<String> crashBlocks(String text) {
+        java.util.List<String> blocks = new java.util.ArrayList<>();
+        if (text == null || text.isEmpty()) return blocks;
+        for (String x : ("\n" + text).split("\n=== ")) if (!x.trim().isEmpty()) blocks.add(x.trim());
+        return blocks;
+    }
+
+    /** The crash file with {@code block} added, only the newest {@code keep} kept (251). */
+    static String addCrash(String old, String block, int keep) {
+        java.util.List<String> blocks = crashBlocks(old);
+        blocks.add(block.trim());
+        StringBuilder sb = new StringBuilder();
+        for (int i = Math.max(0, blocks.size() - keep); i < blocks.size(); i++) sb.append("=== ").append(blocks.get(i)).append('\n');
+        return sb.toString();
     }
 
     private static String now() {
@@ -162,6 +229,13 @@ public final class Diag {
                     if (st.length() > 3000) st = st.substring(0, 3000);
                     // synchronous: the process is about to die
                     write(c, DIAG, now() + " [crash] thread=" + thread.getName() + " " + st.replace("\n", " | "));
+                    // the whole stack, readable, in its own small file (251)
+                    try {
+                        File cf = new File(c.getFilesDir(), CRASH);
+                        String old = cf.exists() && cf.length() < 64 * 1024 ? new String(readBytes(cf), UTF8) : "";
+                        String text = addCrash(old, now() + " thread=" + thread.getName() + "\n" + st, 3);
+                        try (FileOutputStream out = new FileOutputStream(cf, false)) { out.write(text.getBytes(UTF8)); }
+                    } catch (Throwable ignored) {}
                 }
             } catch (Throwable ignored) {}
             if (prev != null) prev.uncaughtException(thread, e);

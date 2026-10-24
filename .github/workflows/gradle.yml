@@ -43,6 +43,30 @@ jobs:
           ad_text = r.get('adText', [])
           if not isinstance(ad_text, list) or len(ad_text) > 20 or any(not isinstance(t, str) or not t.strip() or len(t) > 20 for t in ad_text):
               sys.exit('rules.json: adText must be at most 20 short strings')
+          # optional network block paths (278): the same check as Logic.validBlockPath
+          import re
+          protected = ['/youtubei/v1/player', '/youtubei/v1/next', '/youtubei/v1/browse', '/youtubei/v1/search', '/youtubei/v1/guide',
+                       '/youtubei/v1/reel', '/youtubei/v1/account', '/youtubei/v1/get_watch', '/youtubei/v1/updated_metadata',
+                       '/youtubei/v1/live_chat', '/youtubei/v1/notification', '/youtubei/v1/att', '/youtubei/v1/feedback',
+                       '/youtubei/v1/like', '/youtubei/v1/subscription', '/youtubei/v1/playlist', '/youtubei/v1/get_transcript',
+                       '/youtubei/v1/music', '/watch', '/results', '/feed', '/playlist', '/shorts', '/live', '/s/', '/sw.js',
+                       '/manifest', '/api/stats/watchtime', '/api/stats/playback', '/api/timedtext', '/signin', '/logout', '/embed',
+                       '/iframe_api', '/channel', '/c/', '/user/', '/@', '/videoplayback', '/generate_204']
+          bp = r.get('blockPaths', [])
+          if not isinstance(bp, list) or len(bp) > 30: sys.exit('rules.json: blockPaths must be a list of at most 30')
+          for p in bp:
+              ok = isinstance(p, str) and 6 <= len(p) <= 80 and re.fullmatch(r'/[A-Za-z0-9_./-]+', p) and '//' not in p and '..' not in p \
+                  and not any(k.startswith(p) or p.startswith(k) for k in protected)
+              if not ok: sys.exit('rules.json: block path not allowed: %r' % (p,))
+          # optional search chips (328) and appended words (382)
+          chips = r.get('chips', [])
+          if not isinstance(chips, list) or len(chips) > 10 or any(not isinstance(c, list) or len(c) != 2 or not isinstance(c[0], str)
+                  or not 0 < len(c[0].strip()) <= 12 or not isinstance(c[1], str) or not re.fullmatch(r'[A-Za-z0-9%_-]{0,60}', c[1]) for c in chips):
+              sys.exit('rules.json: chips must be at most 10 [label, sp] pairs')
+          text = r.get('text', {})
+          if not isinstance(text, dict) or any(not isinstance(v, list) or len(v) > 20 or any(not isinstance(t, str) or not t.strip() or len(t) > 30 for t in v)
+                  for v in text.values()):
+              sys.exit('rules.json: text must map names to at most 20 short words')
           try:
               changed = subprocess.run(['git', 'diff', '--quiet', 'HEAD~1', '--', 'rules/rules.json']).returncode == 1
               if changed:

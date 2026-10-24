@@ -69,7 +69,7 @@ test('player response rebuilt: playback fields kept, ad/promo fields dropped', a
   assert.equal(pr.messages.length, 1);
   assert.ok(pr.messages[0].importantMessageRenderer);
   assert.ok(calls.some((c) => c[0] === 'log' && c[1] === 'pr-keep' && /someFutureField/.test(c[2])));
-  assert.equal(JSON.stringify(w.ytl._.lenById()[VID]), JSON.stringify({ len: 600, live: false }));
+  assert.equal(JSON.stringify(w.ytl._.lenById()[VID]), JSON.stringify({ len: 600, live: false, now: false }));
   // video host preconnected
   assert.ok(w.document.querySelector('link[rel=preconnect][href="https://rr1---sn-abc.googlevideo.com"]'));
 });

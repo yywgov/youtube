@@ -96,6 +96,15 @@ public final class Prefs {
     public static final String FONT_LARGE = "fontLarge";             // text zoom up to 160 % (378)
     public static final String ORIENT_REMEMBER = "orientRemember";   // keep the orientation lock across starts (388)
     public static final String ORIENT_LOCK = "orientLock";           // 0 follow system, 1 portrait, 2 landscape (388)
+    // ---- batch 6 (v1.8.0): new keys only, every older key keeps its name / type / meaning ----
+    public static final String HIDE_WATCHED_RELATED = "hideWatchedRelated"; // related videos also hide watched ones (327)
+    public static final String HIDE_SEARCH_MIX = "hideSearchMix";    // search: no auto-generated mixes (333)
+    public static final String LIGHT_REFRESH = "lightRefresh";       // refresh keeps service worker / static caches (316)
+    public static final String EXTEND_STEP = "extendMin";            // "+N min" step: 10 / 15 / 30 (303)
+    public static final String SLEEP_HOLD = "sleepPauseHold";        // paused playback holds a minutes timer (305)
+    public static final String SLEEP_MODE_BLACK = "sleepModeBlack";  // one-tap sleep mode: black screen after 10 s (306)
+    public static final String LIST_END_NEXT = "listEndNext";        // playlist finished: go on with a recommendation (313)
+    public static final String SLEEP_STRICT = "sleepStrict";         // sleeping, same channel only: stop when none (315)
     // state (not settings)
     public static final String UPDATE_READY = "updateReady";         // tag of a newer release found by the daily check (137)
     public static final String LAST_RUN_VERSION = "lastRunVersion";  // (138)
@@ -120,6 +129,9 @@ public final class Prefs {
     public static final String UPDATE_LAST_RESULT = "updateLastResult";
     /** Sign-in was refused as "browser not secure": send Chrome-like client hints from now on (344). */
     public static final String CH_UA_FIX = "chUaFix";
+    // batch 6 (v1.8.0) state – never part of a backup
+    /** Sleep nights for the about page (276): {"cur":[startMs,battery%],"log":[[atMs,minutes,drop%],…]}. */
+    public static final String SLEEP_BATTERY = "sleepBattery";
 
     private Prefs() {}
 
@@ -301,7 +313,9 @@ public final class Prefs {
         java.util.List<String> out = new java.util.ArrayList<>();
         for (String s : str(c, key, "").split("\\n")) {
             s = s.trim();
-            if (!s.isEmpty() && !out.contains(s) && out.size() < 300) out.add(s.length() > 80 ? s.substring(0, 80) : s);
+            // a "re:" pattern may be up to 100 characters (323); everything else is cut at 80
+            int max = s.regionMatches(true, 0, "re:", 0, 3) ? 103 : 80;
+            if (!s.isEmpty() && !out.contains(s) && out.size() < 300) out.add(s.length() > max ? s.substring(0, max) : s);
         }
         return out;
     }
@@ -405,6 +419,12 @@ public final class Prefs {
             o.put("fontLarge", on(c, FONT_LARGE) && on(c, FONT_FOLLOW));
             o.put("skipWatchedNext", on(c, SKIP_WATCHED_NEXT));
             o.put("appName", appName(c));
+            // batch 6 (v1.8.0)
+            o.put("hideWatchedRelated", on(c, HIDE_WATCHED_RELATED));
+            o.put("hideSearchMix", on(c, HIDE_SEARCH_MIX));
+            o.put("lightRefresh", on(c, LIGHT_REFRESH));
+            o.put("listEndNext", on(c, LIST_END_NEXT));
+            o.put("sleepStrict", on(c, SLEEP_STRICT));
             return o.toString();
         } catch (Exception e) {
             return "{}";

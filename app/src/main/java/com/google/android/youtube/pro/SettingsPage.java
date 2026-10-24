@@ -207,7 +207,11 @@ public class SettingsPage {
             c.addView(dyn("默认时长", this::sleepDefaultLabel, v -> pickSleepDefault()));
             c.addView(choiceInt("淡出时长", "到点前音量逐渐变小的时间", Prefs.SLEEP_FADE,
                     new String[]{"10 秒", "30 秒", "60 秒"}, new int[]{10, 30, 60}, 60));
-            c.addView(toggle("播放器角上显示剩余时间", "左上角小字，不挡画面", Prefs.SLEEP_BADGE));
+            c.addView(choiceInt("延长按钮", "通知栏、锁屏和播放器角标上「+N 分钟」的步长", Prefs.EXTEND_STEP,
+                    new String[]{"+10 分钟", "+15 分钟", "+30 分钟"}, new int[]{10, 15, 30}, 15));
+            c.addView(toggle("暂停时定时也暂停", "分钟定时在暂停期间不走，继续播放后接着倒数", Prefs.SLEEP_HOLD));
+            c.addView(toggle("播放器角上显示剩余时间", "左上角小字，点一下延长，长按改时长", Prefs.SLEEP_BADGE));
+            c.addView(toggle("一键睡眠模式 10 秒后黑屏", "开一键睡眠模式时顺便进入黑屏播放（双击恢复）", Prefs.SLEEP_MODE_BLACK));
             c.addView(dyn("夜间时段", () -> PrefsModel.nightLabel(Prefs.num(a, Prefs.NIGHT_START), Prefs.num(a, Prefs.NIGHT_END))
                     + " · 夜间提示按这个时段", v -> pickNight()));
             c.addView(toggle("夜间打开时提示开睡眠定时", "夜间时段内打开 App 时提示，每晚最多一次", Prefs.NIGHT_PROMPT));
@@ -292,7 +296,8 @@ public class SettingsPage {
     private String nextLabel() {
         return "平时：" + pick(NEXT_VALUES, NEXT_LABELS, Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))
                 + (Prefs.on(a, Prefs.SKIP_WATCHED_NEXT) && "rec".equals(Prefs.str(a, Prefs.NEXT_SOURCE, "rec")) ? "（跳过看过的）" : "")
-                + " · 睡眠时：" + (Prefs.on(a, Prefs.SLEEP_CALM) ? "同频道/列表" : "跟随平时")
+                + (Prefs.on(a, Prefs.LIST_END_NEXT) ? " · 列表播完接推荐" : "")
+                + " · 睡眠时：" + (Prefs.on(a, Prefs.SLEEP_CALM) ? (Prefs.on(a, Prefs.SLEEP_STRICT) ? "只同频道（没有就停）" : "同频道/列表") : "跟随平时")
                 + " · 一键睡眠模式总是同频道";
     }
 
@@ -309,8 +314,16 @@ public class SettingsPage {
         skip.setTextColor(Ui.TEXT);
         skip.setChecked(Prefs.on(a, Prefs.SKIP_WATCHED_NEXT));
         box.addView(skip);
+        // (313) off by default: a playlist played to its end goes on with a recommendation
+        final android.widget.CheckBox listEnd = new android.widget.CheckBox(a);
+        listEnd.setText("播放列表播完后接 YouTube 推荐（睡眠定时中总是停止）");
+        listEnd.setTextColor(Ui.TEXT);
+        listEnd.setChecked(Prefs.on(a, Prefs.LIST_END_NEXT));
+        box.addView(listEnd);
         box.addView(Ui.title(a, "睡眠定时中"));
-        final android.widget.RadioGroup g2 = radios(box, new String[]{"跟随平时", "优先同频道 / 列表（找不到时照常推荐）"}, Prefs.on(a, Prefs.SLEEP_CALM) ? 1 : 0);
+        // (315) third option: same channel only, the timer ends when there is none
+        final android.widget.RadioGroup g2 = radios(box, new String[]{"跟随平时", "优先同频道 / 列表（找不到时照常推荐）", "只同频道 / 列表（找不到就停止并结束定时）"},
+                Prefs.on(a, Prefs.SLEEP_CALM) ? (Prefs.on(a, Prefs.SLEEP_STRICT) ? 2 : 1) : 0);
         TextView note = Ui.text(a, "默认用 YouTube 自动播放；其他选项会关掉它由本 App 选。一键睡眠模式总是同频道。", 13, Ui.TEXT_2);
         note.setPadding(0, dp(8), 0, 0);
         box.addView(note);
@@ -321,8 +334,11 @@ public class SettingsPage {
                 .setView(sv)
                 .setPositiveButton("确定", (d, w) -> {
                     Prefs.put(a, Prefs.NEXT_SOURCE, NEXT_VALUES[Math.max(0, checkedIndex(g1))]);
-                    Prefs.put(a, Prefs.SLEEP_CALM, checkedIndex(g2) == 1);
+                    int sl = checkedIndex(g2);
+                    Prefs.put(a, Prefs.SLEEP_CALM, sl >= 1);
+                    Prefs.put(a, Prefs.SLEEP_STRICT, sl == 2);
                     Prefs.put(a, Prefs.SKIP_WATCHED_NEXT, skip.isChecked());
+                    Prefs.put(a, Prefs.LIST_END_NEXT, listEnd.isChecked());
                     applied();
                 })
                 .setNegativeButton("取消", null)
@@ -338,7 +354,7 @@ public class SettingsPage {
         final android.widget.RadioGroup g1 = radios(box, new String[]{"上一个 / 下一个", "快退 10 秒 / 快进 30 秒"}, Prefs.on(a, Prefs.NOTIF_SEEK) ? 1 : 0);
         box.addView(Ui.title(a, "第五个键"));
         final android.widget.RadioGroup g2 = radios(box, new String[]{"稍后观看（需登录）", "不显示"}, Prefs.on(a, Prefs.NOTIF_WL) ? 0 : 1);
-        TextView note = Ui.text(a, "睡眠定时中第五键让位给「+15 分钟」；暂停时第五键是「关闭」。Android 13+ 的锁屏/下拉媒体卡片同样生效。", 13, Ui.TEXT_2);
+        TextView note = Ui.text(a, "睡眠定时中第五键让位给「+" + SleepTimer.extendMin(a) + " 分钟」；暂停时第五键是「关闭」；未登录时不显示「稍后观看」。Android 13+ 的锁屏/下拉媒体卡片同样生效。", 13, Ui.TEXT_2);
         note.setPadding(0, dp(8), 0, 0);
         box.addView(note);
         ScrollView sv = new ScrollView(a);
@@ -363,13 +379,16 @@ public class SettingsPage {
             h.addView(choice("打开 App 时进入", "从桌面图标启动时的第一页", Prefs.START_PAGE,
                     new String[]{"首页", "订阅"}, new String[]{"home", "subs"}, "home"));
             h.addView(dyn("隐藏已看完的视频", this::watchedLabel, v -> pickWatched()));
+            h.addView(toggle("播放页的相关视频也隐藏已看完", "用同一个「看过多少」标准；默认只在首页隐藏", Prefs.HIDE_WATCHED_RELATED));
             h.addView(toggle("刷新后提示新视频数", "下拉刷新后提示「更新了 N 个新视频」", Prefs.REFRESH_COUNT));
+            h.addView(toggle("轻量刷新（实验）", "刷新时保留 YouTube 的离线缓存，刷新更快；没出新视频就关掉", Prefs.LIGHT_REFRESH));
             LinearLayout f = card(box, "内容过滤（首页和「接下来播放」）");
             f.addView(sub("内容过滤", this::filterLabel, this::filterPage));
             LinearLayout m = card(box, "隐藏模块");
             m.addView(toggle("隐藏首页货架", "新闻、合集、「可能喜欢」等横向模块", Prefs.HIDE_SHELVES));
             m.addView(toggle("订阅页隐藏社区帖子", "订阅页只显示视频", Prefs.SUBS_ONLY_VIDEOS));
             m.addView(toggle("搜索结果隐藏「相关搜索」等", "「人们还看了」「为你推荐」这类插入模块", Prefs.HIDE_SEARCH_EXTRAS));
+            m.addView(toggle("搜索结果隐藏「合辑」", "YouTube 自动生成的无限混合列表，睡前不容易越听越偏", Prefs.HIDE_SEARCH_MIX));
             LinearLayout s = card(box, "搜索");
             s.addView(toggle("搜索结果快捷筛选", "顶部一排：最新、只看视频、本周、按时长", Prefs.SEARCH_CHIPS));
             s.addView(toggle("打开搜索时弹出键盘", "搜索框出现时自动聚焦", Prefs.SEARCH_FOCUS));
@@ -415,8 +434,8 @@ public class SettingsPage {
             LinearLayout f = card(box);
             f.addView(dyn("屏蔽的频道", () -> countLabel(Prefs.BLOCK_CHANNELS, "长按视频卡片 →「不再显示此频道」也能加"),
                     v -> editLines("屏蔽的频道", "每行一个频道名；长按菜单加入的形如「@频道号|频道名」，改名后也有效", Prefs.BLOCK_CHANNELS)));
-            f.addView(dyn("屏蔽的关键词", () -> countLabel(Prefs.BLOCK_WORDS, "标题含这些词就不显示，搜索结果也生效"),
-                    v -> editLines("屏蔽的关键词", "每行一个词，不区分大小写", Prefs.BLOCK_WORDS)));
+            f.addView(dyn("屏蔽的关键词", () -> countLabel(Prefs.BLOCK_WORDS, "标题含这些词就不显示，搜索结果也生效；支持 re: 正则和 ! 放行词"),
+                    v -> editLines("屏蔽的关键词", "每行一个词，不区分大小写；re: 开头是正则（≤100 字），! 开头是放行词（标题含它就不按关键词屏蔽）", Prefs.BLOCK_WORDS)));
             f.addView(choiceInt("隐藏短视频", "按卡片上的时长判断", Prefs.MIN_DUR,
                     new String[]{"不隐藏", "短于 1 分钟", "短于 3 分钟", "短于 5 分钟", "短于 10 分钟"}, new int[]{0, 1, 3, 5, 10}, 0));
             f.addView(choiceInt("隐藏旧视频", "按「x 天前」这类发布时间判断", Prefs.MAX_AGE,
@@ -541,6 +560,10 @@ public class SettingsPage {
                 c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
             }
             c.addView(dyn("本机观看统计", () -> "近 7 天 " + fmtDuration(PlaybackService.weekSeconds(a)) + " · 今天 " + fmtDuration(PlaybackService.todaySeconds(a)), null));
+            c.addView(dyn("睡眠定时耗电", () -> {
+                String n = NightLog.last(a);
+                return n.isEmpty() ? "开睡眠定时睡一晚后显示（充电中或不到 10 分钟的不记）" : n;
+            }, null));
             c.addView(row("开源许可", "基于 YTPro（MIT）· AndroidX（Apache 2.0）· SponsorBlock 数据（CC BY-NC-SA 4.0）", v -> licenses()));
         });
     }

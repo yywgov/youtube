@@ -86,6 +86,10 @@ public class PlaybackService extends Service {
     static long positionAt = 0;
     static Bitmap art;
     private static String artLoadedFor = "";
+    /** Live stream right now (294): no duration and no seeking on the lock screen. */
+    static boolean live = false;
+    /** Last 8 notification pictures (297): switching back and forth or looping does not download again. */
+    private static final android.util.LruCache<String, Bitmap> ART_CACHE = new android.util.LruCache<>(8);
     /** The sleep timer paused playback: drop foreground + locks and stop soon (17). */
     private static boolean sleepDone = false;
     private static long lastVolHint = 0;
@@ -121,7 +125,9 @@ public class PlaybackService extends Service {
         if (dur > 0) durationMs = dur;
         if (art != null && !art.equals(artUrl)) {
             artUrl = art;
-            loadArt(art);
+            Bitmap hit = ART_CACHE.get(art);
+            if (hit != null) { PlaybackService.art = hit; artLoadedFor = art; }
+            else loadArt(art);
         }
         if (instance != null) instance.update();
         else if (state == PlaybackState.STATE_PLAYING) ensureRunning(c);
@@ -136,6 +142,7 @@ public class PlaybackService extends Service {
             sleepDone = false;
             volumeHint(c);
         }
+        boolean wasPlaying = isPlaying();
         if (st != PlaybackState.STATE_BUFFERING) longBuffer = false;
         if (st == PlaybackState.STATE_PLAYING) { interrupted = false; netNote = false; }
         if (st == PlaybackState.STATE_BUFFERING && state == PlaybackState.STATE_PLAYING && !MainActivity.isVisible()) bgBuffering++;
@@ -144,11 +151,19 @@ public class PlaybackService extends Service {
         positionMs = pos;
         rate = r > 0 ? r : 1f;
         positionAt = SystemClock.elapsedRealtime();
+        if (wasPlaying != isPlaying()) SleepTimer.onPlayback(c, isPlaying());   // pause holds the timer (305)
         if (instance != null) instance.update();
         else if (st == PlaybackState.STATE_PLAYING) ensureRunning(c);
     }
 
     public static void refresh() {
+        if (instance != null) instance.update();
+    }
+
+    /** The page says whether the video is a live stream (294). */
+    public static void setLive(boolean on) {
+        if (live == on) return;
+        live = on;
         if (instance != null) instance.update();
     }
 
@@ -288,7 +303,7 @@ public class PlaybackService extends Service {
             AudioManager am = (AudioManager) c.getApplicationContext().getSystemService(AUDIO_SERVICE);
             if (am != null && am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
                 lastVolHint = now;
-                android.widget.Toast.makeText(c.getApplicationContext(), "媒体音量为 0，按音量键调大", android.widget.Toast.LENGTH_SHORT).show();
+                MainActivity.notifyText(c, "媒体音量为 0，按音量键调大");
             }
         } catch (Exception ignored) {}
     }
@@ -365,6 +380,7 @@ public class PlaybackService extends Service {
             }
             final Bitmap result = bmp;
             MAIN.post(() -> {
+                if (result != null) ART_CACHE.put(url, result);
                 if (url.equals(artUrl)) {
                     art = result;
                     artLoadedFor = url;
@@ -464,7 +480,7 @@ public class PlaybackService extends Service {
     }
 
     private void createChannel() {
-        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "后台播放", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel ch = new NotificationChannel(CHANNEL_ID, getString(R.string.n_channel), NotificationManager.IMPORTANCE_LOW);
         ch.setShowBadge(false);
         ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         nm.createNotificationChannel(ch);
@@ -590,7 +606,8 @@ public class PlaybackService extends Service {
                             update();
                         }
                         if (netNote) { netNote = false; update(); }
-                        if (MainActivity.hasPage()) MainActivity.js("ytl.onNet()");
+                        // a new default network (Wi-Fi <-> mobile data): "Wi-Fi best, mobile 720p" is applied again (314)
+                        if (MainActivity.hasPage()) MainActivity.js("ytl.onNet();ytl.netChanged&&ytl.netChanged()");
                     }, 1500);
                 }
             };
@@ -611,15 +628,15 @@ public class PlaybackService extends Service {
         boolean playing = state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
         boolean hasArt = art != null && artUrl.equals(artLoadedFor);
 
-        String metaKey = title + "\u0001" + artist + "\u0001" + durationMs + "\u0001" + (hasArt ? artLoadedFor : "") + "\u0001" + videoId;
+        String metaKey = title + "\u0001" + artist + "\u0001" + durationMs + "\u0001" + (hasArt ? artLoadedFor : "") + "\u0001" + videoId + "\u0001" + live;
         if (!metaKey.equals(lastMetaKey)) {
             lastMetaKey = metaKey;
             MediaMetadata.Builder mb = new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, title)
                     .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
                     .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
-                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, artist)   // (295)
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, artist);   // (295)
+            if (!live) mb.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);   // live (294): no length, no seek bar
             if (!videoId.isEmpty()) mb.putString(MediaMetadata.METADATA_KEY_MEDIA_ID, videoId);
             if (hasArt) {
                 mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
@@ -629,10 +646,10 @@ public class PlaybackService extends Service {
         }
 
         boolean seekButtons = Prefs.on(this, Prefs.NOTIF_SEEK);
-        boolean wl = Prefs.on(this, Prefs.NOTIF_WL) && !SleepTimer.timed();
+        boolean wl = Prefs.on(this, Prefs.NOTIF_WL) && !SleepTimer.timed() && MainActivity.signedIn();   // (346)
         String sleepLabel = SleepTimer.buttonLabel();
         String stateKey = state + "|" + positionMs + "|" + rate + "|" + positionAt + "|" + sleepLabel + "|" + SleepTimer.timed()
-                + "|" + seekButtons + "|" + wl;
+                + "|" + seekButtons + "|" + wl + "|" + live + "|" + SleepTimer.extendMin(this);
         if (!stateKey.equals(lastStateKey)) {
             lastStateKey = stateKey;
             session.setPlaybackState(buildState(seekButtons, wl, sleepLabel));
@@ -671,7 +688,8 @@ public class PlaybackService extends Service {
 
     private String notifKey() {
         return title + "|" + artist + "|" + isPlaying() + "|" + SleepTimer.buttonLabel() + "|" + SleepTimer.timed() + "|"
-                + Prefs.on(this, Prefs.NOTIF_SEEK) + "|" + Prefs.on(this, Prefs.NOTIF_WL) + "|" + (art != null && artUrl.equals(artLoadedFor) ? artLoadedFor : "")
+                + Prefs.on(this, Prefs.NOTIF_SEEK) + "|" + Prefs.on(this, Prefs.NOTIF_WL) + "|" + MainActivity.signedIn() + "|" + SleepTimer.extendMin(this)
+                + "|" + (art != null && artUrl.equals(artLoadedFor) ? artLoadedFor : "")
                 + "|" + interrupted + "|" + longBuffer + "|" + netNote + "|" + foreground;
     }
 
@@ -696,23 +714,23 @@ public class PlaybackService extends Service {
     private PlaybackState buildState(boolean seekButtons, boolean wl, String sleepLabel) {
         boolean cards = Build.VERSION.SDK_INT >= 33;
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
-                | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
-                | PlaybackState.ACTION_REWIND | PlaybackState.ACTION_FAST_FORWARD;
+                | PlaybackState.ACTION_STOP | PlaybackState.ACTION_REWIND | PlaybackState.ACTION_FAST_FORWARD;
+        if (!live) actions |= PlaybackState.ACTION_SEEK_TO;   // dragging a live stream does nothing (294)
         if (!(cards && seekButtons)) actions |= PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS;
         PlaybackState.Builder pb = new PlaybackState.Builder()
                 .setActions(actions)
                 .setState(state == PlaybackState.STATE_NONE ? PlaybackState.STATE_PAUSED : state,
                         positionMs, state == PlaybackState.STATE_PLAYING ? rate : 0f, positionAt);
         if (cards && seekButtons) {
-            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_REW, "快退 10 秒", R.drawable.ic_replay_10_white).build());
-            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_FWD, "快进 30 秒", R.drawable.ic_forward_30_white).build());
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_REW, getString(R.string.n_rew), R.drawable.ic_replay_10_white).build());
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_FWD, getString(R.string.n_fwd), R.drawable.ic_forward_30_white).build());
         }
         pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_SLEEP, sleepLabel, R.drawable.ic_timer_white).build());
         if (SleepTimer.timed()) {
             pb.addCustomAction(new PlaybackState.CustomAction.Builder(
-                    ACTION_EXTEND, "+" + SleepTimer.EXTEND_MIN + " 分钟", R.drawable.ic_add_time_white).build());
+                    ACTION_EXTEND, getString(R.string.n_extend, SleepTimer.extendMin(this)), R.drawable.ic_add_time_white).build());
         } else if (cards && wl) {
-            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_WL, "稍后观看", R.drawable.ic_watch_later_white).build());
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_WL, getString(R.string.n_wl), R.drawable.ic_watch_later_white).build());
         }
         return pb.build();
     }
@@ -781,7 +799,7 @@ public class PlaybackService extends Service {
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (interrupted) open.putExtra(EXTRA_RESUME, true);
         String sleep = SleepTimer.status();
-        String text = interrupted ? "播放被系统中断 · 点此继续" : (longBuffer || netNote) ? "网络中断，恢复后自动继续" : artist;
+        String text = interrupted ? getString(R.string.n_interrupted) : (longBuffer || netNote) ? getString(R.string.n_net) : artist;
 
         b.setSmallIcon(R.drawable.ic_stat_yiwei)
                 .setContentTitle(title.isEmpty() ? getString(R.string.app_name) : title)
@@ -793,27 +811,28 @@ public class PlaybackService extends Service {
                 .setOngoing(playing)
                 .setOnlyAlertOnce(true);
         boolean seekButtons = Prefs.on(this, Prefs.NOTIF_SEEK);
+        // labels from the string resources (380)
         b.addAction(seekButtons
-                        ? new Notification.Action.Builder(R.drawable.ic_replay_10_white, "快退 10 秒", action(ACTION_REW, 6)).build()
-                        : new Notification.Action.Builder(R.drawable.ic_skip_previous_white, "上一个", action(ACTION_PREV, 1)).build())
+                        ? new Notification.Action.Builder(R.drawable.ic_replay_10_white, getString(R.string.n_rew), action(ACTION_REW, 6)).build()
+                        : new Notification.Action.Builder(R.drawable.ic_skip_previous_white, getString(R.string.n_prev), action(ACTION_PREV, 1)).build())
                 .addAction(playing
-                        ? new Notification.Action.Builder(R.drawable.ic_pause_white, "暂停", action(ACTION_PAUSE, 2)).build()
-                        : new Notification.Action.Builder(R.drawable.ic_play_arrow_white, "播放", action(ACTION_PLAY, 3)).build())
+                        ? new Notification.Action.Builder(R.drawable.ic_pause_white, getString(R.string.n_pause), action(ACTION_PAUSE, 2)).build()
+                        : new Notification.Action.Builder(R.drawable.ic_play_arrow_white, getString(R.string.n_play), action(ACTION_PLAY, 3)).build())
                 .addAction(seekButtons
-                        ? new Notification.Action.Builder(R.drawable.ic_forward_30_white, "快进 30 秒", action(ACTION_FWD, 7)).build()
-                        : new Notification.Action.Builder(R.drawable.ic_skip_next_white, "下一个", action(ACTION_NEXT, 4)).build())
+                        ? new Notification.Action.Builder(R.drawable.ic_forward_30_white, getString(R.string.n_fwd), action(ACTION_FWD, 7)).build()
+                        : new Notification.Action.Builder(R.drawable.ic_skip_next_white, getString(R.string.n_next), action(ACTION_NEXT, 4)).build())
                 .addAction(new Notification.Action.Builder(R.drawable.ic_timer_white,
                         SleepTimer.buttonLabel(), action(ACTION_SLEEP, 5)).build());
         if (!playing && !SleepTimer.timed()) {
             // paused: the fifth button closes playback and the notification (290)
-            b.addAction(new Notification.Action.Builder(R.drawable.ic_close_white, "关闭", action(ACTION_CLOSE, 14)).build());
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_close_white, getString(R.string.n_close), action(ACTION_CLOSE, 14)).build());
         } else if (SleepTimer.timed()) {
             // half asleep: one more quarter hour without turning the screen on (14)
             b.addAction(new Notification.Action.Builder(R.drawable.ic_add_time_white,
-                    "+" + SleepTimer.EXTEND_MIN + " 分钟", action(ACTION_EXTEND, 8)).build());
-        } else if (Prefs.on(this, Prefs.NOTIF_WL)) {
-            // heard something good: save it for later (100); MediaStyle allows five actions
-            b.addAction(new Notification.Action.Builder(R.drawable.ic_watch_later_white, "稍后观看", action(ACTION_WL, 9)).build());
+                    getString(R.string.n_extend, SleepTimer.extendMin(this)), action(ACTION_EXTEND, 8)).build());
+        } else if (Prefs.on(this, Prefs.NOTIF_WL) && MainActivity.signedIn()) {
+            // heard something good: save it for later (100); MediaStyle allows five actions; signed in only (346)
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_watch_later_white, getString(R.string.n_wl), action(ACTION_WL, 9)).build());
         }
         b.setStyle(new Notification.MediaStyle()
                         .setMediaSession(session.getSessionToken())

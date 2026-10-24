@@ -79,7 +79,13 @@
     lowMotion: false,       // system "remove animations" is on (367) – set by Java
     fontLarge: false,       // text zoom may go up to 160 %: titles get a third line (378)
     skipWatchedNext: false, // recommended autoplay: skip a target already watched (311)
-    appName: '一维视频'      // display name for the gear's screen-reader label (374)
+    appName: '一维视频',     // display name for the gear's screen-reader label (374)
+    // batch 6 (v1.8.0) – every default keeps the old behaviour
+    hideWatchedRelated: false, // related videos under the player also hide watched ones (327)
+    hideSearchMix: false,   // search results: no auto-generated mixes (333)
+    lightRefresh: false,    // refresh keeps the service worker / static caches (316, experimental)
+    listEndNext: false,     // a playlist played to its end goes on with a recommendation (313)
+    sleepStrict: false      // sleeping with the same-channel rule: stop when there is none (315)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
@@ -113,17 +119,41 @@
   // ad keys shared with the native watch-page filter (279): assets/adkeys.json, handed over by getConfig
   var extraAdKeys = Array.isArray(cfg.adKeys) ? cfg.adKeys.filter(function (k) { return typeof k === 'string' && /^[A-Za-z][A-Za-z0-9]{2,40}$/.test(k); }) : [];
   delete cfg.adKeys;
+  // texts from the app's string resources (381); the built-in Chinese stays as the fallback
+  var strings = cfg.strings && typeof cfg.strings === 'object' ? cfg.strings : {};
+  delete cfg.strings;
+  function S(key, def) { var v = strings[key]; return typeof v === 'string' && v ? v : def; }
   // remote rules (73): extra hide selectors fetched natively from this app's own repository,
   // checked there (SHA-256 + schema) and here (each selector parsed on its own); never required
   var remote = { hide: [] };
-  try {
-    if (B && typeof B.getRemoteRules === 'function') {
-      var rr = JSON.parse(B.getRemoteRules() || '{}');
-      if (rr && rr.hide && Array.isArray(rr.hide)) remote.hide = rr.hide.filter(function (x) { return typeof x === 'string' && x.length < 200; }).slice(0, 200);
-      remote.version = rr.version || 0;
-      // sponsored-card labels the text fallback should also match (285), short exact texts only
-      if (rr && Array.isArray(rr.adText)) remote.adText = rr.adText.filter(function (x) { return typeof x === 'string' && x.trim().length > 0 && x.length <= 20; }).slice(0, 20);
+  /** Checked copy of a rules.json (73); also used when Java hands over a fresh one (288). */
+  function parseRemote(rr) {
+    var r = { hide: [], version: 0 };
+    if (!rr || typeof rr !== 'object') return r;
+    if (Array.isArray(rr.hide)) r.hide = rr.hide.filter(function (x) { return typeof x === 'string' && x.length < 200; }).slice(0, 200);
+    r.version = rr.version || 0;
+    // sponsored-card labels the text fallback should also match (285), short exact texts only
+    if (Array.isArray(rr.adText)) r.adText = rr.adText.filter(function (x) { return typeof x === 'string' && x.trim().length > 0 && x.length <= 20; }).slice(0, 20);
+    // search quick filters (328): [label, sp] pairs replace the built-in ones when valid
+    if (Array.isArray(rr.chips)) {
+      var ch = rr.chips.filter(function (c) {
+        return Array.isArray(c) && typeof c[0] === 'string' && c[0].trim().length > 0 && c[0].length <= 12 &&
+          typeof c[1] === 'string' && /^[A-Za-z0-9%_-]{0,60}$/.test(c[1]);
+      }).slice(0, 10);
+      if (ch.length >= 2) r.chips = ch;
     }
+    // extra words for the text matchers (382): plain words only, appended, never replacing
+    if (rr.text && typeof rr.text === 'object') {
+      r.text = {};
+      for (var tk in rr.text) {
+        if (!Object.prototype.hasOwnProperty.call(rr.text, tk) || !Array.isArray(rr.text[tk])) continue;
+        r.text[tk] = rr.text[tk].filter(function (x) { return typeof x === 'string' && x.trim().length > 0 && x.length <= 30; }).slice(0, 20);
+      }
+    }
+    return r;
+  }
+  try {
+    if (B && typeof B.getRemoteRules === 'function') remote = parseRemote(JSON.parse(B.getRemoteRules() || '{}'));
   } catch (e) {}
 
   /* ---------- 0. the rule table: every selector the script uses lives here ---------- */
@@ -202,7 +232,8 @@
     perf: {
       cards: ['ytm-rich-item-renderer', 'ytm-video-with-context-renderer'],             // 49/50
       compact: ['ytm-compact-video-renderer', 'ytm-playlist-video-renderer'],
-      noAnim: ['[class*="skeleton"]', '[class*="Skeleton"]', '[class*="shimmer"]', '[class*="Shimmer"]'], // 51
+      // 51; scoped to the app root (258) so the substring tests never run on <head> / popups outside it
+      noAnim: ['ytm-app [class*="skeleton"]', 'ytm-app [class*="Skeleton"]', 'ytm-app [class*="shimmer"]', 'ytm-app [class*="Shimmer"]'],
       noRipple: ['yt-touch-feedback-shape', '.yt-spec-touch-feedback-shape', '.ytSpecTouchFeedbackShapeHost']
     },
     sel: {
@@ -237,9 +268,46 @@
       searchList: 'ytm-search ytm-section-list-renderer, ytm-section-list-renderer',
       searchShelf: 'ytm-shelf-renderer, ytm-horizontal-card-list-renderer, ytm-rich-shelf-renderer',
       shelfTitle: 'h2, h3, .shelf-header, [class*="title" i]',
-      maxresImg: 'img[src*="/maxresdefault"]'
-    }
+      maxresImg: 'img[src*="/maxresdefault"]',
+      // batch 6
+      // comments / description panels on the watch page (264): mutations in here never touch a list card
+      quietZone: 'ytm-engagement-panel, ytm-comment-section-renderer, ytm-comment-thread-renderer, ytm-comments-entry-point-header-renderer',
+      // a result that is an auto-generated mix (333): its link carries list=RD…
+      mixLink: 'a[href*="list=RD"]',
+      mixCard: 'ytm-compact-radio-renderer, ytm-radio-renderer, ytm-compact-playlist-renderer, ytm-playlist-renderer,' +
+        ' ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-rich-item-renderer, yt-lockup-view-model',
+      listImg: 'img:not([decoding])'
+    },
+    // every on-page text the script matches, by language, in one place (382); mode: full = the whole
+    // text, start = the text starts with it, any = anywhere. rules.json "text" can append plain words.
+    text: {
+      still: ['any', ['continue watching', 'still watching', 'still there', 'are you there', 'video paused', '还在看吗', '你还在吗', '继续观看', '仍在观看', '视频已暂停', '繼續觀看', '仍在觀看', '影片已暫停']],
+      stillYes: ['full', ['是', '是的', '继续', '继续观看', '继续播放', '繼續', '繼續觀看', '繼續播放', 'yes', 'continue', 'continue watching', 'keep watching', 'i\'m still here', 'still watching']],
+      stillNo: ['full', ['否', '不', '取消', '退出', '停止', 'no', 'cancel', 'exit', 'stop', 'dismiss']],
+      retry: ['any', ['try again', 'playback id', 'error occurred', '重试', '重新整理', '稍后', '出错', '發生錯誤', '错误']],
+      live: ['start', ['LIVE', '直播', '直播中', '正在直播', 'PREMIERE', 'PREMIERES?', '首映', '首播', 'UPCOMING', '即将', '即將', 'SCHEDULED']],
+      searchExtra: ['any', ['people also', 'also watched', 'also search', 'for you', 'previously watched', 'related to your search', '人们还', '大家还', '其他人还', '为你推荐', '為你推薦', '相关搜索', '相關搜尋', '你看过', '看過的影片']],
+      adLabel: ['full', ['赞助', '贊助', '广告', '廣告', '赞助商广告', '贊助商廣告', 'sponsored', 'ad', 'ads']],
+      feedback: ['full', ['help', 'help ?(?:&|and) ?feedback', 'send feedback', 'feedback', 'give feedback', 'report', 'report history', 'report (?:video|playlist|channel|comment|ad|this ad)', 'why this ad\\??', '帮助', '帮助和反馈', '帮助与反馈', '帮助及反馈', '发送反馈', '提供反馈', '反馈', '意见反馈', '举报', '举报记录', '举报视频', '举报播放列表', '举报频道', '說明', '說明與意見回饋', '提供意見', '傳送意見回饋', '提供意見回饋', '意見回饋', '檢舉', '檢舉記錄', '檢舉影片']]
+    },
+    // one-tap sleep mode (340): comments only; related videos stay for the same-channel rule
+    sleepHide: ['ytm-comment-section-renderer', 'ytm-comments-entry-point-header-renderer',
+      'ytm-item-section-renderer[section-identifier="comments-entry-point"]', 'ytm-item-section-renderer[data-content-type="comments"]'],
+    // search quick filters (125/328): YouTube's own sp values; rules.json "chips" can replace them
+    chips: [['全部', ''], ['最新', 'CAI%3D'], ['只看视频', 'EgIQAQ%3D%3D'], ['本周', 'EgIIAw%3D%3D'], ['4–20 分钟', 'EgIYAw%3D%3D'], ['20 分钟以上', 'EgIYAg%3D%3D']]
   };
+
+  function escRe(x) { return String(x).replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&'); }
+  /** Matcher for one entry of RULES.text (382), with the words rules.json appends. */
+  function textRe(name) {
+    var t = RULES.text[name], alts = t[1].slice();
+    var add = remote.text && remote.text[name];
+    if (add) for (var i = 0; i < add.length; i++) alts.push(escRe(add[i].trim()));
+    var src = '(?:' + alts.join('|') + ')';
+    if (t[0] === 'full') src = '^' + src + '$';
+    else if (t[0] === 'start') src = '^' + src;
+    return new RegExp(src, 'i');
+  }
 
   function sheet() {
     var out = [];
@@ -254,7 +322,8 @@
     for (var k in H) if (H.hasOwnProperty(k)) rule(H[k], 'display:none!important');
     rule(RULES.adCover, 'opacity:0!important');
     rule(RULES.adCoverPlayer, 'background:#000!important');
-    rule(pre(RULES.perf.cards), 'content-visibility:auto;contain-intrinsic-size:auto 360px;contain:layout style');
+    // placeholder height from the screen width (265): 16:9 picture + title block, the real height is remembered (auto)
+    rule(pre(RULES.perf.cards), 'content-visibility:auto;contain-intrinsic-size:auto 360px;contain-intrinsic-size:auto min(calc(56.25vw + 112px),720px);contain:layout style');
     rule(pre(RULES.perf.compact), 'content-visibility:auto;contain-intrinsic-size:auto 110px;contain:layout style');
     rule(pre(RULES.perf.noAnim), 'animation:none!important;transition:none!important');
     rule(pre(RULES.perf.noRipple), 'display:none!important');
@@ -268,8 +337,8 @@
     out.push('html[data-ytl-subbg="none"] ' + cs + '{background:transparent!important;text-shadow:0 0 3px #000,0 0 2px #000,1px 1px 2px #000}');
     // ---- batch 3 look (each behind its own html attribute, so a setting off means no rule applies) ----
     // design tokens for our own controls (164)
-    out.push(':root{--ytl-accent:#3ea6ff;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
-    out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick)}');
+    out.push(':root{--ytl-accent:#2f6bff;--ytl-accent-text:#6b95ff;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
+    out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick);--ytl-accent-text:var(--ytl-accent-pick)}');
     rule(RULES.accentFill.map(function (x) { return 'html[data-ytl-accent] ' + x; }), 'background:var(--ytl-accent)!important;background-color:var(--ytl-accent)!important');
     // pure black (91)
     out.push('html[data-ytl-amoled][dark]{--yt-spec-base-background:#000!important;--yt-spec-brand-background-solid:#000!important;' +
@@ -282,7 +351,7 @@
       'html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>a:first-child{flex:0 0 42%;max-width:42%;border-radius:8px;overflow:hidden}');
     out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>.details{flex:1 1 auto;min-width:0;padding:0 0 0 10px!important;margin:0!important}');
     out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item .media-channel{display:none!important}');
-    out.push('html[data-ytl-compact][data-ytl-perf] ytm-rich-item-renderer{contain-intrinsic-size:auto 120px}');
+    out.push('html[data-ytl-compact][data-ytl-perf] ytm-rich-item-renderer{contain-intrinsic-size:auto 120px;contain-intrinsic-size:auto max(96px,calc(23.625vw + 16px))}');
     // uniform cards (106/107/111)
     out.push('html[data-ytl-cards] .media-item-thumbnail-container,html[data-ytl-cards] yt-thumbnail-view-model{border-radius:12px;overflow:hidden}');
     out.push('html[data-ytl-cards] .media-item-headline,html[data-ytl-cards] ytm-media-item h3{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:500}');
@@ -308,16 +377,32 @@
     out.push('html[data-ytl-update] #ytl-gear{position:relative}html[data-ytl-update] #ytl-gear::after{content:"";position:absolute;top:9px;right:9px;width:8px;height:8px;border-radius:50%;background:#ff4e45}');
     // search quick filters (125)
     out.push('#ytl-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}#ytl-chips::-webkit-scrollbar{display:none}' +
-      '#ytl-chips a{flex:0 0 auto;padding:6px 12px;border-radius:8px;background:rgba(128,128,128,.18);color:inherit;font:500 13px/18px Roboto,Arial,sans-serif;text-decoration:none;white-space:nowrap}' +
+      '#ytl-chips a{flex:0 0 auto;padding:6px 12px;border-radius:8px;background:rgba(128,128,128,.18);color:inherit;font:500 13px/18px system-ui,sans-serif;text-decoration:none;white-space:nowrap}' +
       '#ytl-chips a[aria-current]{background:var(--ytl-accent);color:#fff}');
-    out.push('#ytl-badge{position:absolute;top:8px;left:8px;z-index:70;pointer-events:none;background:rgba(0,0,0,.6);color:#fff;' +
-      'font:500 12px/16px Roboto,Arial,sans-serif;padding:3px 8px;border-radius:10px;white-space:nowrap}');
+    // sleep badge (154): a tap adds time, a long press opens the timer choices (309); 40px touch target
+    out.push('#ytl-badge{position:absolute;top:4px;left:4px;z-index:70;min-height:40px;display:flex;align-items:center;' +
+      'padding:0 4px;background:none;border:0;margin:0;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent}' +
+      '#ytl-badge span{background:rgba(0,0,0,.6);font:500 12px/16px system-ui,sans-serif;padding:3px 8px;border-radius:10px;white-space:nowrap}');
     out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
-      'background:rgba(33,33,33,.96);color:#fff;font:14px/20px Roboto,Arial,sans-serif;padding:10px 14px 10px 16px;border-radius:10px;' +
+      'background:rgba(33,33,33,.96);color:#fff;font:14px/20px system-ui,sans-serif;padding:10px 14px 10px 16px;border-radius:10px;' +
       'box-shadow:0 2px 10px rgba(0,0,0,.5);max-width:90vw;white-space:nowrap}' +
-      '#ytl-sb button{background:none;border:0;color:var(--ytl-accent);font:500 14px Roboto,Arial,sans-serif;padding:4px 6px;margin:0}');
+      '#ytl-sb button{background:none;border:0;color:var(--ytl-accent-text);font:500 14px system-ui,sans-serif;padding:4px 6px;margin:0}');
+    // batch 6 (v1.8.0)
+    // search: auto-generated mixes (333)
+    out.push('html[data-ytl-nomix][data-ytl-page="search"] [data-ytl-searchmix]{display:none!important}');
+    // long press feedback (368): a light wash on the card while the finger is held
+    out.push('[data-ytl-press]{background-color:rgba(128,128,128,.16)!important;border-radius:12px;transition:background-color .12s}');
+    out.push('html[data-ytl-lowmotion] [data-ytl-press]{transition:none}');
+    // moon button only with a video or a timer (363)
+    out.push('#ytl-tools[data-ytl-off]{display:none!important}');
+    // one-tap sleep mode (340): no comments under the player (related videos stay: the same-channel rule reads them)
+    rule(RULES.sleepHide.map(function (x) { return 'html[data-ytl-sleepmode][data-ytl-page="watch"] ' + x; }), 'display:none!important');
+    // empty feed note (326)
+    out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
+      'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +
+      'color:var(--ytl-accent-text);font:500 14px system-ui,sans-serif;padding:8px 4px;white-space:nowrap}');
     return out.join('\n');
   }
   var CSS = sheet();
@@ -435,9 +520,12 @@
     if (art) art = art.replace('/maxresdefault', '/hqdefault');
     if (!art) art = 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg';
     var dur = isFinite(v.duration) ? Math.round(v.duration * 1000) : 0;
-    var key = id + '|' + title + '|' + artist + '|' + art + '|' + dur;
+    // a live stream right now (294): the lock screen gets no length and no seek bar
+    var li = lenById[id], isLive = !!((li && li.now) || v.duration === Infinity);
+    var key = id + '|' + title + '|' + artist + '|' + art + '|' + dur + '|' + isLive;
     if (key === lastMetaKey) return;
     lastMetaKey = key;
+    call('mediaLive', isLive);
     call('mediaMeta', title, artist, art, dur, id);
   });
 
@@ -624,9 +712,30 @@
       // once per video, so a quality the user picks by hand afterwards is kept
       qualityFor = curId;
       var q = prefQuality();
-      if (q !== 'auto') setQ(p, q);
+      if (q !== 'auto') { setQ(p, q); verifyQuality(q); }
     }
     p.__ytlLow = bg && cfg.lowQualityBg;
+  });
+  /* default quality really applied? (339) once per video, 3 s later: a mismatch goes to the diagnostics
+   * log (only when the wanted level is one this video offers) */
+  var qCheckedFor = '';
+  function verifyQuality(q) {
+    var id = curId;
+    if (!id || qCheckedFor === id || q === 'auto') return;
+    qCheckedFor = id;
+    setTimeout(guard('quality-check', function () {
+      var p = player();
+      if (!p || curId !== id || bg || adNow() || typeof p.getPlaybackQuality !== 'function') return;
+      var got = p.getPlaybackQuality();
+      var avail = typeof p.getAvailableQualityLevels === 'function' ? (p.getAvailableQualityLevels() || []) : [];
+      if (got && got !== q && avail.indexOf(q) >= 0) log('quality', 'wanted ' + q + ', player kept ' + got + ' (' + id + ')');
+    }), 3000);
+  }
+  /* the phone moved to another network (314): "Wi-Fi best, mobile 720p" is decided again */
+  var netChanged = guard('net-change', function () {
+    if (cfg.quality !== 'wifiMax' || !isWatch() || bg || sleepMode) return;
+    qualityFor = '';
+    applyQuality();
   });
 
   /* ---------- 5. recovery: lost network (23), failed / stuck playback (38) ---------- */
@@ -688,7 +797,7 @@
   });
   // "An error occurred, please try again (playback id …)": retry once. Unavailable / private /
   // age-gated videos say something else and are left alone.
-  var RETRY_TEXT_RE = /try again|playback id|error occurred|重试|重新整理|稍后|出错|發生錯誤|错误/i;
+  var RETRY_TEXT_RE = textRe('retry');
   function checkPlayerError() {
     var el = document.querySelector(RULES.sel.playerError);
     if (!el || !navigator.onLine) return;
@@ -733,7 +842,7 @@
     sbTimer = setTimeout(hideSbPrompt, ms);
   }
   function showSbPrompt(idx, seg) {
-    snackBar('已跳过' + (SB_LABEL[seg[2]] || '赞助片段'), '撤销', function () {
+    snackBar(S('skipped', '已跳过') + (SB_LABEL[seg[2]] || '赞助片段'), S('undo', '撤销'), function () {
       segSkipped[idx] = true;
       var v = video();
       if (v) v.currentTime = seg[0];
@@ -772,6 +881,7 @@
       segSkipped = {};
     },
     onNet: onNet,
+    netChanged: function () { netChanged(); },
     noisy: function () { pause(); },
     trim: function () { trimCaches(); },
     seekBy: function (s) { seekBy(s); },
@@ -780,7 +890,7 @@
     ab: function (w) { setAB(String(w)); },
     shuffle: function (b) { return setShuffle(b); },
     state: function () { return JSON.stringify(toolState()); },
-    sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); },
+    sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); if (started) updateToolsBtn(); },
     countMode: function (b) { countMode = !!b; },
     badge: function (t) { badgeText = t ? String(t) : ''; updateBadge(); },
     // batch 3
@@ -791,6 +901,7 @@
     unhideAll: function () { hiddenList = []; try { localStorage.removeItem(HIDDEN_KEY); } catch (e) {} filterKey = ''; if (started) filterCards(); },
     sleepMode: function (b) {
       sleepMode = !!b; qualityFor = ''; autonavFor = '';
+      try { applyPerfAttr(); } catch (e) {}
       if (!sleepMode) { var p = player(); if (p && isWatch() && !bg) { try { setQ(p, prefQuality()); } catch (e) {} } }
       applyQuality();
       if (started && isWatch()) forceAutonav();
@@ -861,7 +972,7 @@
       var pmr = o.microformat && o.microformat.playerMicroformatRenderer;
       var liveish = !!(vd.isLive || vd.isLiveContent || vd.isUpcoming || vd.isPostLiveDvr ||
         (pmr && (pmr.liveBroadcastDetails || pmr.isLiveContent)));
-      lenById[vd.videoId] = { len: isFinite(len) ? len : 0, live: liveish };
+      lenById[vd.videoId] = { len: isFinite(len) ? len : 0, live: liveish, now: !!(vd.isLive || vd.isUpcoming) };
       noteChannel(vd.videoId, vd.channelId, o.microformat);
     }
     preconnectStream(o.streamingData);
@@ -1198,6 +1309,8 @@
     setAttr('data-ytl-update', cfg.updateDot ? '1' : '');
     setAttr('data-ytl-lowmotion', cfg.lowMotion ? '1' : '');
     setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
+    setAttr('data-ytl-nomix', cfg.hideSearchMix ? '1' : '');            // (333)
+    setAttr('data-ytl-sleepmode', sleepMode ? '1' : '');                // (340)
     var gear = document.getElementById('ytl-gear');
     if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';
@@ -1230,9 +1343,15 @@
     var m = /^([\d.]+)%$/.exec(w.trim());
     return m ? parseFloat(m[1]) : -1;
   }
+  /** Where watched videos are hidden: home, and the related list under the player when chosen (327). */
+  function watchedHere() {
+    if (!cfg.hideWatched || filtersPaused) return false;
+    var pt = pageType();
+    return pt === 'home' || (pt === 'watch' && !!cfg.hideWatchedRelated);
+  }
   var markWatched = guard('watched', function (items) {
     if (items) {   // incremental pass (256): only the cards that changed
-      var homeOn = cfg.hideWatched && pageType() === 'home';
+      var homeOn = watchedHere();
       for (var x = 0; x < items.length; x++) {
         var it = items[x];
         if (!it.isConnected) continue;
@@ -1243,7 +1362,7 @@
       return;
     }
     var hits = [];
-    if (cfg.hideWatched && pageType() === 'home') {
+    if (watchedHere()) {
       var bars = document.querySelectorAll(RULES.sel.watchedBar);
       for (var i = 0; i < bars.length; i++) {
         if (watchedPct(bars[i]) < seenMin()) continue;
@@ -1276,6 +1395,23 @@
       var s = l[i].getAttribute('src') || '';
       if (/^https:\/\/i\d?\.ytimg\.com\/vi(?:_webp)?\//.test(s)) l[i].setAttribute('src', s.replace('/maxresdefault', '/hqdefault'));
     }
+    asyncDecode(roots);
+  }
+  /* list pictures decode off the frame (270): decoding=async on images that have no say yet; loading is left to YouTube */
+  function asyncDecode(roots) {
+    var imgs = [];
+    if (roots) {
+      for (var r = 0; r < roots.length; r++) {
+        var n = roots[r];
+        if (!n.isConnected) continue;
+        if (n.tagName === 'IMG') { if (!n.hasAttribute('decoding')) imgs.push(n); }
+        else if (n.querySelectorAll) imgs = imgs.concat(Array.prototype.slice.call(n.querySelectorAll(RULES.sel.listImg)));
+      }
+    } else {
+      var root = document.querySelector(RULES.sel.contentRoot);
+      if (root) imgs = root.querySelectorAll(RULES.sel.listImg);
+    }
+    for (var i = 0; i < imgs.length; i++) imgs[i].setAttribute('decoding', 'async');
   }
 
   function trimCaches() {
@@ -1488,12 +1624,32 @@
     if (!cfg.sleepBadge || !badgeText || !p || !isWatch()) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
     if (!el || el.parentNode !== p) {
       if (el && el.parentNode) el.parentNode.removeChild(el);
-      el = document.createElement('div');
+      // tap = more time, long press = the timer choices (309); its own events never reach the player
+      el = document.createElement('button');
       el.id = 'ytl-badge';
-      el.setAttribute('aria-hidden', 'true');
+      el.type = 'button';
+      el.appendChild(document.createElement('span'));
+      var held = 0, longDone = false;
+      var stop = function (ev) { ev.stopPropagation(); };
+      el.addEventListener('touchstart', function (ev) {
+        stop(ev); longDone = false; clearTimeout(held);
+        held = setTimeout(function () { longDone = true; call('sleepBadgeLong'); }, 600);
+      }, { passive: true });
+      el.addEventListener('touchend', function (ev) { stop(ev); clearTimeout(held); }, { passive: true });
+      el.addEventListener('touchmove', function () { clearTimeout(held); }, { passive: true });
+      el.addEventListener('contextmenu', function (ev) { ev.preventDefault(); stop(ev); });
+      el.addEventListener('click', guard('badge-tap', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        if (longDone) { longDone = false; return; }
+        call('sleepBadgeTap');
+      }), true);
       p.appendChild(el);
     }
-    if (el.textContent !== badgeText) el.textContent = badgeText;
+    var span = el.firstChild;
+    if (span.textContent !== badgeText) {
+      span.textContent = badgeText;
+      el.setAttribute('aria-label', badgeText + '，点按延长，长按选择时长');
+    }
   });
 
   /* ---------- 10e. what plays next (21/22) ----------
@@ -1578,7 +1734,13 @@
         var pl = p && p.getPlaylist && p.getPlaylist();
         var idx = p && p.getPlaylistIndex ? p.getPlaylistIndex() : -1;
         if (pl && pl.length && idx >= 0 && idx < pl.length - 1) { log('next', 'playlist'); p.nextVideo(); return; }
-        if (pl && pl.length && idx >= pl.length - 1) { log('next', 'playlist end: stop'); return; }
+        if (pl && pl.length && idx >= pl.length - 1) {
+          // list finished (313): stop as before, or go on with a recommendation; never while a timer runs
+          var rec = cfg.listEndNext && !sleeping ? (firstUnwatchedLink(id) || recLink()) : null;
+          if (rec) { log('next', 'playlist end: recommended'); rec.click(); return; }
+          log('next', 'playlist end: stop');
+          return;
+        }
       } catch (e) {}
       next();
       return;
@@ -1586,6 +1748,13 @@
     if (mode === 'channel') {
       var a = sameChannelLink(id);
       if (a) { log('next', 'same channel'); a.click(); return; }
+      // sleeping, "same channel or stop" (315): no unknown video after falling asleep
+      if (sleeping && cfg.sleepStrict) {
+        log('next', 'no same-channel video: sleep timer ends here');
+        sleepPause();
+        call('sleepFired');
+        return;
+      }
       log('next', 'no same-channel video, recommended');
     }
     if (mode === 'unseen') {
@@ -1593,6 +1762,11 @@
       if (u) { log('next', 'skipped a watched autoplay target'); u.click(); return; }
     }
     next();
+  }
+  /** Link of what YouTube's autoplay would play (313). */
+  function recLink() {
+    var it = upNextItem();
+    return it ? it.querySelector('a[href*="/watch?v="]') : null;
   }
   /** Up next (311): the first related video, i.e. what YouTube's autoplay would play. */
   function upNextItem() {
@@ -1653,6 +1827,7 @@
     // not run: set it here for the new video as well (249)
     autonavFor = '';
     forceAutonav();
+    updateToolsBtn();
   }
 
   function pos(v) { return Math.round((v.currentTime || 0) * 1000); }
@@ -1802,9 +1977,9 @@
   });
 
   /* ---------- 11. "Video paused. Continue watching?" ---------- */
-  var STILL_RE = /continue watching|still watching|still there|are you there|video paused|还在看吗|你还在吗|继续观看|仍在观看|视频已暂停|繼續觀看|仍在觀看|影片已暫停/i;
-  var STILL_YES_RE = /^(?:是|是的|继续|继续观看|继续播放|繼續|繼續觀看|繼續播放|yes|continue|continue watching|keep watching|i'm still here|still watching)$/i;
-  var STILL_NO_RE = /^(?:否|不|取消|退出|停止|no|cancel|exit|stop|dismiss)$/i;
+  var STILL_RE = textRe('still');
+  var STILL_YES_RE = textRe('stillYes');
+  var STILL_NO_RE = textRe('stillNo');
   var dismissStillWatching = guard('still', function () {
     if (userPaused) return;
     var dlg = document.querySelector(RULES.sel.stillDialog);
@@ -1852,13 +2027,22 @@
   function refresh(force) {
     if (refreshing) return true;
     // offline (318): keep what is on screen, clear nothing
-    if (offline()) { call('toast', '当前离线，已保留列表'); return false; }
+    if (offline()) { call('toast', S('offline', '当前离线，已保留列表')); return false; }
     // something is playing (317): reloading would stop it, so ask first (Java shows the snack bar)
     if (force !== true && playingNow() && B && typeof B.confirmRefresh === 'function') { call('confirmRefresh'); return false; }
     refreshing = true;
     var done = false;
     var go = function () { if (done) return; done = true; refreshing = false; call('hardReload'); };
-    try { sessionStorage.clear(); } catch (e) {}
+    var light = !!cfg.lightRefresh;   // (316, experimental): service worker and static caches stay
+    try {
+      if (!light) sessionStorage.clear();
+      else {
+        // YouTube's own session keys go, this script's retry / state keys stay
+        var sk = [];
+        for (var si = 0; si < sessionStorage.length; si++) { var kk = sessionStorage.key(si); if (kk && kk.indexOf('ytl_') !== 0) sk.push(kk); }
+        sk.forEach(function (k) { sessionStorage.removeItem(k); });
+      }
+    } catch (e) {}
     var jobs = [];
     try {
       if (window.indexedDB && indexedDB.databases) {
@@ -1870,14 +2054,14 @@
       }
     } catch (e) {}
     try {
-      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      if (!light && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
         jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
           return Promise.all(rs.map(function (r) { return r.unregister(); }));
         }));
       }
     } catch (e) {}
     try {
-      if (window.caches && caches.keys) {
+      if (!light && window.caches && caches.keys) {
         jobs.push(caches.keys().then(function (ks) {
           return Promise.all(ks.map(function (k) { return caches.delete(k); }));
         }));
@@ -1973,7 +2157,7 @@
     for (var i = 0; i < AGO.length; i++) { var m = AGO[i][0].exec(t); if (m) return (+m[1]) * AGO[i][1]; }
     return -1;
   }
-  var LIVE_RE = /^(?:LIVE|直播|直播中|正在直播|PREMIERE|PREMIERES?|首映|首播|UPCOMING|即将|即將|SCHEDULED)/i;
+  var LIVE_RE = textRe('live');
   function linkId(a) {
     var m = a && /[?&]v=([\w-]{6,})/.exec(a.getAttribute('href') || '');
     return m ? m[1] : '';
@@ -2020,20 +2204,49 @@
         if (keys.indexOf(be.key) >= 0) return 'channel';
       }
     }
-    var ti = lc(info.title), bw = cfg.blockWords || [];
-    for (var j = 0; j < bw.length; j++) { var w = lc(bw[j]); if (w && ti.indexOf(w) >= 0) return 'word'; }
+    if (wordBlocked(info.title)) return 'word';
     if (!deep) return '';
     if (cfg.hideLive && info.live) return 'live';
     if (cfg.minDur > 0 && info.dur >= 0 && info.dur < cfg.minDur * 60) return 'short';
     if (cfg.maxAgeDays > 0 && info.age > cfg.maxAgeDays) return 'old';
     return '';
   }
+  /* keyword lines (57/323): plain words, "re:" + a regular expression (≤ 100 characters, a broken one
+   * is ignored) and "!" + an allow word (a title with it is never hidden by the keyword rules) */
+  var wordCache = { key: null };
+  function wordRules() {
+    var bw = cfg.blockWords || [];
+    var k = JSON.stringify(bw);
+    if (wordCache.key === k) return wordCache;
+    var w = { key: k, plain: [], res: [], allow: [] };
+    for (var i = 0; i < bw.length; i++) {
+      var x = String(bw[i] || '').trim();
+      if (!x) continue;
+      if (/^re:/i.test(x)) {
+        var src = x.slice(3).trim();
+        if (src && src.length <= 100) { try { w.res.push(new RegExp(src, 'i')); } catch (e) { log('words', 'bad pattern ignored: ' + src.slice(0, 40)); } }
+      } else if (x.charAt(0) === '!') {
+        var al = lc(x.slice(1));
+        if (al) w.allow.push(al);
+      } else w.plain.push(lc(x));
+    }
+    wordCache = w;
+    return w;
+  }
+  function wordBlocked(title) {
+    var w = wordRules(), ti = lc(title);
+    if (!ti || (!w.plain.length && !w.res.length)) return false;
+    for (var a = 0; a < w.allow.length; a++) if (ti.indexOf(w.allow[a]) >= 0) return false;
+    for (var p = 0; p < w.plain.length; p++) if (ti.indexOf(w.plain[p]) >= 0) return true;
+    for (var r = 0; r < w.res.length; r++) if (w.res[r].test(title)) return true;
+    return false;
+  }
   function anyFilter() {
     return !!(hiddenList.length || (cfg.blockChannels || []).length || (cfg.blockWords || []).length || cfg.minDur > 0 || cfg.maxAgeDays > 0 || cfg.hideLive);
   }
   /* sponsored cards by their label (285): when YouTube renames its ad components the element rules
    * miss them, the short "Sponsored / 广告" label stays. Exact match of a short text only. */
-  var AD_LABEL_RE = /^(?:赞助|贊助|广告|廣告|赞助商广告|贊助商廣告|sponsored|ad|ads)$/i;
+  var AD_LABEL_RE = textRe('adLabel');
   function adLabelHit(it) {
     var l = it.querySelectorAll(RULES.sel.adLabel);
     var extra = remote.adText || [];
@@ -2047,11 +2260,14 @@
   }
   var filterKey = '', filtered = 0;
   /** items: only these cards (incremental pass, 256); none: every card on the page. */
+  var filtersPaused = false;   // "show everything" on an emptied feed (326), this page session only
   var filterCards = guard('filter', function (items) {
     var pt = pageType();
-    var userOn = anyFilter() && pt !== 'channel' && pt !== 'other' && pt !== 'playlist';
+    var userOn = !filtersPaused && anyFilter() && pt !== 'channel' && pt !== 'other' && pt !== 'playlist';
+    // channel pages (330): only what was hidden by hand; channel / keyword rules would empty the page
+    var chanHidden = !filtersPaused && pt === 'channel' && hiddenList.length > 0;
     var key = JSON.stringify([cfg.blockChannels, cfg.blockWords, cfg.minDur, cfg.maxAgeDays, cfg.hideLive, hiddenList.length, pt, userOn,
-      (remote.adText || []).length]);
+      (remote.adText || []).length, chanHidden]);
     if (key !== filterKey) {
       filterKey = key;
       items = null;   // something changed: judge every card again
@@ -2070,7 +2286,8 @@
       var mark = key + '|' + (a ? a.getAttribute('href') : '');
       if (it.__ytlF === mark) continue;   // already judged (recycled nodes get a new href)
       it.__ytlF = mark;
-      var why = adLabelHit(it) ? 'ad' : (userOn ? filterReason(cardInfo(it), deep, it) : '');
+      var why = adLabelHit(it) ? 'ad' : userOn ? filterReason(cardInfo(it), deep, it)
+        : chanHidden && hiddenList.indexOf(linkId(a)) >= 0 ? 'hidden' : '';
       if (why) { if (it.getAttribute('data-ytl-filter') !== why) { it.setAttribute('data-ytl-filter', why); filtered++; } }
       else if (it.hasAttribute('data-ytl-filter')) it.removeAttribute('data-ytl-filter');
     }
@@ -2085,7 +2302,7 @@
     filterKey = '';
     filterCards();
     // a slip of the finger costs nothing (324): 4 s to take it back
-    snackBar('已隐藏这个视频', '撤销', function () { unhideVideo(id); }, 4000);
+    snackBar(S('hidden', '已隐藏这个视频'), S('undo', '撤销'), function () { unhideVideo(id); }, 4000);
   }
   function unhideVideo(id) {
     hiddenList = hiddenIds().filter(function (x) { return x !== id; });
@@ -2124,13 +2341,88 @@
     var n = newCount(ids, hist);
     // how many cards the filters took away (321), so a short feed is not a mystery
     var gone = document.querySelectorAll('[data-ytl-filter]:not([data-ytl-filter="ad"]), [data-ytl-seen]').length;
-    call('toast', (n ? '更新了 ' + n + ' 个新视频' : '暂时没有新视频，稍后再刷新试试') + (gone ? ' · 已过滤 ' + gone + ' 个' : ''));
+    call('toast', (n ? S('newVideos', '更新了 {n} 个新视频').replace('{n}', n) : S('noNew', '暂时没有新视频，稍后再刷新试试')) +
+      (gone ? S('filteredN', ' · 已过滤 {n} 个').replace('{n}', gone) : ''));
   });
 
+  /* filters emptied the home feed (326): say so at the top, with a way to see everything this time */
+  var checkEmptyFeed = guard('empty-feed', function () {
+    var el = document.getElementById('ytl-empty');
+    var drop = function () { if (el && el.parentNode) el.parentNode.removeChild(el); };
+    if (pageType() !== 'home' || filtersPaused) { drop(); return; }
+    var all = document.querySelectorAll(RULES.sel.feedItem);
+    var gone = 0, shown = 0;
+    for (var i = 0; i < all.length; i++) {
+      var it = all[i], f = it.getAttribute('data-ytl-filter');
+      if (it.hasAttribute('data-ytl-seen') || (f && f !== 'ad')) gone++;
+      else if (!f) shown++;
+    }
+    if (shown > 0 || gone < 4) { drop(); return; }
+    var first = all[0], box = first && first.parentNode;
+    if (!box || !box.parentNode) return;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ytl-empty';
+      el.setAttribute('role', 'status');
+      var span = document.createElement('span');
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = S('showAll', '暂时显示全部');
+      btn.addEventListener('click', guard('empty-show', function (ev) {
+        ev.preventDefault(); ev.stopPropagation();
+        filtersPaused = true;
+        filterKey = '';
+        var seen = document.querySelectorAll('[data-ytl-seen]');
+        for (var k = 0; k < seen.length; k++) seen[k].removeAttribute('data-ytl-seen');
+        seenCount = 0;
+        filterCards();
+        drop();
+      }), true);
+      el.appendChild(span);
+      el.appendChild(btn);
+    }
+    if (el.parentNode !== box.parentNode || el.nextSibling !== box) box.parentNode.insertBefore(el, box);
+    var txt = S('filteredAll', '已按你的过滤隐藏 {n} 个视频').replace('{n}', gone);
+    if (el.firstChild.textContent !== txt) el.firstChild.textContent = txt;
+  });
+
+  /* once a day, the first time home has its feed (284): cards that still say "Sponsored / 广告" in a
+   * short label but are on screen go to the missed-ads log. Read only, nothing is changed. */
+  var LEAK_KEY = 'ytl_leakscan';
+  var LEAK_RE = /(?:^|[\s·•|])(?:赞助|贊助|广告|廣告|sponsored|ad)(?:$|[\s·•|:：])/i;
+  var leakQueued = false;
+  function today() { var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+  var leakScan = guard('leak-scan', function () {
+    var items = document.querySelectorAll(RULES.sel.feedItem), n = 0, ids = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.closest('[data-ytl-filter], [data-ytl-hide], [data-ytl-seen]')) continue;
+      try { if (window.getComputedStyle && getComputedStyle(it).display === 'none') continue; } catch (e) {}
+      var labels = it.querySelectorAll(RULES.sel.adLabel + ', ' + RULES.sel.cardMeta), hit = false;
+      for (var j = 0; j < labels.length && !hit; j++) { var t = textOf(labels[j]); if (t.length <= 40 && LEAK_RE.test(t)) hit = true; }
+      if (hit) { n++; var id = linkId(it.querySelector('a[href*="/watch?v="]')); if (id && ids.length < 3) ids.push(id); }
+    }
+    if (n > 0) call('logAd', ids[0] || '-', 'suspect-leak x' + n, 'home', adContext() + (ids.length ? ' ids=' + ids.join(',') : ''));
+    else log('leak-scan', 'home ok, ' + items.length + ' cards');
+  });
+  function maybeLeakScan() {
+    if (leakQueued || pageType() !== 'home' || !countDone) return;
+    var d = today();
+    try { if (localStorage.getItem(LEAK_KEY) === d) { leakQueued = true; return; } localStorage.setItem(LEAK_KEY, d); } catch (e) { return; }
+    leakQueued = true;
+    setTimeout(leakScan, 3000);   // the feed settles first
+  }
+
   // search: shelves like "People also watched" (70)
-  var SEARCHX_RE = /people also|also watched|also search|for you|previously watched|related to your search|人们还|大家还|其他人还|为你推荐|為你推薦|相关搜索|相關搜尋|你看过|看過的影片/i;
+  var SEARCHX_RE = textRe('searchExtra');
   var markSearchExtras = guard('search-extras', function () {
     if (pageType() !== 'search') return;
+    // auto-generated mixes (333): marked here, hidden by CSS only while the setting is on
+    var mixes = document.querySelectorAll(RULES.sel.mixLink);
+    for (var m = 0; m < mixes.length; m++) {
+      var card = mixes[m].closest(RULES.sel.mixCard);
+      if (card && !card.hasAttribute('data-ytl-searchmix')) card.setAttribute('data-ytl-searchmix', '');
+    }
     var l = document.querySelectorAll(RULES.sel.searchShelf);
     for (var i = 0; i < l.length; i++) {
       var h = l[i].querySelector(RULES.sel.shelfTitle);
@@ -2151,7 +2443,16 @@
     call('showKeyboard');
   });
   // quick filters on search results (125): plain links to YouTube's own filter URLs
-  var CHIPS = [['全部', ''], ['最新', 'CAI%3D'], ['只看视频', 'EgIQAQ%3D%3D'], ['本周', 'EgIIAw%3D%3D'], ['4–20 分钟', 'EgIYAw%3D%3D'], ['20 分钟以上', 'EgIYAg%3D%3D']];
+  function chipList() { return remote.chips || RULES.chips; }   // (328) rules.json can replace them
+  function decSp(x) { try { return decodeURIComponent(x || ''); } catch (e) { return x || ''; } }
+  var CHIP_KEY = 'ytl_chip';
+  /** A chip was used (328): the result page must still carry its sp, else YouTube changed the format. */
+  function checkChipSp(sp) {
+    var want = null;
+    try { want = sessionStorage.getItem(CHIP_KEY); if (want !== null) sessionStorage.removeItem(CHIP_KEY); } catch (e) {}
+    if (want === null || decSp(want) === decSp(sp)) return;
+    log('chips', 'filter not applied: sent sp=' + want.slice(0, 40) + ' page sp=' + String(sp).slice(0, 40));
+  }
   var ensureChips = guard('chips', function () {
     var el = document.getElementById('ytl-chips');
     var params = new URLSearchParams(location.search);
@@ -2160,6 +2461,7 @@
     var host = document.querySelector(RULES.sel.searchList);
     if (!host || !host.parentNode) return;
     var sp = params.get('sp') || '';
+    checkChipSp(sp);
     var key = q + '|' + sp;
     if (el && el.nextSibling === host && el.getAttribute('data-k') === key) return;
     if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -2168,13 +2470,19 @@
     el.setAttribute('data-k', key);
     el.setAttribute('role', 'toolbar');
     el.setAttribute('aria-label', '搜索筛选');
+    var CHIPS = chipList();
     for (var i = 0; i < CHIPS.length; i++) {
       var a = document.createElement('a');
       a.href = '/results?search_query=' + encodeURIComponent(q) + (CHIPS[i][1] ? '&sp=' + CHIPS[i][1] : '');
       a.textContent = CHIPS[i][0];
-      if (decodeURIComponent(sp) === decodeURIComponent(CHIPS[i][1])) a.setAttribute('aria-current', 'true');
+      a.setAttribute('data-sp', CHIPS[i][1]);
+      if (decSp(sp) === decSp(CHIPS[i][1])) a.setAttribute('aria-current', 'true');
       el.appendChild(a);
     }
+    el.addEventListener('click', function (ev) {
+      var ca = ev.target && ev.target.closest && ev.target.closest('a[data-sp]');
+      if (ca) { try { sessionStorage.setItem(CHIP_KEY, ca.getAttribute('data-sp') || ''); } catch (e) {} }
+    }, true);
     host.parentNode.insertBefore(el, host);
   });
 
@@ -2183,29 +2491,56 @@
   function feedPage(pt) { return pt === 'feed' || pt === 'subs' || pt === 'history' || pt === 'library'; }
   function listPage(pt) { return pt === 'home' || feedPage(pt) || pt === 'playlist' || pt === 'search' || pt === 'channel'; }
   function urlKey() { return location.pathname + location.search; }
+  var SCROLL_MEM_MAX = 20;   // last 20 lists only (266)
   function rememberScroll() {
     if (!cfg.keepScroll || !listPage(pageType())) return;
-    var y = window.scrollY || 0;
-    if (y > 200) scrollMem[urlKey()] = y; else delete scrollMem[urlKey()];
+    var y = window.scrollY || 0, k = urlKey();
+    delete scrollMem[k];             // re-added at the end: the oldest list goes first
+    if (y > 200) scrollMem[k] = y;
+    var keys = Object.keys(scrollMem);
+    for (var i = 0; i < keys.length - SCROLL_MEM_MAX; i++) delete scrollMem[keys[i]];
   }
+  var restoreRo = null;
+  /* back to a list (119/266): scroll as soon as the page is tall enough. A ResizeObserver on the page
+   * reacts the moment it grows; a slower poll stays as the fallback (a page whose root box never resizes). */
   var restoreScroll = guard('scroll-restore', function () {
     clearTimeout(restoreTimer);
+    if (restoreRo) { restoreRo.disconnect(); restoreRo = null; }
     var y = scrollMem[urlKey()];
     if (!cfg.keepScroll || !y || !listPage(pageType())) return;
-    var start = Date.now(), t0 = lastInput;
-    (function tryIt() {
-      if (lastInput !== t0) return;              // the user is touching the page: leave it alone
-      if ((window.scrollY || 0) > 100) return;   // YouTube restored it by itself
+    var start = Date.now(), t0 = lastInput, done = false;
+    function stop() {
+      done = true;
+      clearTimeout(restoreTimer);
+      if (restoreRo) { restoreRo.disconnect(); restoreRo = null; }
+    }
+    function tryIt() {
+      if (done) return true;
+      if (lastInput !== t0 || (window.scrollY || 0) > 100) { stop(); return true; }   // touched / YouTube did it
       var h = document.documentElement.scrollHeight || 0;
-      if (h >= y + (window.innerHeight || 0) * 0.5) { window.scrollTo(0, y); return; }
-      if (Date.now() - start < 3000) restoreTimer = setTimeout(guard('scroll-try', tryIt), 120);
-    })();
+      if (h >= y + (window.innerHeight || 0) * 0.5) { window.scrollTo(0, y); stop(); return true; }
+      if (Date.now() - start >= 3000) { stop(); return true; }
+      return false;
+    }
+    if (tryIt()) return;
+    if (window.ResizeObserver) {
+      try {
+        restoreRo = new ResizeObserver(guard('scroll-ro', function () { tryIt(); }));
+        restoreRo.observe(document.documentElement);
+        if (document.body) restoreRo.observe(document.body);
+      } catch (e) { restoreRo = null; }
+    }
+    (function poll() { if (!tryIt()) restoreTimer = setTimeout(guard('scroll-try', poll), restoreRo ? 300 : 120); })();
   });
 
   /* ---------- 18. long-press a video card: quick menu (123) ---------- */
-  var lp = { timer: 0, x: 0, y: 0, item: null, firedAt: 0 };
+  var lp = { timer: 0, x: 0, y: 0, item: null, firedAt: 0, press: 0, pressed: null };
   var menuItem = null;
-  function lpCancel() { clearTimeout(lp.timer); lp.item = null; }
+  function unpress() {
+    clearTimeout(lp.press);
+    if (lp.pressed) { lp.pressed.removeAttribute('data-ytl-press'); lp.pressed = null; }
+  }
+  function lpCancel() { clearTimeout(lp.timer); lp.item = null; unpress(); }
   document.addEventListener('touchstart', function (e) {
     if (!cfg.longPress || !e.touches || e.touches.length !== 1) { lpCancel(); return; }
     var t = e.target;
@@ -2213,7 +2548,10 @@
     if (!it || t.closest('button, input, textarea, ytm-menu-renderer')) { lpCancel(); return; }
     lp.item = it; lp.x = e.touches[0].clientX; lp.y = e.touches[0].clientY;
     clearTimeout(lp.timer);
+    unpress();
     lp.timer = setTimeout(guard('longpress', fireLongPress), 520);
+    // held for 150 ms: the card shows it is being pressed (368)
+    lp.press = setTimeout(function () { if (lp.item === it && it.isConnected) { it.setAttribute('data-ytl-press', ''); lp.pressed = it; } }, 150);
   }, { capture: true, passive: true });
   document.addEventListener('touchmove', function (e) {
     if (!lp.item || !e.touches || !e.touches.length) return;
@@ -2224,6 +2562,7 @@
   function fireLongPress() {
     var it = lp.item;
     lp.item = null;
+    unpress();
     if (!it || !it.isConnected) return;
     var info = cardInfo(it);
     if (!info.id) return;
@@ -2255,7 +2594,7 @@
     if (!/^[\w-]{6,20}$/.test(id || '')) return Promise.resolve(false);
     var yc = window.ytcfg && typeof ytcfg.get === 'function' ? ytcfg : null;
     var sap = cookieVal('SAPISID') || cookieVal('__Secure-3PAPISID');
-    if (!yc || !sap || !window.crypto || !crypto.subtle || !yc.get('INNERTUBE_CONTEXT')) { call('toast', '登录 YouTube 后才能加入稍后观看'); return Promise.resolve(false); }
+    if (!yc || !sap || !window.crypto || !crypto.subtle || !yc.get('INNERTUBE_CONTEXT')) { call('toast', S('wlLogin', '登录 YouTube 后才能加入稍后观看')); return Promise.resolve(false); }
     var ts = Math.floor(Date.now() / 1000), origin = location.origin;
     return sha1Hex(ts + ' ' + sap + ' ' + origin).then(function (h) {
       return fetch('/youtubei/v1/browse/edit_playlist?prettyPrint=false', {
@@ -2271,9 +2610,9 @@
     }).then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
       .then(function (j) {
         var ok = !!(j && (j.status === 'STATUS_SUCCEEDED' || j.playlistEditResults));
-        call('toast', ok ? '已加入稍后观看' : '加入稍后观看失败');
+        call(ok ? 'toast' : 'toastFail', ok ? S('wlOk', '已加入稍后观看') : S('wlFail', '加入稍后观看失败'));
         return ok;
-      }, function (e) { log('watch-later', String(e && e.message || e)); call('toast', '加入稍后观看失败'); return false; });
+      }, function (e) { log('watch-later', String(e && e.message || e)); call('toastFail', S('wlFail', '加入稍后观看失败')); return false; });
   }
 
   /* ---------- 20. page colour for the system bars (92/145), remote CSS (73) ---------- */
@@ -2289,8 +2628,30 @@
     if (li !== true && li !== false) return;
     var key = li ? 'in|' + (ytcfg.get('DATASYNC_ID') || ytcfg.get('DELEGATED_SESSION_ID') || '') : 'out';
     if (loginKey !== null && key !== loginKey) call('loginChanged', !!li);
+    if (loginKey !== key) call('loginState', !!li);   // (346) Java hides "watch later" while signed out
     loginKey = key;
+    accountCheck(li ? String(ytcfg.get('DATASYNC_ID') || '') : '');
   });
+  /* another account than last time (345): the home feed may still be the old account's cached copy,
+   * so it is refreshed once. Only on home, never while playing, at most once a minute. */
+  var ACCT_KEY = 'ytl_acct';
+  function accountCheck(id) {
+    if (!id) return;
+    var prev = null;
+    try { prev = localStorage.getItem(ACCT_KEY); if (prev !== id) localStorage.setItem(ACCT_KEY, id); } catch (e) { return; }
+    if (!prev || prev === id || pageType() !== 'home' || wasRefresh || playingNow()) return;
+    var last = 0;
+    try { last = +(sessionStorage.getItem('ytl_acct_rl') || 0); sessionStorage.setItem('ytl_acct_rl', String(Date.now())); } catch (e) {}
+    if (Date.now() - last < 60000) return;
+    log('login', 'another account: home feed refreshed');
+    refresh(true);
+  }
+  /* first time home is opened signed out (347): one bar that says what signing in brings */
+  function loginHint() {
+    if (pageType() !== 'home' || !loggedOut()) return;
+    try { if (localStorage.getItem('ytl_login_hint')) return; localStorage.setItem('ytl_login_hint', '1'); } catch (e) { return; }
+    call('loginHint');
+  }
   var lastTheme = '', lastThemeCheck = 0;
   function rgbDark(c) {
     var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(c || '');
@@ -2347,10 +2708,7 @@
    * Watches the content root (ytm-app) and the top level of <body> for popups only (42).
    * Mutations only set a flag; the work runs at most every ~200 ms, in idle time, never reads
    * layout, and stops completely while the screen is off / app in background (54). */
-  var FEEDBACK_RE = new RegExp('^(?:help|help ?(?:&|and) ?feedback|send feedback|feedback|give feedback|report|report history|' +
-    'report (?:video|playlist|channel|comment|ad|this ad)|why this ad\\??|帮助|帮助和反馈|帮助与反馈|帮助及反馈|发送反馈|提供反馈|' +
-    '反馈|意见反馈|举报|举报记录|举报视频|举报播放列表|举报频道|說明|說明與意見回饋|提供意見|傳送意見回饋|提供意見回饋|' +
-    '意見回饋|檢舉|檢舉記錄|檢舉影片)$', 'i');
+  var FEEDBACK_RE = textRe('feedback');
   function textOf(el) { return (el.textContent || '').replace(/\s+/g, ' ').trim(); }
   function hideByText(sel, re) {
     var l = document.querySelectorAll(sel);
@@ -2399,6 +2757,14 @@
     b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openTools'); }, true);
     gear.parentNode.insertBefore(b, gear.nextSibling);
   });
+  /** The moon button shows with a loaded video (also in the mini player) or a running timer (363). */
+  function updateToolsBtn() {
+    var b = document.getElementById('ytl-tools');
+    if (!b) return;
+    var want = !!(curId || isWatch() || sleeping || badgeText);
+    if (want === !b.hasAttribute('data-ytl-off')) return;
+    if (want) b.removeAttribute('data-ytl-off'); else b.setAttribute('data-ytl-off', '');
+  }
   // autoplay on by default; off while a "what plays next" rule or a loop decides (21/22/152)
   var forceAutonav = guard('autonav', function () {
     var want = wantAutonav();
@@ -2457,9 +2823,10 @@
     try { watchPlayer(); if (player()) skipAd(); } catch (e) { report('player', e); }
     hideMenus();
     try { hideByText(RULES.sel.shortsText, /^shorts$/i); } catch (e) { report('shorts', e); }
-    if (pt === 'home' || seenCount) markWatched(full ? undefined : dirty.items);
+    if (pt === 'home' || seenCount || (pt === 'watch' && cfg.hideWatchedRelated)) markWatched(full ? undefined : dirty.items);
     ensureGear();
     ensureTools();
+    updateToolsBtn();
     if (pt === 'watch' || badgeText) updateBadge();
     if (pt === 'watch') {
       forceAutonav();
@@ -2468,12 +2835,14 @@
     if (cfg.perfCss) { try { trimThumbs(full ? undefined : dirty.roots); } catch (e) { report('thumbs', e); } }
     addRemoteCss();
     filterCards(full ? undefined : dirty.items);
-    if (pt === 'home') countNew();
+    if (pt === 'home') { countNew(); if (full) checkEmptyFeed(); maybeLeakScan(); }   // (326: full passes only, ≤ 5 s late)
+    else if (document.getElementById('ytl-empty')) checkEmptyFeed();
     if (pt === 'search') { markSearchExtras(); ensureChips(); }
     else if (document.getElementById('ytl-chips')) ensureChips();
     searchFocus();
     reportTheme(false);
     checkLogin();
+    loginHint();
     try { checkObserverRoot(); } catch (e) { report('observer-root', e); }
   }
   var passQueued = false, menuQueued = false, dirty = false;
@@ -2495,9 +2864,19 @@
   }
   var mo = null, moRoot = null;
   function contentRoot() { return document.querySelector(RULES.sel.contentRoot) || document.body || document.documentElement; }
+  /** Watch page (264): a batch that only touched comments / description panels needs no DOM pass. */
+  function quietBatch(recs) {
+    if (pageType() !== 'watch') return false;
+    for (var i = 0; i < recs.length; i++) {
+      var t = recs[i].target;
+      if (!t || t.nodeType !== 1 || !t.closest || !t.closest(RULES.sel.quietZone)) return false;
+    }
+    return recs.length > 0;
+  }
+  var quietSkipped = 0;
   var onMutations = guard('observer', function (recs) {
-    collectDirty(recs);
-    queuePass();
+    if (quietBatch(recs)) quietSkipped++;
+    else { collectDirty(recs); queuePass(); }
     var body = document.body;
     for (var i = 0; i < recs.length; i++) {
       var rec = recs[i], add = rec.addedNodes;
@@ -2598,7 +2977,11 @@
     pickCaption: pickCaption, gearLabel: gearLabel, upNextWatched: upNextWatched, firstUnwatchedLink: firstUnwatchedLink,
     fullPending: function () { return fullNeeded; }, dirtyCount: function () { return dirtyItems.length; },
     curProgress: function () { return curProgress; }, adContext: adContext, sendMeta: function () { sendMeta(); },
-    fadeState: function () { return { end: fade.end, len: fade.len, running: !!fade.timer }; }
+    fadeState: function () { return { end: fade.end, len: fade.len, running: !!fade.timer }; },
+    // batch 6 (v1.8.0)
+    wordBlocked: wordBlocked, textRe: textRe, checkEmptyFeed: checkEmptyFeed, leakScan: leakScan, quietBatch: quietBatch,
+    quietSkipped: function () { return quietSkipped; }, chipList: chipList, remote: function () { return remote; },
+    filtersPaused: function () { return filtersPaused; }, refresh: refresh
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });

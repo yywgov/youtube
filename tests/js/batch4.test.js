@@ -243,9 +243,17 @@ const BOOL = listOf('BOOL_KEYS'), INT = listOf('INT_KEYS'), STR = listOf('STR_KE
 const STATE = ['nightShown', 'lastVideo', 'lastPos', 'lastTitle', 'lastAt', 'updateReady', 'lastRunVersion', 'notesFor', 'notes',
   'watchStats', 'askedBattery', 'askedNotif', 'lastUpdateCheck', 'skipVersion', 'pendingApk', 'sleepState', 'fgsDeniedAt',
   // batch 5 (v1.7.0)
-  'selfCheckWarned', 'updateLastResult', 'chUaFix'];
+  'selfCheckWarned', 'updateLastResult', 'chUaFix',
+  // batch 6 (v1.8.0)
+  'sleepBattery'];
 // keys added after v1.5.1 (new names only; never a rename of an old one)
-const ADDED = { bool: ['wifiSaver', 'idleGuard', 'skipWatchedNext', 'fontLarge', 'orientRemember'], int: ['nightStart', 'nightEnd', 'orientLock'], str: [] };
+const ADDED = {
+  bool: ['wifiSaver', 'idleGuard', 'skipWatchedNext', 'fontLarge', 'orientRemember',
+    // batch 6 (v1.8.0)
+    'hideWatchedRelated', 'hideSearchMix', 'lightRefresh', 'sleepPauseHold', 'sleepModeBlack', 'listEndNext', 'sleepStrict'],
+  int: ['nightStart', 'nightEnd', 'orientLock', 'extendMin'],
+  str: []
+};
 
 test('contract: the 51 v1.5.1 setting keys are unchanged, new ones only added, each in exactly one backup list', async () => {
   const all = BOOL.concat(INT, STR);

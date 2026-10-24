@@ -26,11 +26,33 @@ import java.net.URLEncoder;
  * network work goes to a background executor.
  */
 public class WebAppInterface {
-    private final MainActivity activity;
+    /**
+     * Weak (245): after recreate() the old WebView's bridge must not keep the old activity alive or
+     * act on it; every UI call checks it is still there, everything else uses the application context.
+     */
+    private final java.lang.ref.WeakReference<MainActivity> ref;
+    private final android.content.Context app;
     private final Handler main = new Handler(Looper.getMainLooper());
 
     public WebAppInterface(MainActivity activity) {
-        this.activity = activity;
+        this.ref = new java.lang.ref.WeakReference<>(activity);
+        this.app = activity.getApplicationContext();
+    }
+
+    /** The activity, or null once it is finishing / destroyed. */
+    private MainActivity act() {
+        MainActivity a = ref.get();
+        return a == null || a.isFinishing() || a.isDestroyed() ? null : a;
+    }
+
+    private interface UiJob { void run(MainActivity a); }
+
+    /** Run on the main thread against the activity, dropped when it is gone by then. */
+    private void onUi(final UiJob job) {
+        main.post(() -> {
+            MainActivity a = act();
+            if (a != null) job.run(a);
+        });
     }
 
     @JavascriptInterface
@@ -38,7 +60,7 @@ public class WebAppInterface {
         // settings + the state a freshly (re)loaded page must pick up again:
         // "sleep at end of video" and whether the app is in the background / screen off
         try {
-            JSONObject o = new JSONObject(Prefs.jsConfig(activity));
+            JSONObject o = new JSONObject(Prefs.jsConfig(app));
             o.put("stopAtEnd", SleepTimer.stopsAtEndNow());
             o.put("countMode", SleepTimer.countRunning());
             o.put("sleeping", SleepTimer.active());
@@ -47,33 +69,75 @@ public class WebAppInterface {
             o.put("bg", !MainActivity.isVisible());
             MainActivity.onPageReady();   // queued commands for this page run now (247)
             o.put("adKeys", new JSONArray(WatchPageFilter.adKeysJson()));   // one list with the native filter (279)
+            o.put("strings", pageStrings(app));   // (381)
             return o.toString();
         } catch (Exception e) {
-            return Prefs.jsConfig(activity);
+            return Prefs.jsConfig(app);
         }
+    }
+
+    /** Texts the page shows, from the string resources (381); the script falls back to its own copy. */
+    static JSONObject pageStrings(android.content.Context c) {
+        JSONObject o = new JSONObject();
+        int[] ids = {com.google.android.youtube.pro.R.string.js_offline, com.google.android.youtube.pro.R.string.js_new_videos,
+                com.google.android.youtube.pro.R.string.js_no_new, com.google.android.youtube.pro.R.string.js_filtered_n,
+                com.google.android.youtube.pro.R.string.js_wl_login, com.google.android.youtube.pro.R.string.js_wl_ok,
+                com.google.android.youtube.pro.R.string.js_wl_fail, com.google.android.youtube.pro.R.string.js_hidden,
+                com.google.android.youtube.pro.R.string.js_undo, com.google.android.youtube.pro.R.string.js_skipped,
+                com.google.android.youtube.pro.R.string.js_show_all, com.google.android.youtube.pro.R.string.js_filtered_all};
+        String[] keys = {"offline", "newVideos", "noNew", "filteredN", "wlLogin", "wlOk", "wlFail", "hidden", "undo", "skipped",
+                "showAll", "filteredAll"};
+        for (int i = 0; i < ids.length; i++) {
+            try { o.put(keys[i], c.getString(ids[i])); } catch (Exception ignored) {}
+        }
+        return o;
     }
 
     @JavascriptInterface
     public void mediaMeta(final String title, final String artist, final String art, final long durMs, final String videoId) {
-        main.post(() -> PlaybackService.onMeta(activity, title, artist, art, durMs, videoId));
+        main.post(() -> PlaybackService.onMeta(app, title, artist, art, durMs, videoId));
+    }
+
+    /** Live stream or not (294), sent with the metadata. */
+    @JavascriptInterface
+    public void mediaLive(final boolean live) {
+        main.post(() -> PlaybackService.setLive(live));
+    }
+
+    /** Sleep badge on the player tapped (309): one more step for a minutes timer, else the timer choices. */
+    @JavascriptInterface
+    public void sleepBadgeTap() {
+        if (!allowed("sleepBadgeTap")) return;
+        onUi(a -> {
+            if (SleepTimer.timed()) SleepTimer.extend(a);
+            else a.openSleepPicker();
+        });
+    }
+
+    /** Sleep badge long-pressed (309): the timer choices, with "off". */
+    @JavascriptInterface
+    public void sleepBadgeLong() {
+        if (!allowed("sleepBadgeLong")) return;
+        onUi(MainActivity::openSleepPicker);
     }
 
     @JavascriptInterface
     public void mediaState(final String state, final long posMs, final float rate) {
         main.post(() -> {
-            PlaybackService.onState(activity, state, posMs, rate);
-            activity.onPlayingChanged("playing".equals(state) || "buffering".equals(state));
+            PlaybackService.onState(app, state, posMs, rate);
+            MainActivity a = act();
+            if (a != null) a.onPlayingChanged("playing".equals(state) || "buffering".equals(state));
         });
     }
 
     @JavascriptInterface
     public void setAtTop(final boolean top) {
-        main.post(() -> activity.setPageAtTop(top));
+        onUi(a -> a.setPageAtTop(top));
     }
 
     @JavascriptInterface
     public void setPortrait(final boolean portrait) {
-        main.post(() -> activity.portraitVideo = portrait);
+        onUi(a -> a.portraitVideo = portrait);
     }
 
     /**
@@ -89,20 +153,20 @@ public class WebAppInterface {
     @JavascriptInterface
     public void openSettings() {
         if (!allowed("openSettings")) return;
-        main.post(activity::openSettings);
+        onUi(MainActivity::openSettings);
     }
 
     /** Fresh reload after the script dropped YouTube's client-side caches. */
     @JavascriptInterface
     public void hardReload() {
         if (!allowed("hardReload")) return;
-        main.post(activity::hardReload);
+        onUi(MainActivity::hardReload);
     }
 
     @JavascriptInterface
     public void reloadPage() {
         if (!allowed("reloadPage")) return;
-        main.post(activity::hardReload);
+        onUi(MainActivity::hardReload);
     }
 
     @JavascriptInterface
@@ -121,7 +185,7 @@ public class WebAppInterface {
     public boolean isMetered() {
         try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
-                    activity.getApplicationContext().getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+                    app.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
             return cm != null && cm.isActiveNetworkMetered();
         } catch (Exception e) {
             return false;
@@ -134,7 +198,7 @@ public class WebAppInterface {
         if (!allowed("saveRate")) return;
         try {
             double r = Double.parseDouble(rate);
-            if (r >= 0.25 && r <= 2) Prefs.put(activity, Prefs.RATE, String.valueOf(r));
+            if (r >= 0.25 && r <= 2) Prefs.put(app, Prefs.RATE, String.valueOf(r));
         } catch (Exception ignored) {}
     }
 
@@ -142,7 +206,7 @@ public class WebAppInterface {
     @JavascriptInterface
     public void savePos(final String videoId, final long sec, final String title) {
         if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{6,20}") || !allowed("savePos")) return;
-        Prefs.get(activity).edit()
+        Prefs.get(app).edit()
                 .putString(Prefs.LAST_VIDEO, videoId)
                 .putLong(Prefs.LAST_POS, Math.max(0, sec))
                 .putString(Prefs.LAST_TITLE, title == null ? "" : (title.length() > 120 ? title.substring(0, 120) : title))
@@ -154,61 +218,86 @@ public class WebAppInterface {
     @JavascriptInterface
     public void openTools() {
         if (!allowed("openTools")) return;
-        main.post(activity::openTools);
+        onUi(MainActivity::openTools);
     }
 
     /** Long-press on a video card (123): native quick menu. */
     @JavascriptInterface
     public void cardMenu(final String json) {
         if (json == null || json.length() > 2000 || !allowed("cardMenu")) return;
-        main.post(() -> activity.cardMenu(json));
+        onUi(a -> a.cardMenu(json));
     }
 
     /** Search box opened (124). */
     @JavascriptInterface
     public void showKeyboard() {
         if (!allowed("showKeyboard")) return;
-        main.post(activity::showKeyboard);
+        onUi(MainActivity::showKeyboard);
     }
 
     /** Page background colour for the system bars (92/145). */
     @JavascriptInterface
     public void pageTheme(final String color) {
-        main.post(() -> activity.applyTheme(color));
+        onUi(a -> a.applyTheme(color));
     }
 
     /** Remote rules (73): the cached, already verified rules.json, or "" (built-in rules only). */
     @JavascriptInterface
     public String getRemoteRules() {
-        return com.google.android.youtube.pro.RemoteRules.cached(activity);
+        return com.google.android.youtube.pro.RemoteRules.cached(app);
     }
 
     /** Pull / Home tap while something plays in the mini player (317). */
     @JavascriptInterface
     public void confirmRefresh() {
         if (!allowed("confirmRefresh")) return;
-        main.post(activity::confirmRefresh);
+        onUi(MainActivity::confirmRefresh);
     }
 
     /** The page saw the sign-in state or the account change (343): flush cookies now. */
     @JavascriptInterface
     public void loginChanged(final boolean signedIn) {
         main.post(() -> {
-            activity.flushCookies();
+            try { android.webkit.CookieManager.getInstance().flush(); } catch (Throwable ignored) {}
             Diag.log("login", signedIn ? "signed in / account changed: cookies flushed" : "signed out");
         });
+    }
+
+    /** Signed in or not, as the page sees it (346): "watch later" buttons only make sense signed in. */
+    @JavascriptInterface
+    public void loginState(final boolean signedIn) {
+        main.post(() -> MainActivity.setSignedIn(signedIn));
+    }
+
+    /** First time home is opened signed out (347): one bar with a way to sign in. */
+    @JavascriptInterface
+    public void loginHint() {
+        if (!allowed("loginHint")) return;
+        onUi(MainActivity::showLoginHint);
     }
 
     /** Offline check for the refresh (318); unknown counts as online. */
     @JavascriptInterface
     public boolean isOnline() {
-        return activity.isOnline();
+        MainActivity a = act();
+        return a == null || a.isOnline();
     }
 
+    /** A short message from the page: the app's own bar when it is on screen, a toast otherwise (356). */
     @JavascriptInterface
     public void toast(final String text) {
-        if (text == null || !allowed("toast")) return;
-        main.post(() -> Toast.makeText(activity.getApplicationContext(), text, Toast.LENGTH_SHORT).show());
+        if (text == null || text.length() > 300 || !allowed("toast")) return;
+        main.post(() -> MainActivity.notifyText(app, text));
+    }
+
+    /** Same, for something that did not work: a "reject" vibration with it (372). */
+    @JavascriptInterface
+    public void toastFail(final String text) {
+        if (text == null || text.length() > 300 || !allowed("toastFail")) return;
+        main.post(() -> {
+            MainActivity.notifyText(app, text);
+            MainActivity.hapticNow(com.google.android.youtube.pro.Ui.HAPTIC_REJECT);
+        });
     }
 
     /**
@@ -223,7 +312,7 @@ public class WebAppInterface {
             JSONArray out = new JSONArray();
             HttpURLConnection c = null;
             try {
-                java.util.List<String> chosen = Prefs.sponsorCats(activity);
+                java.util.List<String> chosen = Prefs.sponsorCats(app);
                 if (chosen.isEmpty()) throw new Exception("no categories");
                 JSONArray catArr = new JSONArray();
                 for (String k : chosen) catArr.put(k);
@@ -286,7 +375,7 @@ public class WebAppInterface {
     @JavascriptInterface
     public void selfCheckFailed(final String what) {
         if (what == null || what.length() > 200) return;
-        main.post(() -> activity.onSelfCheckFailed(what));
+        onUi(a -> a.onSelfCheckFailed(what));
     }
 
     private static String read(InputStream in) throws java.io.IOException {

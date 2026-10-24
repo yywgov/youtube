@@ -6,4 +6,30 @@
 	<string name="sc_subs_long">打开订阅</string>
 	<string name="sc_later_short">稍后观看</string>
 	<string name="sc_later_long">打开稍后观看</string>
+	<!-- texts the page script shows (381); the script keeps a built-in copy as fallback -->
+	<string name="js_offline">当前离线，已保留列表</string>
+	<string name="js_new_videos">更新了 {n} 个新视频</string>
+	<string name="js_no_new">暂时没有新视频，稍后再刷新试试</string>
+	<string name="js_filtered_n"> · 已过滤 {n} 个</string>
+	<string name="js_wl_login">登录 YouTube 后才能加入稍后观看</string>
+	<string name="js_wl_ok">已加入稍后观看</string>
+	<string name="js_wl_fail">加入稍后观看失败</string>
+	<string name="js_hidden">已隐藏这个视频</string>
+	<string name="js_undo">撤销</string>
+	<string name="js_skipped">已跳过</string>
+	<string name="js_show_all">暂时显示全部</string>
+	<string name="js_filtered_all">已按你的过滤隐藏 {n} 个视频</string>
+	<!-- playback notification and media card (380) -->
+	<string name="n_channel">后台播放</string>
+	<string name="n_rew">快退 10 秒</string>
+	<string name="n_fwd">快进 30 秒</string>
+	<string name="n_prev">上一个</string>
+	<string name="n_next">下一个</string>
+	<string name="n_pause">暂停</string>
+	<string name="n_play">播放</string>
+	<string name="n_close">关闭</string>
+	<string name="n_wl">稍后观看</string>
+	<string name="n_extend">+%1$d 分钟</string>
+	<string name="n_interrupted">播放被系统中断 · 点此继续</string>
+	<string name="n_net">网络中断，恢复后自动继续</string>
 </resources>

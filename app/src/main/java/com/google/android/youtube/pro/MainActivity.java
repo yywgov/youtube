@@ -569,7 +569,7 @@ public class MainActivity extends Activity {
         if (clearHistoryOnFinish && web != null) {
             clearHistoryOnFinish = false;
             web.clearHistory(); // refreshed home is the new root: back leaves the app
-            haptic();           // refresh finished (120)
+            haptic(Ui.HAPTIC_CONFIRM);   // refresh finished (120/372)
         }
     }
 
@@ -602,7 +602,7 @@ public class MainActivity extends Activity {
         if (!isOnline()) {
             // offline (318): keep the list that is on screen instead of reloading into an error page
             swipe.setRefreshing(false);
-            Toast.makeText(this, "当前离线，已保留列表", Toast.LENGTH_SHORT).show();
+            say("当前离线，已保留列表");
             return;
         }
         // the pull gesture's spinner goes away at once; the thin top bar shows the reload
@@ -801,7 +801,7 @@ public class MainActivity extends Activity {
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         } catch (Exception e) {
-            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show();
+            say("无法打开链接");
         }
     }
 
@@ -871,16 +871,20 @@ public class MainActivity extends Activity {
     }
 
     /** Light tap for key actions (120). */
-    public void haptic() {
+    public void haptic() { haptic(Ui.HAPTIC_TAP); }
+
+    /** Kind of tap (372): confirm / reject / long press feel different on Android 11+. */
+    public void haptic(int kind) {
         try {
             if (!Prefs.on(this, Prefs.HAPTIC) || web == null) return;
-            web.performHapticFeedback(Build.VERSION.SDK_INT >= 23 ? android.view.HapticFeedbackConstants.CONTEXT_CLICK
-                    : android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            web.performHapticFeedback(Ui.hapticConstant(kind));
         } catch (Throwable ignored) {}
     }
 
-    public static void hapticNow() {
-        MAIN.post(() -> { MainActivity a = current.get(); if (a != null) a.haptic(); });
+    public static void hapticNow() { hapticNow(Ui.HAPTIC_TAP); }
+
+    public static void hapticNow(final int kind) {
+        MAIN.post(() -> { MainActivity a = current.get(); if (a != null) a.haptic(kind); });
     }
 
     public void showKeyboard() {
@@ -909,7 +913,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!id.matches("[A-Za-z0-9_-]{6,20}") || isFinishing()) return;
-        haptic();
+        haptic(Ui.HAPTIC_LONG);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         TextView head = Ui.text(this, title.isEmpty() ? "视频" : title, 14, Ui.TEXT_2);
@@ -919,7 +923,8 @@ public class MainActivity extends Activity {
         box.addView(head);
         final android.app.Dialog[] d = new android.app.Dialog[1];
         // already in "watch later" (331): adding it again makes no sense there
-        if (!wl) box.addView(Ui.sheetRow(this, R.drawable.ic_watch_later_white, "稍后观看", "加入 YouTube 的「稍后观看」（需登录）", v -> { d[0].dismiss(); js("ytl.watchLater(" + org.json.JSONObject.quote(id) + ")"); }));
+        // signed out (346): the row would only say "sign in first"
+        if (!wl && signedIn) box.addView(Ui.sheetRow(this, R.drawable.ic_watch_later_white, "稍后观看", "加入 YouTube 的「稍后观看」（需登录）", v -> { d[0].dismiss(); js("ytl.watchLater(" + org.json.JSONObject.quote(id) + ")"); }));
         box.addView(Ui.sheetRow(this, R.drawable.ic_more_white, wl ? "移除 / 更多" : "不感兴趣 / 更多", "打开 YouTube 自己的菜单", v -> { d[0].dismiss(); js("ytl.openCardMenu()"); }));
         if (!channel.isEmpty() || !key.isEmpty()) {
             final String label = channel.isEmpty() ? key : channel;
@@ -928,7 +933,7 @@ public class MainActivity extends Activity {
                 // with the channel link (322): still matches after a rename, never a namesake
                 Prefs.addLine(this, Prefs.BLOCK_CHANNELS, key.isEmpty() ? channel : key + "|" + channel);
                 applySettings();
-                Toast.makeText(this, "已屏蔽：" + label, Toast.LENGTH_SHORT).show();
+                say("已屏蔽：" + label);
             }));
         }
         box.addView(Ui.sheetRow(this, R.drawable.ic_hide_white, "本地隐藏这个视频", "以后在列表里不再出现", v -> { d[0].dismiss(); js("ytl.hideVideo(" + org.json.JSONObject.quote(id) + ")"); }));
@@ -937,7 +942,7 @@ public class MainActivity extends Activity {
             try {
                 ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE))
                         .setPrimaryClip(android.content.ClipData.newPlainText("YouTube", "https://youtu.be/" + id));
-                Toast.makeText(this, "已复制链接", Toast.LENGTH_SHORT).show();
+                say("已复制链接");
             } catch (Exception ignored) {}
         }));
         d[0] = Ui.sheet(this, box);
@@ -947,6 +952,45 @@ public class MainActivity extends Activity {
     // ===================== one-tap sleep mode (97) =====================
 
     public static boolean sleepModeOn() { return sleepModeOn; }
+
+    // ---- signed in? (346) as the page reports it; unknown counts as signed in ----
+    private static volatile boolean signedIn = true;
+
+    public static boolean signedIn() { return signedIn; }
+
+    public static void setSignedIn(boolean on) {
+        if (signedIn == on) return;
+        signedIn = on;
+        PlaybackService.refresh();   // the notification's "watch later" button follows
+    }
+
+    /** First time home is opened signed out (347): one bar, never again. */
+    public void showLoginHint() {
+        if (!visible || snackShowing() || blackView != null || lockView != null) return;
+        showSnack("登录 YouTube 后可用订阅、观看记录和稍后观看", "去登录", () -> {
+            if (web != null) web.loadUrl("https://accounts.google.com/ServiceLogin?service=youtube&continue=" + Uri.encode(HOME));
+        }, 9000);
+    }
+
+    /**
+     * A short message for the user (356): the app's own bar when it is in front with nothing over it
+     * (a settings page or a sheet takes the window focus), a system toast otherwise.
+     */
+    public static void notifyText(android.content.Context c, String text) {
+        MainActivity a = current.get();
+        if (a != null && a.canSay()) { a.say(text); return; }
+        if (c != null) Toast.makeText(c.getApplicationContext(), text, Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean canSay() {
+        return visible && !isFinishing() && hasWindowFocus() && snack != null && blackView == null;
+    }
+
+    /** Plain message in the snack bar, or a toast when the bar can't be seen right now. */
+    public void say(String text) {
+        if (canSay()) showSnack(text, null, null, 2600);
+        else Toast.makeText(getApplicationContext(), text, Toast.LENGTH_SHORT).show();
+    }
 
     /** Timer (default length) + lowest quality + same channel only + dim screen; ends with the timer. */
     public void startSleepMode() {
@@ -961,9 +1005,26 @@ public class MainActivity extends Activity {
             getWindow().setAttributes(lp);
         } catch (Throwable ignored) {}
         haptic();
+        // optional black screen 10 s later (306), only if still in sleep mode and on screen
+        MAIN.removeCallbacks(sleepModeBlackRun);
+        if (Prefs.on(this, Prefs.SLEEP_MODE_BLACK)) {
+            say("10 秒后进入黑屏，双击屏幕恢复");
+            MAIN.postDelayed(sleepModeBlackRun, 10_000L);
+        }
+    }
+
+    private final Runnable sleepModeBlackRun = () -> {
+        if (sleepModeOn && visible && !isFinishing() && blackView == null) startBlackScreen();
+    };
+
+    /** Sleep timer choices (309): from the badge on the player. */
+    public void openSleepPicker() {
+        if (isFinishing()) return;
+        PlayerTools.pickSleep(this, "睡眠定时", m -> SleepTimer.start(this, m));
     }
 
     private void stopSleepMode() {
+        MAIN.removeCallbacks(sleepModeBlackRun);
         if (!sleepModeOn) return;
         sleepModeOn = false;
         js("ytl.sleepMode(false)");
@@ -1113,28 +1174,51 @@ public class MainActivity extends Activity {
 
     // ===================== snack bar: night sleep prompt (18), continue after a kill (27) =====================
 
+    // plain messages wait behind a bar that offers an action (356), at most a few
+    private final java.util.ArrayDeque<String> snackQueue = new java.util.ArrayDeque<>();
+    private boolean snackHasAction = false;
+
     private void showSnack(String text, String action, final Runnable onAction, long ms) {
         if (snack == null) return;
+        if (action == null && snackShowing() && snackHasAction) {
+            if (snackQueue.size() < 3 && !snackQueue.contains(text)) snackQueue.addLast(text);
+            return;
+        }
+        snack.animate().cancel();
         snackText.setText(text);
+        snackHasAction = action != null;
         if (action != null) {
             snackAction.setText(action);
             snackAction.setVisibility(View.VISIBLE);
+            // the bar starts leaving the moment its action is pressed (366)
             snackAction.setOnClickListener(v -> { hideSnack(); if (onAction != null) onAction.run(); });
         } else snackAction.setVisibility(View.GONE);
         snack.setVisibility(View.VISIBLE);
         snack.setAlpha(0f);
-        snack.animate().alpha(1f).setDuration(Ui.anim(this, Ui.ANIM_MS)).start();
+        snack.setTranslationY(dp(8));
+        snack.animate().alpha(1f).translationY(0f).setDuration(Ui.anim(this, Ui.ANIM_MS)).start();
+        snack.announceForAccessibility(text);   // (375)
         MAIN.removeCallbacks(hideSnackRun);
         MAIN.postDelayed(hideSnackRun, ms);
     }
 
-    private void hideSnack() {
-        MAIN.removeCallbacks(hideSnackRun);
-        if (snack != null) snack.setVisibility(View.GONE);
-    }
-
     private boolean snackShowing() {
         return snack != null && snack.getVisibility() == View.VISIBLE;
+    }
+
+    /** 150 ms fade and 8 dp drop, then gone (366); a queued message follows. */
+    private void hideSnack() {
+        MAIN.removeCallbacks(hideSnackRun);
+        if (snack == null || snack.getVisibility() != View.VISIBLE) { snackHasAction = false; return; }
+        snackHasAction = false;
+        snack.animate().cancel();
+        snack.animate().alpha(0f).translationY(dp(8)).setDuration(Ui.anim(this, 150)).withEndAction(() -> {
+            if (snack == null) return;
+            snack.setVisibility(View.GONE);
+            snack.setTranslationY(0f);
+            String next = snackQueue.pollFirst();
+            if (next != null && !isFinishing()) showSnack(next, null, null, 2600);
+        }).start();
     }
 
     private final Runnable nightPromptRun = this::maybeNightPrompt;
@@ -1260,6 +1344,10 @@ public class MainActivity extends Activity {
             if (!SleepTimer.active()) {
                 Toast.makeText(this, "建议同时开睡眠定时；没开时暂停 5 分钟或播放 2 小时后自动退出黑屏", Toast.LENGTH_LONG).show();
             }
+            // screen readers (375): say what happened, and "restore" is one action away
+            v.setContentDescription("黑屏播放中");
+            Ui.a11yAction(v, "恢复", this::stopBlackScreen);
+            v.announceForAccessibility("黑屏播放中，双击两次屏幕或用操作菜单恢复");
         } catch (Throwable t) {
             Diag.log("black", String.valueOf(t));
         }
@@ -1292,14 +1380,23 @@ public class MainActivity extends Activity {
         try {
             final FrameLayout v = new FrameLayout(this);
             v.setBackgroundColor(android.graphics.Color.TRANSPARENT);
-            final TextView pill = new TextView(this);
-            pill.setText("触控已锁定 · 长按 1.5 秒解锁");
-            pill.setTextColor(Ui.TEXT);
-            pill.setTextSize(13);
-            pill.setPadding(dp(14), dp(8), dp(14), dp(8));
+            // the hint pill: a ring that fills during the 1.5 s hold (369), then the text
+            final LinearLayout pill = new LinearLayout(this);
+            pill.setOrientation(LinearLayout.HORIZONTAL);
+            pill.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            pill.setPadding(dp(12), dp(8), dp(14), dp(8));
             pill.setBackground(Ui.round(Ui.OVERLAY_PILL, dp(18)));
+            final Ui.Ring ring = new Ui.Ring(this, Ui.accent(this));
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(18), dp(18));
+            rp.rightMargin = dp(8);
+            pill.addView(ring, rp);
+            final TextView label = new TextView(this);
+            label.setText("触控已锁定 · 长按 1.5 秒解锁");
+            label.setTextColor(Ui.TEXT);
+            label.setTextSize(13);
+            pill.addView(label);
             FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
-            pp.topMargin = dp(48);
+            pp.topMargin = safeTop() + dp(12);   // below the punch hole / status bar (389)
             v.addView(pill, pp);
             pill.animate().alpha(0.15f).setStartDelay(2500).setDuration(Ui.anim(this, 600)).start();
             final Runnable unlock = this::stopTouchLock;
@@ -1308,13 +1405,15 @@ public class MainActivity extends Activity {
                     case MotionEvent.ACTION_DOWN:
                         pill.animate().cancel();
                         pill.setAlpha(1f);
-                        pill.setText("继续按住解锁…");
+                        label.setText("继续按住解锁…");
+                        ring.run(Ui.anim(this, 1500));
                         MAIN.postDelayed(unlock, 1500);
                         break;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
                         MAIN.removeCallbacks(unlock);
-                        pill.setText("触控已锁定 · 长按 1.5 秒解锁");
+                        ring.reset();
+                        label.setText("触控已锁定 · 长按 1.5 秒解锁");
                         pill.animate().alpha(0.15f).setStartDelay(1500).setDuration(Ui.anim(this, 600)).start();
                         break;
                     default:
@@ -1322,10 +1421,28 @@ public class MainActivity extends Activity {
                 }
                 return true; // swallow everything
             });
+            // screen readers (375): touches are swallowed, so unlocking is an accessibility action / click
+            v.setContentDescription("触控已锁定");
+            v.setOnClickListener(x -> stopTouchLock());
+            Ui.a11yAction(v, "解锁", this::stopTouchLock);
             decor().addView(v, new FrameLayout.LayoutParams(-1, -1));
             lockView = v;
+            v.announceForAccessibility("触控已锁定，长按屏幕 1.5 秒解锁");
         } catch (Throwable t) {
             Diag.log("lock", String.valueOf(t));
+        }
+    }
+
+    /** Top of the area no camera hole / status bar covers (389), in px. */
+    private int safeTop() {
+        try {
+            android.view.WindowInsets wi = getWindow().getDecorView().getRootWindowInsets();
+            if (wi == null) return dp(36);
+            int top = wi.getStableInsetTop();
+            if (wi.getDisplayCutout() != null) top = Math.max(top, wi.getDisplayCutout().getSafeInsetTop());
+            return Math.max(top, dp(24));
+        } catch (Throwable t) {
+            return dp(36);
         }
     }
 
@@ -1333,8 +1450,8 @@ public class MainActivity extends Activity {
         if (lockView == null) return;
         try { decor().removeView(lockView); } catch (Throwable ignored) {}
         lockView = null;
-        haptic();
-        Toast.makeText(this, "已解锁", Toast.LENGTH_SHORT).show();
+        haptic(Ui.HAPTIC_CONFIRM);   // (369/372)
+        say("已解锁");
     }
 
     /** Fullscreen video was added to the decor view: keep our overlays above it. */
@@ -1361,7 +1478,7 @@ public class MainActivity extends Activity {
     public void setOrientRemember(boolean on) {
         Prefs.put(this, Prefs.ORIENT_REMEMBER, on);
         saveOrientation();
-        Toast.makeText(this, on ? "下次打开沿用当前屏幕方向" : "下次打开跟随系统", Toast.LENGTH_SHORT).show();
+        say(on ? "下次打开沿用当前屏幕方向" : "下次打开跟随系统");
     }
 
     private void saveOrientation() {
@@ -1375,8 +1492,8 @@ public class MainActivity extends Activity {
         orientationLock = o;
         saveOrientation();
         if (chrome == null || !chrome.isFullscreen()) setRequestedOrientation(o);
-        Toast.makeText(this, o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? "屏幕方向：跟随系统"
-                : o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? "已锁定竖屏" : "已锁定横屏", Toast.LENGTH_SHORT).show();
+        say(o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? "屏幕方向：跟随系统"
+                : o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? "已锁定竖屏" : "已锁定横屏");
     }
 
     // ===================== top progress bar + offline screen (112/113) =====================
@@ -1390,7 +1507,7 @@ public class MainActivity extends Activity {
             topBar.setMax(100);
             topBar.setIndeterminate(false);
             if (Build.VERSION.SDK_INT >= 21) {
-                topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.PROGRESS));
+                topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.accent(this)));   // brand colour (351)
                 topBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT));
             }
             topBar.setVisibility(View.GONE);
@@ -1404,11 +1521,20 @@ public class MainActivity extends Activity {
             panel.setBackgroundColor(Ui.BG);
             panel.setClickable(true); // swallow touches while shown
             panel.setPadding(dp(32), dp(32), dp(32), dp(32));
+            // offline page (357): a line icon, the reason, one filled "retry" and a way to the network settings
+            android.widget.ImageView icon = new android.widget.ImageView(this);
+            icon.setImageResource(R.drawable.ic_wifi_off_white);
+            icon.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(56), dp(56));
+            ip.bottomMargin = dp(16);
+            panel.addView(icon, ip);
             TextView title = new TextView(this);
             title.setText("无法连接到 YouTube");
             title.setTextColor(Ui.TEXT);
             title.setTextSize(18);
             title.setGravity(android.view.Gravity.CENTER);
+            if (Build.VERSION.SDK_INT >= 28) title.setAccessibilityHeading(true);
             panel.addView(title);
             errorText = new TextView(this);
             errorText.setTextColor(Ui.TEXT_2);
@@ -1416,10 +1542,15 @@ public class MainActivity extends Activity {
             errorText.setGravity(android.view.Gravity.CENTER);
             errorText.setPadding(0, dp(8), 0, dp(20));
             panel.addView(errorText);
-            Button retry = new Button(this);
-            retry.setText("重试");
+            Button retry = Ui.filledButton(this, "重试");
             retry.setOnClickListener(v -> retryLoad());
-            panel.addView(retry, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(200), dp(48));
+            panel.addView(retry, rlp);
+            Button netSettings = Ui.textButton(this, "网络设置");
+            netSettings.setOnClickListener(v -> openNetworkSettings());
+            LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(dp(200), dp(48));
+            nlp.topMargin = dp(8);
+            panel.addView(netSettings, nlp);
             panel.setVisibility(View.GONE);
             errorPanel = panel;
             overlay.addView(panel, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1437,7 +1568,7 @@ public class MainActivity extends Activity {
             snackText.setEllipsize(android.text.TextUtils.TruncateAt.END);
             sb.addView(snackText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             snackAction = new Button(this, null, android.R.attr.borderlessButtonStyle);
-            snackAction.setTextColor(Ui.accent(this));
+            snackAction.setTextColor(Ui.accentText(this));
             snackAction.setAllCaps(false);
             sb.addView(snackAction, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
             Button close = new Button(this, null, android.R.attr.borderlessButtonStyle);
@@ -1447,10 +1578,20 @@ public class MainActivity extends Activity {
             close.setOnClickListener(v -> hideSnack());
             sb.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
             sb.setVisibility(View.GONE);
-            FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            final FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             sp.gravity = android.view.Gravity.BOTTOM;
             sp.setMargins(dp(12), 0, dp(12), dp(64));
             overlay.addView(sb, sp);
+            // keyboard up (371): the overlay is already lifted above it (it fits the system windows),
+            // and YouTube's bottom bar is under the keyboard, so the bar sits just above the keyboard
+            overlay.setOnApplyWindowInsetsListener((v, ins) -> {
+                try {
+                    int ime = Build.VERSION.SDK_INT >= 30 ? ins.getInsets(android.view.WindowInsets.Type.ime()).bottom : 0;
+                    int want = ime > 0 ? dp(12) : dp(64);
+                    if (sp.bottomMargin != want) { sp.bottomMargin = want; sb.setLayoutParams(sp); }
+                } catch (Throwable ignored) {}
+                return v.onApplyWindowInsets(ins);
+            });
             snack = sb;
             overlayRoot = overlay;
 
@@ -1468,19 +1609,28 @@ public class MainActivity extends Activity {
 
     private void showTopBar(int p) {
         if (topBar == null) return;
-        topBar.setProgress(Math.max(p, topBar.getVisibility() == View.VISIBLE ? topBar.getProgress() : 0));
+        boolean was = topBar.getVisibility() == View.VISIBLE && topBar.getAlpha() > 0.99f;
+        topBar.animate().cancel();
+        topBar.setAlpha(1f);
+        topBar.setProgress(Math.max(p, was ? topBar.getProgress() : 0));
         topBar.setVisibility(View.VISIBLE);
     }
 
+    /** Fills to the end, then fades out in 150 ms (364). */
     private void hideTopBar() {
-        if (topBar != null) topBar.setVisibility(View.GONE);
+        if (topBar == null || topBar.getVisibility() != View.VISIBLE) return;
+        topBar.animate().cancel();
+        topBar.setProgress(100, Ui.anim(this, 1) > 0);
+        topBar.animate().alpha(0f).setStartDelay(Ui.anim(this, 120)).setDuration(Ui.anim(this, 150)).withEndAction(() -> {
+            if (topBar != null) { topBar.setVisibility(View.GONE); topBar.setAlpha(1f); }
+        }).start();
     }
 
-    /** From the chrome client: page load progress 0..100. */
+    /** From the chrome client: page load progress 0..100, animated towards the new value (364). */
     public void onProgress(int p) {
         if (topBar == null || topBar.getVisibility() != View.VISIBLE) return;
         if (p >= 100) hideTopBar();
-        else if (p > topBar.getProgress()) topBar.setProgress(p);
+        else if (p > topBar.getProgress()) topBar.setProgress(p, Ui.anim(this, 1) > 0);
     }
 
     /** From the WebView client: the main page could not load (offline, DNS, timeout). */
@@ -1502,6 +1652,15 @@ public class MainActivity extends Activity {
     private void hideError() {
         if (errorPanel != null && errorPanel.getVisibility() == View.VISIBLE) errorPanel.setVisibility(View.GONE);
         unregisterErrNet();
+    }
+
+    /** Internet panel on Android 10+, the Wi-Fi / network settings before that (357). */
+    private void openNetworkSettings() {
+        try {
+            startActivity(new Intent(Build.VERSION.SDK_INT >= 29 ? Settings.Panel.ACTION_INTERNET_CONNECTIVITY : Settings.ACTION_WIRELESS_SETTINGS));
+        } catch (Exception e) {
+            try { startActivity(new Intent(Settings.ACTION_SETTINGS)); } catch (Exception ignored) {}
+        }
     }
 
     private void retryLoad() {
@@ -1685,7 +1844,7 @@ public class MainActivity extends Activity {
 
     private void handleBack() {
         if (lockView != null) {               // touch lock: back does nothing (131)
-            Toast.makeText(this, "触控已锁定，长按屏幕 1.5 秒解锁", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "触控已锁定，长按屏幕 1.5 秒解锁", Toast.LENGTH_SHORT).show();   // the bar would sit under the lock
         } else if (blackView != null) {
             stopBlackScreen();
         } else if (chrome != null && chrome.isFullscreen()) {
@@ -1702,7 +1861,7 @@ public class MainActivity extends Activity {
                 finish();
             } else {
                 lastBackAt = now;
-                Toast.makeText(this, "再按一次退出", Toast.LENGTH_SHORT).show();
+                say("再按一次退出");
             }
         }
     }

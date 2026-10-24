@@ -146,6 +146,21 @@ public final class Logic {
         return out;
     }
 
+    /** Sleep badge for a minutes timer (308): minutes, and in the last minute seconds in steps of 5. */
+    public static String sleepBadge(long leftMs) {
+        if (leftMs < 60_000L) {
+            long s = Math.max(5L, ((Math.max(0L, leftMs) + 4_999L) / 5_000L) * 5L);
+            return "睡眠 · " + Math.min(60L, s) + " 秒";
+        }
+        return "睡眠 · " + ((leftMs + 59_999L) / 60_000L) + " 分";
+    }
+
+    /** One night of the sleep log (276), e.g. "播放 3 小时 10 分，耗电 9%". */
+    public static String nightSummary(long minutes, int drop) {
+        String t = minutes >= 60 ? (minutes / 60) + " 小时 " + (minutes % 60) + " 分" : minutes + " 分钟";
+        return "播放 " + t + "，耗电 " + Math.max(0, drop) + "%";
+    }
+
     /** Refresh-rate samples while scrolling (391): mostly below the panel's best = held back. */
     public static boolean refreshLimited(int samples, int low, float maxHz) {
         return maxHz > 90f && samples >= 10 && low * 10 >= samples * 8;

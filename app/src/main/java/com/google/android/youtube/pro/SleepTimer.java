@@ -18,6 +18,7 @@ public final class SleepTimer {
     public static final int END_OF_VIDEO = -1;
     private static final int COUNT_BASE = -100;
     public static final int[] OPTIONS = {15, 30, 45, 60, 90, END_OF_VIDEO, COUNT_BASE - 2, COUNT_BASE - 3, COUNT_BASE - 5};
+    /** Default "+N min" step; the setting can make it 10 or 30 (303). */
     public static final int EXTEND_MIN = 15;
 
     private static final Handler H = new Handler(Looper.getMainLooper());
@@ -34,6 +35,9 @@ public final class SleepTimer {
     private static long undoUntil = 0L;
     private static Context appCtx;
     private static String lastPushed = "";
+    // paused playback holds a minutes timer when the setting is on (305)
+    private static boolean held = false;
+    private static long heldLeft = 0L;
     /** Count / end-of-video timers restored after a restart only if saved this recently (244). */
     private static final long RESTORE_MAX_AGE_MS = 2 * 3600_000L;
 
@@ -63,7 +67,16 @@ public final class SleepTimer {
         if (mode == OFF) return null;
         if (mode == END_OF_VIDEO) return "睡眠定时：本视频结束";
         if (isCount(mode)) return "睡眠定时：还剩 " + countLeft + " 个视频";
+        if (held) return "睡眠定时：已随暂停停住（剩余 " + minutesLeft() + " 分钟）";
         return "睡眠定时：剩余 " + minutesLeft() + " 分钟";
+    }
+
+    /** "+N min" step from the settings (303): 10 / 15 / 30. */
+    public static int extendMin(Context c) {
+        Context x = c != null ? c : appCtx;
+        if (x == null) return EXTEND_MIN;
+        int v = Prefs.num(x, Prefs.EXTEND_STEP);
+        return v == 10 || v == 30 ? v : EXTEND_MIN;
     }
 
     /** Text for the corner badge on the player (154), "" when off. */
@@ -71,13 +84,43 @@ public final class SleepTimer {
         if (mode == OFF) return "";
         if (mode == END_OF_VIDEO) return "睡眠 · 本视频后";
         if (isCount(mode)) return "睡眠 · 还剩 " + countLeft + " 个";
-        return "睡眠 · " + minutesLeft() + " 分";
+        if (held) return "睡眠 · 暂停中 " + minutesLeft() + " 分";
+        return Logic.sleepBadge(leftMs());   // seconds in the last minute (308)
+    }
+
+    private static long leftMs() {
+        return held ? heldLeft : Math.max(0, endAt - SystemClock.elapsedRealtime());
     }
 
     private static long minutesLeft() {
-        long left = Math.max(0, endAt - SystemClock.elapsedRealtime());
-        return (left + 59_999L) / 60_000L;
+        return (leftMs() + 59_999L) / 60_000L;
     }
+
+    /**
+     * Playback paused / resumed (305): with "pause holds the timer" on, a minutes timer stops counting
+     * while nothing plays and goes on from the same point when playback does. Off: as before.
+     */
+    public static void onPlayback(Context c, boolean playing) {
+        if (mode <= 0 || c == null) return;
+        boolean hold = Prefs.on(c, Prefs.SLEEP_HOLD);
+        long now = SystemClock.elapsedRealtime();
+        if (!playing && hold && !held) {
+            heldLeft = Math.max(1000L, endAt - now);
+            held = true;
+            H.removeCallbacks(TICK);
+            persist();
+            pushState();
+        } else if (held && (playing || !hold)) {
+            endAt = now + heldLeft;
+            held = false;
+            H.removeCallbacks(TICK);
+            H.post(TICK);
+            persist();
+            pushState();
+        }
+    }
+
+    public static boolean held() { return held; }
 
     public static void start(Context c, int minutes) {
         startInternal(c, minutes, -1L, -1, false);
@@ -109,8 +152,9 @@ public final class SleepTimer {
             // one-tap restart next time (15); the settings row decides whether this is on (228)
             if (c != null && Prefs.sleepRemember(c)) Prefs.put(c, Prefs.SLEEP_DEFAULT, minutes);
             toast(c, "睡眠定时：" + optionLabel(minutes));
-            MainActivity.hapticNow();
+            MainActivity.hapticNow(Ui.HAPTIC_CONFIRM);   // (372)
         }
+        if (leftMs < 0 && count < 0) NightLog.start(appCtx);   // a new night, not a restored timer (276)
         persist();
         pushState();
     }
@@ -126,7 +170,7 @@ public final class SleepTimer {
                 return;
             }
             long now = System.currentTimeMillis();
-            long endWall = mode > 0 ? now + Math.max(0, endAt - SystemClock.elapsedRealtime()) : 0;
+            long endWall = mode > 0 ? now + leftMs() : 0;
             Prefs.put(c, Prefs.SLEEP_STATE, mode + "|" + endWall + "|" + countLeft + "|" + now);
         } catch (Throwable ignored) {}
     }
@@ -166,6 +210,7 @@ public final class SleepTimer {
 
     public static void cancel(Context c) {
         boolean was = mode != OFF;
+        if (was) NightLog.end(appCtx, false);
         reset();
         persist();
         MainActivity.js("ytl.stopAtEnd(false);ytl.countMode&&ytl.countMode(false);ytl.restoreVolume()");
@@ -183,14 +228,16 @@ public final class SleepTimer {
     public static void extend(Context c) {
         if (mode <= 0) return;
         long now = SystemClock.elapsedRealtime();
-        endAt = Math.max(endAt, now) + EXTEND_MIN * 60_000L;
+        int step = extendMin(c);
+        if (held) heldLeft += step * 60_000L;
+        else endAt = Math.max(endAt, now) + step * 60_000L;
         if (fading) {
             fading = false;
             MainActivity.js("ytl.restoreVolume()");
         }
         H.removeCallbacks(TICK);
         H.post(TICK);
-        toast(c, "睡眠定时：+" + EXTEND_MIN + " 分钟（剩余 " + minutesLeft() + " 分钟）");
+        toast(c, "睡眠定时：+" + step + " 分钟（剩余 " + minutesLeft() + " 分钟）");
         persist();
         pushState();
     }
@@ -239,6 +286,7 @@ public final class SleepTimer {
     /** Called from JS when "end of current video" mode paused playback. */
     public static void onEndOfVideoFired() {
         boolean was = mode != OFF;
+        if (was) NightLog.end(appCtx, true);
         reset();
         persist();
         MainActivity.js("ytl.countMode&&ytl.countMode(false)");
@@ -257,6 +305,8 @@ public final class SleepTimer {
 
     private static void reset() {
         H.removeCallbacks(TICK);
+        held = false;
+        heldLeft = 0L;
         mode = OFF;
         endAt = 0L;
         fading = false;
@@ -277,10 +327,11 @@ public final class SleepTimer {
     private static final Runnable TICK = new Runnable() {
         @Override
         public void run() {
-            if (mode <= 0) return;
+            if (mode <= 0 || held) return;
             long left = endAt - SystemClock.elapsedRealtime();
             if (left <= 0) {
                 MainActivity.js("ytl.sleepPause()");
+                NightLog.end(appCtx, true);
                 reset();
                 persist();
                 pushState();
@@ -294,11 +345,18 @@ public final class SleepTimer {
                 sendFade(left);
                 H.postDelayed(this, Math.min(5000L, Math.max(250L, left)));
             } else {
-                // refresh the notification once a minute, wake up exactly when the fade starts
+                // refresh the notification once a minute, wake up exactly when the fade starts; in the
+                // last minute every 5 s so the badge can count seconds (308)
                 long untilFade = left - fadeMs;
-                long untilMinute = left % 60_000L;
-                if (untilMinute < 1000) untilMinute = 60_000L;
-                H.postDelayed(this, Math.max(1000, Math.min(untilFade, untilMinute)));
+                long delay;
+                if (left <= 60_000L) {
+                    delay = Math.min(5000L, untilFade);
+                } else {
+                    long untilMinute = left % 60_000L;
+                    if (untilMinute < 1000) untilMinute = 60_000L;
+                    delay = Math.min(untilFade, untilMinute);
+                }
+                H.postDelayed(this, Math.max(250L, delay));
             }
             pushState();
         }

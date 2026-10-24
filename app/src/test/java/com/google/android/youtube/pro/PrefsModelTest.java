@@ -29,12 +29,14 @@ public class PrefsModelTest {
         return s;
     }
 
+    static final int B6_BOOL = 7, B6_INT = 1;
+
     @Test public void keyListsUnchanged() {
-        // v1.5.1's 51 keys + batch 5's 8 new ones (never a rename)
-        assertEquals(35 + 5, PrefsModel.BOOL_KEYS.length);
-        assertEquals(5 + 3, PrefsModel.INT_KEYS.length);
+        // v1.5.1's 51 keys + batch 5's 8 + batch 6's new ones (never a rename)
+        assertEquals(35 + 5 + B6_BOOL, PrefsModel.BOOL_KEYS.length);
+        assertEquals(5 + 3 + B6_INT, PrefsModel.INT_KEYS.length);
         assertEquals(11, PrefsModel.STR_KEYS.length);
-        assertEquals(59, new java.util.HashSet<>(PrefsModel.allKeys()).size());
+        assertEquals(59 + B6_BOOL + B6_INT, new java.util.HashSet<>(PrefsModel.allKeys()).size());
     }
 
     @Test public void migrateWritesSchemaKeepsEveryValueAndIsIdempotent() {
@@ -191,7 +193,10 @@ public class PrefsModelTest {
         String[] off = {Prefs.NORMALIZE, Prefs.REMEMBER_RATE, Prefs.SLEEP_CALM, Prefs.NOTIF_SEEK, Prefs.HIDE_LIVE, Prefs.HIDE_SHELVES,
                 Prefs.SUBS_ONLY_VIDEOS, Prefs.UPDATE_MIRROR, Prefs.AMOLED, Prefs.COMPACT, Prefs.CARD_STYLE, Prefs.DIM_THUMBS,
                 // batch 5: everything that could change playback / Wi-Fi behaviour starts off
-                Prefs.WIFI_SAVER, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER};
+                Prefs.WIFI_SAVER, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER,
+                // batch 6: new behaviour is opt-in
+                Prefs.HIDE_WATCHED_RELATED, Prefs.HIDE_SEARCH_MIX, Prefs.LIGHT_REFRESH, Prefs.SLEEP_HOLD, Prefs.SLEEP_MODE_BLACK,
+                Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT};
         java.util.List<String> offL = java.util.Arrays.asList(off);
         for (String k : PrefsModel.BOOL_KEYS) assertEquals(k, !offL.contains(k), PrefsModel.defBool(k));
         assertEquals(30, PrefsModel.defInt(Prefs.SLEEP_DEFAULT));

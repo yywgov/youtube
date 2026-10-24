@@ -36,9 +36,11 @@ public final class PrefsModel {
             Prefs.REMOTE_RULES, Prefs.UPDATE_MIRROR, Prefs.AMOLED, Prefs.FONT_FOLLOW, Prefs.COMPACT, Prefs.CARD_STYLE,
             Prefs.DIM_THUMBS, Prefs.LONG_PRESS, Prefs.SEARCH_FOCUS, Prefs.SEARCH_CHIPS, Prefs.KEEP_SCROLL, Prefs.HAPTIC,
             Prefs.POWER_SAVE_AUTO, Prefs.NOTIF_WL,
-            Prefs.WIFI_SAVER, Prefs.IDLE_GUARD, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER};
+            Prefs.WIFI_SAVER, Prefs.IDLE_GUARD, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER,
+            Prefs.HIDE_WATCHED_RELATED, Prefs.HIDE_SEARCH_MIX, Prefs.LIGHT_REFRESH, Prefs.SLEEP_HOLD, Prefs.SLEEP_MODE_BLACK,
+            Prefs.LIST_END_NEXT, Prefs.SLEEP_STRICT};
     public static final String[] INT_KEYS = {Prefs.SLEEP_DEFAULT, Prefs.SLEEP_FADE, Prefs.SEEN_MIN, Prefs.MIN_DUR, Prefs.MAX_AGE,
-            Prefs.NIGHT_START, Prefs.NIGHT_END, Prefs.ORIENT_LOCK};
+            Prefs.NIGHT_START, Prefs.NIGHT_END, Prefs.ORIENT_LOCK, Prefs.EXTEND_STEP};
     public static final String[] STR_KEYS = {Prefs.SPONSOR_CATS, Prefs.NEXT_SOURCE, Prefs.QUALITY, Prefs.RATE, Prefs.CAPTIONS,
             Prefs.SUB_SIZE, Prefs.SUB_BG, Prefs.BLOCK_CHANNELS, Prefs.BLOCK_WORDS, Prefs.START_PAGE, Prefs.ACCENT};
 
@@ -55,6 +57,8 @@ public final class PrefsModel {
             case Prefs.HIDE_LIVE: case Prefs.HIDE_SHELVES: case Prefs.SUBS_ONLY_VIDEOS: case Prefs.UPDATE_MIRROR: case Prefs.AMOLED:
             case Prefs.COMPACT: case Prefs.CARD_STYLE: case Prefs.DIM_THUMBS:
             case Prefs.WIFI_SAVER: case Prefs.SKIP_WATCHED_NEXT: case Prefs.FONT_LARGE: case Prefs.ORIENT_REMEMBER:
+            case Prefs.HIDE_WATCHED_RELATED: case Prefs.HIDE_SEARCH_MIX: case Prefs.LIGHT_REFRESH:
+            case Prefs.SLEEP_HOLD: case Prefs.SLEEP_MODE_BLACK: case Prefs.LIST_END_NEXT: case Prefs.SLEEP_STRICT:
                 return false;
             default: return true;
         }
@@ -67,6 +71,7 @@ public final class PrefsModel {
             case Prefs.SEEN_MIN: return 80;
             case Prefs.NIGHT_START: return 22;
             case Prefs.NIGHT_END: return 5;
+            case Prefs.EXTEND_STEP: return 15;
             default: return 0;
         }
     }
@@ -104,6 +109,7 @@ public final class PrefsModel {
         INT_SETS.put(Prefs.NIGHT_START, hours);
         INT_SETS.put(Prefs.NIGHT_END, hours);
         INT_SETS.put(Prefs.ORIENT_LOCK, new HashSet<>(Arrays.asList(0, 1, 2)));
+        INT_SETS.put(Prefs.EXTEND_STEP, new HashSet<>(Arrays.asList(10, 15, 30)));
     }
 
     private static Set<String> set(String... v) { return new HashSet<>(Arrays.asList(v)); }

@@ -4,7 +4,8 @@ const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', '..', 'app', 'src', 'main', 'assets', 'ytlite.js'), 'utf8');
+// YTL_SRC: run the same tests against another build of the script (CI checks the minified copy, 259)
+const SRC = fs.readFileSync(process.env.YTL_SRC || path.join(__dirname, '..', '..', 'app', 'src', 'main', 'assets', 'ytlite.js'), 'utf8');
 
 async function load(opts) {
   opts = opts || {};
@@ -27,7 +28,10 @@ async function load(opts) {
     cardMenu: rec('cardMenu'), showKeyboard: rec('showKeyboard'), pageTheme: rec('pageTheme'),
     getRemoteRules: () => (opts.remote ? JSON.stringify(opts.remote) : ''),
     confirmRefresh: rec('confirmRefresh'), loginChanged: rec('loginChanged'), isOnline: () => opts.online !== false,
-    netStalled: rec('netStalled'), selfCheckFailed: rec('selfCheckFailed')
+    netStalled: rec('netStalled'), selfCheckFailed: rec('selfCheckFailed'),
+    // batch 6
+    mediaLive: rec('mediaLive'), loginState: rec('loginState'), loginHint: rec('loginHint'), toastFail: rec('toastFail'),
+    sleepBadgeTap: rec('sleepBadgeTap'), sleepBadgeLong: rec('sleepBadgeLong')
   };
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };

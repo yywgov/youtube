@@ -5,7 +5,11 @@ const fs = require('fs');
 const path = require('path');
 
 // YTL_SRC: run the same tests against another build of the script (CI checks the minified copy, 259)
-const SRC = fs.readFileSync(process.env.YTL_SRC || path.join(__dirname, '..', '..', 'app', 'src', 'main', 'assets', 'ytlite.js'), 'utf8');
+const SRC_PATH = process.env.YTL_SRC || path.join(__dirname, '..', '..', 'app', 'src', 'main', 'assets', 'ytlite.js');
+const SRC = fs.readFileSync(SRC_PATH, 'utf8');
+// compiled once with its file name, so coverage (434) and stack traces point at ytlite.js
+const vm = require('vm');
+const SCRIPT = new vm.Script(SRC, { filename: SRC_PATH });
 
 async function load(opts) {
   opts = opts || {};
@@ -36,7 +40,7 @@ async function load(opts) {
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
   if (opts.before) opts.before(w);
-  w.eval(SRC);
+  SCRIPT.runInContext(dom.getInternalVMContext());
   if (w.document.readyState === 'loading') {
     await new Promise((r) => w.document.addEventListener('DOMContentLoaded', () => setTimeout(r, 0)));
   }

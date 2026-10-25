@@ -16,6 +16,7 @@ git fetch -q origin main
 git rev-parse -q --verify "refs/tags/v$VER" >/dev/null && { echo "tag v$VER exists"; exit 1; }
 grep -q "def baseVersion = \"$VER\"" app/build.gradle || echo "note: baseVersion in app/build.gradle is not $VER"
 
+node tools/build-js.js --check
 (cd tests/js && npm ci --no-audit --no-fund >/dev/null && npm test)
 
 git tag -a "v$VER" -F "$NOTES"

@@ -5,6 +5,8 @@
 
 本质上它是一个内嵌 `m.youtube.com` 的 WebView，加上一段打包在 APK 里的精简脚本（`app/src/main/assets/ytlite.js`，不会从任何 CDN 下载脚本）。
 
+维护和发版说明见 [docs/MAINTENANCE.md](docs/MAINTENANCE.md)；页面脚本源码在 `src/js/`（构建时拼成 `ytlite.js`）。
+
 ## 功能
 
 **去广告**

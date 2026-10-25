@@ -3,7 +3,8 @@
   "private": true,
   "description": "jsdom unit tests for app/src/main/assets/ytlite.js (run in CI before the APK build)",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "coverage": "c8 --allowExternal --reporter=text-summary --include=**/assets/ytlite.js --report-dir=/tmp/ytl-coverage --temp-directory=/tmp/ytl-coverage/tmp node --test"
   },
   "devDependencies": {
     "c8": "10.1.3",

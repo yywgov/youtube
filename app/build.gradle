@@ -9,6 +9,11 @@ def refName = System.getenv("GITHUB_REF_NAME") ?: ""
 def isTagBuild = System.getenv("GITHUB_REF_TYPE") == "tag" && refName ==~ /v\d+(\.\d+)*.*/
 def verName = isTagBuild ? refName.substring(1) : (baseVersion + "-dev." + ciRun)
 
+// the one place the version name is worked out (432): CI signs and names the APK from this file
+def versionFile = layout.buildDirectory.file("version.txt").get().asFile
+versionFile.parentFile.mkdirs()
+versionFile.text = verName
+
 android {
     // Java package kept from upstream; applicationId differs so it installs
     // next to the official YouTube app and next to upstream YTPro.

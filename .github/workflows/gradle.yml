@@ -84,11 +84,18 @@ jobs:
           cache: npm                                   # (426)
           cache-dependency-path: tests/js/package-lock.json
 
-      - name: JS unit tests (jsdom) – a failure stops the build
+      - name: Page script is src/js joined (435)
+        run: node tools/build-js.js --check
+
+      - name: Copy check (430) – warnings only
+        run: node tools/lint-copy.js || true
+
+      - name: JS unit tests (jsdom) – a failure stops the build, then the coverage summary (434)
         working-directory: tests/js
         run: |
           npm ci --no-audit --no-fund
           npm test
+          npm run coverage --silent || echo "::warning::coverage summary failed (tests themselves passed)"
 
       - name: Minify the page script (259/421) – chrome90 syntax check, test the minified copy, ship it
         run: |
@@ -153,10 +160,12 @@ jobs:
 
       - name: Sign APK
         run: |
-          # must match versionName in app/build.gradle
-          BASE=$(sed -n 's/^def baseVersion = "\(.*\)"/\1/p' app/build.gradle)
-          VERSION="${BASE}-dev.${GITHUB_RUN_NUMBER}"
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          # versionName as Gradle worked it out (432); a tag build must carry the tag's version
+          VERSION=$(cat app/build/version.txt)
+          [ -n "$VERSION" ] || { echo "app/build/version.txt is empty"; exit 1; }
+          if [[ "${GITHUB_REF}" == refs/tags/v* && "$VERSION" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo "versionName $VERSION does not match tag ${GITHUB_REF_NAME}"; exit 1
+          fi
           mkdir -p out
           java -jar signer/apksigner.jar sign \
             --key signer/apkeasytool.pk8 \

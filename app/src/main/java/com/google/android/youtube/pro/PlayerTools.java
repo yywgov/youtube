@@ -65,6 +65,25 @@ public final class PlayerTools {
             dismiss();
             pickSleep(a, "睡眠定时", m -> SleepTimer.start(a, m));
         }));
+        // one-tap choices (443): the usual length, 30 / 60 min, end of this video; the current one is checked
+        LinearLayout quick = new LinearLayout(a);
+        quick.setOrientation(LinearLayout.HORIZONTAL);
+        quick.setPadding(dp(12), 0, dp(12), dp(4));
+        java.util.List<Integer> picks = new java.util.ArrayList<>();
+        int def = Prefs.sleepDefault(a);
+        for (int m : new int[]{def, 30, 60, SleepTimer.END_OF_VIDEO}) if (m != SleepTimer.OFF && !picks.contains(m) && picks.size() < 4) picks.add(m);
+        for (final int m : picks) {
+            String label = m == SleepTimer.END_OF_VIDEO ? "本视频后" : SleepTimer.isCount(m) ? "播完 " + SleepTimer.countOf(m) + " 个" : m + " 分";
+            boolean cur = SleepTimer.active() && SleepTimer.mode() == m;
+            Button chip = Ui.chip(a, label, v -> {
+                if (!(SleepTimer.active() && SleepTimer.mode() == m)) SleepTimer.start(a, m);
+                refresh();
+            });
+            Ui.markChip(chip, cur);
+            chip.setContentDescription("睡眠定时 " + label + (cur ? "，当前" : ""));
+            quick.addView(chip, Ui.chipWeight(a));
+        }
+        box.addView(quick);
         if (!SleepTimer.active()) {
             box.addView(row("一键睡眠模式", "定时 " + SleepTimer.optionLabel(Prefs.sleepDefault(a)) + " + 最低画质 + 只续播同频道 + 调暗屏幕",
                     v -> { dismiss(); a.startSleepMode(); }));

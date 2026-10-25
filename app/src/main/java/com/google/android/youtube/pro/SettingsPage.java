@@ -44,6 +44,8 @@ public class SettingsPage {
     public void show() {
         page(a.getString(R.string.app_name) + " 设置", box -> {
             statusCard(box);
+            LinearLayout q = card(box);
+            q.addView(row(SEARCH_TITLE, "输入关键字，直接跳到那一项（如：字幕、定时、屏蔽）", v -> searchPage()));   // (442)
             LinearLayout c = card(box);
             // a line icon per group (359), same family as the app icon
             c.addView(nav(R.drawable.ic_set_play, "播放", "画质、声音与速度、字幕、SponsorBlock、断点续播", this::playPage));
@@ -120,7 +122,7 @@ public class SettingsPage {
             c.addView(choice("默认画质", "每个视频开始时设一次，之后可手动改", Prefs.QUALITY, Q_LABELS, Q_VALUES, "auto"));
             c.addView(toggle("后台/息屏时最低画质", "省电省流量；回到前台恢复默认画质", Prefs.LOW_QUALITY_BG));
             c.addView(toggle("省电模式时降画质、关动画", "系统开启省电模式时画质最高 480p", Prefs.POWER_SAVE_AUTO));
-            c.addView(row("优先级", "一键睡眠模式 > 后台/息屏最低 > 省电上限 480p > 默认画质", null));
+            footnote(box, "同时生效时的优先级：一键睡眠模式 > 后台/息屏最低 > 省电上限 480p > 默认画质。");   // (441)
         });
     }
 
@@ -232,6 +234,150 @@ public class SettingsPage {
         if (a.fgsDeniedAt() > 0) b.append(" · 上次后台播放没能保持前台");
         b.append(" · 点此设置自启动和后台运行");
         return b.toString();
+    }
+
+    // ===================== settings search (442) =====================
+
+    private static final String SEARCH_TITLE = "搜索设置";
+
+    /** One setting found while building the pages off screen: its texts, where it is, how to get there. */
+    private static final class Hit {
+        final String title, sub, where;
+        final List<Runnable> path;
+        Hit(String title, String sub, String where, List<Runnable> path) { this.title = title; this.sub = sub; this.where = where; this.path = path; }
+    }
+
+    /** Off-screen walk over every page (442): page() builds into a throwaway box; nothing is clicked. */
+    private final class Crawl {
+        final List<Hit> hits = new ArrayList<>();
+        final List<List<Runnable>> queue = new ArrayList<>();
+        final List<List<String>> queueNames = new ArrayList<>();
+        List<Runnable> path = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        void row(String title, String sub) {
+            if (title == null || title.isEmpty() || SEARCH_TITLE.equals(title) || names.size() < 2) return;   // root rows are the groups themselves
+            hits.add(new Hit(title, sub, android.text.TextUtils.join(" › ", names.subList(1, names.size())), path));
+        }
+        void child(Runnable open) {
+            if (queue.size() >= 60) return;
+            List<Runnable> p = new ArrayList<>(path);
+            p.add(open);
+            queue.add(p);
+            queueNames.add(names);
+        }
+    }
+
+    private Crawl crawl;
+    private List<Hit> index;
+
+    private void crawlPage(String title, Body body) {
+        List<String> n = new ArrayList<>(crawl.names);
+        n.add(title);
+        crawl.names = n;
+        try { body.build(new LinearLayout(a)); } catch (Throwable t) { Diag.log("settings-search", title + ": " + t); }
+    }
+
+    private List<Hit> buildIndex() {
+        if (index != null) return index;
+        int keep = refreshers.size();
+        Crawl c = new Crawl();
+        crawl = c;
+        try {
+            show();   // root: the five groups go into the queue
+            for (int i = 0; i < c.queue.size(); i++) {
+                List<Runnable> p = c.queue.get(i);
+                c.path = p;
+                c.names = c.queueNames.get(i);
+                try { p.get(p.size() - 1).run(); } catch (Throwable t) { Diag.log("settings-search", String.valueOf(t)); }
+            }
+        } finally {
+            crawl = null;
+            while (refreshers.size() > keep) refreshers.remove(refreshers.size() - 1);
+        }
+        index = c.hits;
+        return index;
+    }
+
+    private void searchPage() {
+        final List<Hit> all = buildIndex();
+        page(SEARCH_TITLE, box -> {
+            final EditText in = new EditText(a);
+            in.setSingleLine(true);
+            in.setHint("例如：字幕、定时、屏蔽、画质");
+            in.setHintTextColor(Ui.HINT);
+            in.setTextColor(Ui.TEXT);
+            in.setBackground(Ui.round(Ui.SURFACE, dp(Ui.RADIUS_DP)));
+            in.setPadding(dp(16), dp(12), dp(16), dp(12));
+            in.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(dp(16), dp(8), dp(16), dp(4));
+            box.addView(in, lp);
+            final TextView empty = Ui.text(a, "", 13, Ui.TEXT_2);
+            empty.setPadding(dp(32), dp(8), dp(32), dp(8));
+            box.addView(empty);
+            final LinearLayout results = card(box);
+            final Runnable update = () -> {
+                results.removeAllViews();
+                String q = String.valueOf(in.getText());
+                int n = 0;
+                for (final Hit h : all) {
+                    if (!Logic.searchMatches(q, h.title, h.sub, h.where)) continue;
+                    if (++n > 40) break;
+                    results.addView(row(h.title, h.where + (h.sub.isEmpty() ? "" : " · " + h.sub), v -> {
+                        for (Runnable r : h.path) r.run();
+                    }));
+                }
+                results.setVisibility(n == 0 ? View.GONE : View.VISIBLE);
+                empty.setText(q.trim().isEmpty() ? "共 " + all.size() + " 项设置可搜索" : n == 0 ? "没有找到「" + q.trim() + "」相关的设置" : "");
+                empty.setVisibility(empty.getText().length() == 0 ? View.GONE : View.VISIBLE);
+            };
+            in.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) {}
+                @Override public void onTextChanged(CharSequence s, int st, int b, int c) {}
+                @Override public void afterTextChanged(android.text.Editable s) { update.run(); }
+            });
+            update.run();
+            in.requestFocus();
+            in.postDelayed(() -> {
+                android.view.inputmethod.InputMethodManager im = (android.view.inputmethod.InputMethodManager) a.getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (im != null) im.showSoftInput(in, 0);
+            }, 250);
+        });
+    }
+
+    /** Small explanation under a card (441): plain text, not a row that looks tappable. */
+    private void footnote(LinearLayout box, String text) {
+        TextView t = Ui.text(a, text, 12, Ui.TEXT_2);
+        t.setPadding(dp(32), dp(2), dp(32), dp(8));
+        box.addView(t);
+    }
+
+    /** Backup (440): to a file or to the clipboard, the same code as before behind one row. */
+    private void backupSheet() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        TextView head = Ui.text(a, "备份设置", 18, Ui.TEXT);
+        head.setPadding(dp(20), dp(4), dp(20), dp(8));
+        box.addView(head);
+        final android.app.Dialog[] d = new android.app.Dialog[1];
+        box.addView(Ui.sheetRow(a, "保存为文件", ".json 文件，不经过剪贴板（推荐）", v -> { d[0].dismiss(); withLocal(this::saveBackupFile); }));
+        box.addView(Ui.sheetRow(a, "复制到剪贴板", "一段文字，可存到备忘录（旧版本也能恢复）", v -> { d[0].dismiss(); withLocal(this::exportSettings); }));
+        d[0] = Ui.sheet(a, box);
+        d[0].show();
+    }
+
+    /** Restore (440): from a file or from the clipboard. */
+    private void restoreSheet() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        TextView head = Ui.text(a, "恢复设置", 18, Ui.TEXT);
+        head.setPadding(dp(20), dp(4), dp(20), dp(8));
+        box.addView(head);
+        final android.app.Dialog[] d = new android.app.Dialog[1];
+        box.addView(Ui.sheetRow(a, "从文件恢复", "选择之前保存的备份文件", v -> { d[0].dismiss(); openBackupFile(); }));
+        box.addView(Ui.sheetRow(a, "从剪贴板恢复", "先复制之前备份的那段文字，再点这里", v -> { d[0].dismiss(); importSettings(); }));
+        d[0] = Ui.sheet(a, box);
+        d[0].show();
     }
 
     /** Keep-alive sheet (238/390/292): every system page that keeps playback alive with the screen off. */
@@ -532,15 +678,14 @@ public class SettingsPage {
             u.addView(toggle("国内网络用镜像下载", "下载慢时开启；安装包都会做 SHA-256 校验，失败自动改回直连", Prefs.UPDATE_MIRROR));
             u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新 · " : "已关闭 · ") + RemoteRules.status(a), v -> rulesDialog()));
             LinearLayout b = card(box, "备份与恢复");
-            b.addView(row("备份设置到文件", "保存为 .json 文件（不经过剪贴板），可选带上本地隐藏和进度", v -> withLocal(this::saveBackupFile)));
-            b.addView(row("从文件恢复设置", "选择之前保存的备份文件，先看会改哪些；10 秒内可撤销", v -> openBackupFile()));
-            b.addView(row("备份设置到剪贴板", "导出为一段文字，可存到备忘录（旧版本也能恢复）", v -> withLocal(this::exportSettings)));
-            b.addView(row("从剪贴板恢复设置", "粘贴之前备份的那段文字后点这里，先看会改哪些；10 秒内可撤销", v -> importSettings()));
-            b.addView(row("系统备份与换机", "设置会随系统备份和手机搬家带走；登录、缓存和日志不会", null));
+            // four rows that only differed in where the backup goes became two (440)
+            b.addView(row("备份设置", "保存为文件或复制到剪贴板，可选带上本地隐藏和进度", v -> backupSheet()));
+            b.addView(row("恢复设置", "从文件或剪贴板恢复，先看会改哪些；10 秒内可撤销", v -> restoreSheet()));
             b.addView(row("恢复默认设置", "开关和选项回到默认；屏蔽列表、登录和记录不动；10 秒内可撤销", v -> confirmDefaults()));
+            footnote(box, "设置也会随系统备份和手机搬家带走；登录、缓存和日志不会。");   // (441)
             LinearLayout p = card(box, "记录与隐私");
             p.addView(row("观看记录和搜索记录", "打开 YouTube 的记录页，可暂停或清除（需登录）", v -> { closeAll(); a.loadInApp("https://m.youtube.com/feed/history"); }));
-            p.addView(row("本机数据说明", "设置、日志、屏蔽列表和本地进度只存在本机；登录信息只在 YouTube 页面里", null));
+            footnote(box, "设置、日志、屏蔽列表和本地进度只存在本机；登录信息只在 YouTube 页面里。");   // (441)
             LinearLayout d = card(box, "诊断");
             d.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
             d.addView(nav(0, "日志", "漏网广告记录、诊断日志、网络拦截统计（复制或清空）", this::logsPage));
@@ -646,6 +791,7 @@ public class SettingsPage {
     }
 
     private void page(String title, Body body) {
+        if (crawl != null) { crawlPage(title, body); return; }   // settings search index (442)
         ensureWindow();
         LinearLayout root = new LinearLayout(a);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -747,6 +893,7 @@ public class SettingsPage {
     }
 
     private LinearLayout texts(String title, TextView sub) {
+        if (crawl != null) crawl.row(title, sub == null ? "" : String.valueOf(sub.getText()));
         LinearLayout t = new LinearLayout(a);
         t.setOrientation(LinearLayout.VERTICAL);
         t.addView(Ui.text(a, title, 16, Ui.TEXT));
@@ -778,6 +925,7 @@ public class SettingsPage {
     }
 
     private View nav(int icon, String title, String sub, final Runnable open) {
+        if (crawl != null) crawl.child(open);
         LinearLayout l = baseRow();
         if (icon != 0) {
             android.widget.ImageView iv = new android.widget.ImageView(a);
@@ -893,6 +1041,7 @@ public class SettingsPage {
 
     /** Row that opens a second-level page, with a summary of what is set there. */
     private View sub(String title, Label label, final Runnable open) {
+        if (crawl != null) crawl.child(open);
         LinearLayout l = (LinearLayout) dyn(title, label, v -> open.run());
         l.addView(chevron());
         return l;

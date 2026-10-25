@@ -213,4 +213,14 @@ public final class Logic {
         return lk.equals("si") || lk.equals("feature") || lk.equals("pp") || lk.startsWith("utm_")
                 || lk.equals("fbclid") || lk.equals("gclid");
     }
+
+    /** Settings search (442): every word of the query is in the title, the explanation or the place (case-insensitive). */
+    public static boolean searchMatches(String query, String... texts) {
+        String q = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+        if (q.isEmpty()) return false;
+        StringBuilder all = new StringBuilder();
+        for (String t : texts) if (t != null) all.append(t.toLowerCase(java.util.Locale.ROOT)).append(' ');
+        for (String w : q.split("\\s+")) if (!w.isEmpty() && all.indexOf(w) < 0) return false;
+        return true;
+    }
 }

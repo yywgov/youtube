@@ -32,4 +32,14 @@ public class Round1Test {
         assertNull(Logic.findYouTubeLink("no link"));
         assertNull(Logic.findYouTubeLink(null));
     }
+
+    @Test public void settingsSearch() {
+        assertTrue(Logic.searchMatches("字幕", "默认字幕", "人工字幕优先", "播放 › 字幕"));
+        assertTrue(Logic.searchMatches("sponsor", "SponsorBlock", "", "播放"));
+        assertTrue(Logic.searchMatches("睡眠 默认", "默认时长", "", "后台与睡眠"));
+        assertFalse(Logic.searchMatches("睡眠 画质", "默认时长", "", "后台与睡眠"));
+        assertFalse(Logic.searchMatches("  ", "anything"));
+        assertFalse(Logic.searchMatches(null, "anything"));
+        assertTrue(Logic.searchMatches("x", null, "X"));
+    }
 }

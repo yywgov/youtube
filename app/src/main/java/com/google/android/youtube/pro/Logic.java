@@ -194,4 +194,23 @@ public final class Logic {
     public static boolean refreshLimited(int samples, int low, float maxHz) {
         return maxHz > 90f && samples >= 10 && low * 10 >= samples * 8;
     }
+
+    // ---- links (437) ----
+    private static final java.util.regex.Pattern YT_LINK =
+            java.util.regex.Pattern.compile("https?://(?:[\\w-]+\\.)?(?:youtube\\.com|youtu\\.be)/\\S+");
+
+    /** First YouTube link in shared text, or null. */
+    public static String findYouTubeLink(String text) {
+        if (text == null) return null;
+        java.util.regex.Matcher m = YT_LINK.matcher(text);
+        return m.find() ? m.group() : null;
+    }
+
+    /** Query parameters that only track who shared a link (68): si, feature, pp, utm_*, fbclid, gclid. */
+    public static boolean isTrackingParam(String k) {
+        if (k == null) return false;
+        String lk = k.toLowerCase(java.util.Locale.ROOT);
+        return lk.equals("si") || lk.equals("feature") || lk.equals("pp") || lk.startsWith("utm_")
+                || lk.equals("fbclid") || lk.equals("gclid");
+    }
 }

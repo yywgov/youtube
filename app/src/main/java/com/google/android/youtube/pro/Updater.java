@@ -104,7 +104,7 @@ public final class Updater {
             Prefs.get(a).edit().remove(Prefs.PENDING_APK).apply();
             return;
         }
-        if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) return;
+        if (!a.getPackageManager().canRequestPackageInstalls()) return;
         Prefs.get(a).edit().remove(Prefs.PENDING_APK).apply();
         cancelProgress(a);   // the "downloaded, tap to install" notification has done its job (396)
         if (Build.VERSION.SDK_INT >= 28 && "no".equals(sameSigner(a, f))) {   // (395)
@@ -389,7 +389,7 @@ public final class Updater {
     private static File downloadDir(Activity a) {
         // Android 7+: private cache, shared through FileProvider. Older: app-specific
         // external storage, which the system installer can read through a file:// URI.
-        File base = Build.VERSION.SDK_INT >= 24 ? a.getCacheDir() : a.getExternalCacheDir();
+        File base = a.getCacheDir();
         if (base == null) base = a.getCacheDir();
         File dir = new File(base, "updates");
         //noinspection ResultOfMethodCallIgnored
@@ -700,7 +700,7 @@ public final class Updater {
             if (!"yes".equals(same)) Diag.log("update", "certificate not checked: " + same);
         }
 
-        if (Build.VERSION.SDK_INT >= 26 && !a.getPackageManager().canRequestPackageInstalls()) {
+        if (!a.getPackageManager().canRequestPackageInstalls()) {
             Prefs.put(a, Prefs.PENDING_APK, apk.getAbsolutePath());
             new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                     .setTitle("需要允许安装应用")
@@ -753,15 +753,9 @@ public final class Updater {
     private static void launchInstaller(Activity a, File apk) {
         try {
             Intent i = new Intent(Intent.ACTION_VIEW);
-            if (Build.VERSION.SDK_INT >= 24) {
-                Uri uri = FileProvider.getUriForFile(a, a.getPackageName() + ".updates", apk);
-                i.setDataAndType(uri, APK_MIME);
-                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } else {
-                //noinspection ResultOfMethodCallIgnored
-                apk.setReadable(true, false);
-                i.setDataAndType(Uri.fromFile(apk), APK_MIME);
-            }
+            Uri uri = FileProvider.getUriForFile(a, a.getPackageName() + ".updates", apk);
+            i.setDataAndType(uri, APK_MIME);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             i.putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true);
             a.startActivity(i);

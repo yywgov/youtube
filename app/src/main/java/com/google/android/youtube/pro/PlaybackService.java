@@ -454,7 +454,7 @@ public class PlaybackService extends Service {
         releaseLocks();
         try { if (noisyReceiver != null) unregisterReceiver(noisyReceiver); } catch (Exception ignored) {}
         try {
-            if (netCallback != null && Build.VERSION.SDK_INT >= 24) {
+            if (netCallback != null) {
                 ((ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE)).unregisterNetworkCallback(netCallback);
             }
         } catch (Exception ignored) {}
@@ -591,7 +591,6 @@ public class PlaybackService extends Service {
     }
 
     private void registerNetwork() {
-        if (Build.VERSION.SDK_INT < 24) return; // JS "online" event covers older devices
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
             netCallback = new ConnectivityManager.NetworkCallback() {
@@ -776,8 +775,7 @@ public class PlaybackService extends Service {
     @SuppressWarnings("deprecation")
     private void stopFg(boolean remove) {
         if (!foreground) return;
-        if (Build.VERSION.SDK_INT >= 24) stopForeground(remove ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
-        else stopForeground(remove);
+        stopForeground(remove ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
         foreground = false;
         lastNotifKey = "";
     }

@@ -112,7 +112,7 @@ public class YTProWebViewClient extends WebViewClient {
     @Override
     public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
         super.onReceivedError(view, request, error);
-        if (Build.VERSION.SDK_INT < 23 || request == null || !request.isForMainFrame() || error == null) return;
+        if (request == null || !request.isForMainFrame() || error == null) return;
         int code = error.getErrorCode();
         if (code == ERROR_HOST_LOOKUP || code == ERROR_CONNECT || code == ERROR_TIMEOUT || code == ERROR_IO) {
             activity.onMainFrameError(request.getUrl() == null ? null : request.getUrl().toString(), code);
@@ -122,11 +122,8 @@ public class YTProWebViewClient extends WebViewClient {
     @Override
     public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
         // Renderer crashed or was killed for memory: rebuild instead of crashing the app.
-        if (Build.VERSION.SDK_INT >= 26) {
-            com.google.android.youtube.pro.Diag.log("renderer", "gone, crash=" + (detail != null && detail.didCrash()));
-            activity.onRendererGone();
-            return true;
-        }
-        return false;
+        com.google.android.youtube.pro.Diag.log("renderer", "gone, crash=" + (detail != null && detail.didCrash()));
+        activity.onRendererGone();
+        return true;
     }
 }

@@ -215,7 +215,7 @@ public class MainActivity extends Activity {
         Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
         com.google.android.youtube.pro.webview.AdBlocker.load(this);   // today's block counts so far (281)
         restoreOrientation();
-        String startUrl = urlFromIntent(getIntent());
+        String startUrl = Links.fromIntent(getIntent(), HOME);
         coldStart = savedInstanceState == null && HOME.equals(startUrl);
         // start page (63): subscriptions instead of home when launched from the icon
         if (coldStart && "subs".equals(Prefs.str(this, Prefs.START_PAGE, "home"))) startUrl = HOME + "feed/subscriptions";
@@ -280,76 +280,25 @@ public class MainActivity extends Activity {
         if (Prefs.on(this, Prefs.LANDSCAPE_LAYOUT)) js("ytl.cfg({landscape:" + (newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) + "})");
     }
 
-    // ===================== high refresh rate (120 Hz LTPO etc.) =====================
+    // ===================== high refresh rate (120 Hz LTPO etc.): FrameRate (436) =====================
 
-    /**
-     * Ask for the display mode with the highest refresh rate at the current resolution.
-     * LTPO panels (and ColorOS/MIUI) otherwise often keep WebView apps at 60 Hz.
-     */
-    private void requestHighRefreshRate() {
-        try {
-            @SuppressWarnings("deprecation")
-            Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
-            if (d == null) return;
-            Display.Mode cur = d.getMode();
-            Display.Mode best = cur;
-            for (Display.Mode m : d.getSupportedModes()) {
-                if (m.getPhysicalWidth() == cur.getPhysicalWidth()
-                        && m.getPhysicalHeight() == cur.getPhysicalHeight()
-                        && m.getRefreshRate() > best.getRefreshRate() + 0.5f) {
-                    best = m;
-                }
-            }
-            WindowManager.LayoutParams lp = getWindow().getAttributes();
-            if (lp.preferredDisplayModeId != best.getModeId() || lp.preferredRefreshRate != best.getRefreshRate()) {
-                lp.preferredDisplayModeId = best.getModeId();
-                lp.preferredRefreshRate = best.getRefreshRate();
-                getWindow().setAttributes(lp);
-            }
-            if (Build.VERSION.SDK_INT >= 35) {
-                getWindow().setFrameRatePowerSavingsBalanced(false);
-                getWindow().setFrameRateBoostOnTouchEnabled(true);
-                setWebFrameRate(true);
-            }
-        } catch (Throwable ignored) {}
+    private FrameRate frameRate;
+
+    private FrameRate frame() {
+        if (frameRate == null) frameRate = new FrameRate(this, () -> web, () -> chrome != null && chrome.isFullscreen());
+        return frameRate;
     }
 
-    // ---- Android 15+ (275): ask for the high frame rate only while touching / scrolling ----
-    private boolean frameHigh = false;
-    private final Runnable frameIdle = () -> {
-        if (chrome != null && chrome.isFullscreen()) return;   // fullscreen video keeps its rate
-        setWebFrameRate(false);
-    };
+    private void requestHighRefreshRate() { frame().requestHigh(); }
 
-    private void setWebFrameRate(boolean high) {
-        if (Build.VERSION.SDK_INT < 35 || web == null || frameHigh == high) return;
-        try {
-            web.setRequestedFrameRate(high ? View.REQUESTED_FRAME_RATE_CATEGORY_HIGH : View.REQUESTED_FRAME_RATE_CATEGORY_NORMAL);
-            frameHigh = high;
-        } catch (Throwable ignored) {}
-    }
+    private final Runnable frameIdle = () -> frame().idle();
 
-    // ---- refresh rate while scrolling (391): samples to tell whether the system holds the app at 60 Hz ----
-    private static int rrSamples = 0, rrLow = 0;
-    private static float rrMax = 0;
-    private long lastRrSample = 0;
+    private void setWebFrameRate(boolean high) { frame().setWeb(high); }
 
-    private void sampleRefreshRate() {
-        long now = android.os.SystemClock.uptimeMillis();
-        if (now - lastRrSample < 500 || rrSamples >= 400) return;
-        lastRrSample = now;
-        try {
-            @SuppressWarnings("deprecation")
-            Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
-            if (d == null) return;
-            if (rrMax == 0) for (Display.Mode m : d.getSupportedModes()) rrMax = Math.max(rrMax, m.getRefreshRate());
-            rrSamples++;
-            if (d.getRefreshRate() < rrMax - 5) rrLow++;
-        } catch (Throwable ignored) {}
-    }
+    private void sampleRefreshRate() { frame().sample(); }
 
     /** Scrolling has mostly run below the panel's best rate (391). */
-    public boolean refreshLimited() { return Logic.refreshLimited(rrSamples, rrLow, rrMax); }
+    public boolean refreshLimited() { return FrameRate.limited(); }
 
     public void openDisplaySettings() {
         try {
@@ -369,7 +318,7 @@ public class MainActivity extends Activity {
             String resume = lastVideoUrl();
             if (resume != null && web != null) { web.loadUrl(resume); return; }
         }
-        final String url = urlFromIntent(intent);
+        final String url = Links.fromIntent(intent, HOME);
         boolean external = Intent.ACTION_VIEW.equals(intent.getAction()) || Intent.ACTION_SEND.equals(intent.getAction());
         if (!external || web == null) return;
         // something is playing (293): a link tapped in another app does not replace it without asking
@@ -652,9 +601,11 @@ public class MainActivity extends Activity {
         try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
             if (cm == null) return true;
-            @SuppressWarnings("deprecation")
-            android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
-            return ni == null || ni.isConnected();   // unknown counts as online
+            // (448) no active network at all is offline (getActiveNetworkInfo's null used to count as online)
+            android.net.Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(n);
+            return nc == null || nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);   // unknown counts as online
         } catch (Throwable t) {
             return true;
         }
@@ -747,12 +698,9 @@ public class MainActivity extends Activity {
         try {
             android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (nm == null) return true;
-            if (Build.VERSION.SDK_INT >= 24 && !nm.areNotificationsEnabled()) return false;
-            if (Build.VERSION.SDK_INT >= 26) {
-                android.app.NotificationChannel ch = nm.getNotificationChannel(PlaybackService.CHANNEL_ID);
-                if (ch != null && ch.getImportance() == android.app.NotificationManager.IMPORTANCE_NONE) return false;
-            }
-            return true;
+            if (!nm.areNotificationsEnabled()) return false;
+            android.app.NotificationChannel ch = nm.getNotificationChannel(PlaybackService.CHANNEL_ID);
+            return ch == null || ch.getImportance() != android.app.NotificationManager.IMPORTANCE_NONE;
         } catch (Throwable t) {
             return true;
         }
@@ -764,13 +712,7 @@ public class MainActivity extends Activity {
 
     public void openNotificationSettings() {
         try {
-            Intent i;
-            if (Build.VERSION.SDK_INT >= 26) {
-                i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
-            } else {
-                i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
-            }
-            startActivity(i);
+            startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
         } catch (Exception e) {
             openAppDetails();
         }
@@ -895,11 +837,11 @@ public class MainActivity extends Activity {
                     int mask = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
                     ic.setSystemBarsAppearance(light ? mask : 0, mask);
                 }
-            } else if (Build.VERSION.SDK_INT >= 23) {
+            } else {
                 View d = getWindow().getDecorView();
                 int f = d.getSystemUiVisibility();
                 f = light ? (f | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) : (f & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-                if (Build.VERSION.SDK_INT >= 26) f = light ? (f | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) : (f & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                f = light ? (f | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) : (f & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
                 d.setSystemUiVisibility(f);
             }
         } catch (Throwable t) {
@@ -1095,7 +1037,6 @@ public class MainActivity extends Activity {
     // ===================== battery saver (147), autostart (99), what's new (138), about (140) =====================
 
     private void registerPowerSave() {
-        if (Build.VERSION.SDK_INT < 21) return;
         try {
             powerReceiver = new android.content.BroadcastReceiver() {
                 @Override public void onReceive(android.content.Context c, Intent i) {
@@ -1186,18 +1127,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    public String refreshRateLabel() {
-        try {
-            @SuppressWarnings("deprecation")
-            Display d = Build.VERSION.SDK_INT >= 30 ? getDisplay() : getWindowManager().getDefaultDisplay();
-            if (d == null) return "未知";
-            float max = 0;
-            if (Build.VERSION.SDK_INT >= 23) for (Display.Mode m : d.getSupportedModes()) max = Math.max(max, m.getRefreshRate());
-            return String.format(java.util.Locale.US, "当前 %.0f Hz · 最高 %.0f Hz", d.getRefreshRate(), Math.max(max, d.getRefreshRate()));
-        } catch (Throwable t) {
-            return "未知";
-        }
-    }
+    public String refreshRateLabel() { return frame().label(); }
 
     /** Moon button: playback tools sheet, with the page's current player state. */
     public void openTools() {
@@ -1555,10 +1485,8 @@ public class MainActivity extends Activity {
             topBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
             topBar.setMax(100);
             topBar.setIndeterminate(false);
-            if (Build.VERSION.SDK_INT >= 21) {
-                topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.accent(this)));   // brand colour (351)
-                topBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT));
-            }
+            topBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.accent(this)));   // brand colour (351)
+            topBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT));
             topBar.setVisibility(View.GONE);
             FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3));
             bp.gravity = android.view.Gravity.TOP;
@@ -1722,7 +1650,7 @@ public class MainActivity extends Activity {
     }
 
     private void registerErrNet() {
-        if (Build.VERSION.SDK_INT < 24 || errNetCallback != null) return;
+        if (errNetCallback != null) return;
         try {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
             android.net.ConnectivityManager.NetworkCallback cb = new android.net.ConnectivityManager.NetworkCallback() {
@@ -1923,54 +1851,7 @@ public class MainActivity extends Activity {
 
     // ===================== intents =====================
 
-    private static String urlFromIntent(Intent intent) {
-        if (intent == null) return HOME;
-        String action = intent.getAction();
-        if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null) {
-            return normalize(intent.getData().toString());
-        }
-        if (Intent.ACTION_SEND.equals(action)) {
-            String text = intent.getStringExtra(Intent.EXTRA_TEXT);
-            if (text != null) {
-                java.util.regex.Matcher m = java.util.regex.Pattern
-                        .compile("https?://(?:[\\w-]+\\.)?(?:youtube\\.com|youtu\\.be)/\\S+").matcher(text);
-                if (m.find()) return normalize(m.group());
-            }
-        }
-        return HOME;
-    }
-
-    /** Shared links carry tracking parameters (si=, feature=, pp=, utm_*): drop them (68). */
-    static String stripTracking(String url) {
-        try {
-            Uri u = Uri.parse(url);
-            if (u.getQuery() == null) return url;
-            Uri.Builder b = u.buildUpon().clearQuery();
-            boolean changed = false;
-            for (String k : u.getQueryParameterNames()) {
-                String lk = k.toLowerCase(java.util.Locale.ROOT);
-                if (lk.equals("si") || lk.equals("feature") || lk.equals("pp") || lk.startsWith("utm_")
-                        || lk.equals("fbclid") || lk.equals("gclid")) { changed = true; continue; }
-                for (String v : u.getQueryParameters(k)) b.appendQueryParameter(k, v);
-            }
-            return changed ? b.build().toString() : url;
-        } catch (Exception e) {
-            return url;
-        }
-    }
-
-    private static String normalize(String url) {
-        url = stripTracking(url);
-        Uri u = Uri.parse(url);
-        String unshort = YTProWebViewClient.unshort(u);
-        if (unshort != null) return unshort;
-        String host = u.getHost() == null ? "" : u.getHost();
-        if (host.endsWith("youtu.be") && u.getPath() != null && u.getPath().length() > 1) {
-            String t = u.getQueryParameter("t");
-            return HOME + "watch?v=" + u.getPath().substring(1) + (t != null ? "&t=" + t : "");
-        }
-        return url;
-    }
+    // links from intents (VIEW / SEND) moved to Links (437)
 
     // ===================== first-run permissions =====================
 
@@ -1987,7 +1868,7 @@ public class MainActivity extends Activity {
     }
 
     private void askBatteryOnce() {
-        if (Build.VERSION.SDK_INT < 23 || isIgnoringBattery() || Prefs.get(this).getBoolean(Prefs.ASKED_BATTERY, false)) return;
+        if (isIgnoringBattery() || Prefs.get(this).getBoolean(Prefs.ASKED_BATTERY, false)) return;
         Prefs.put(this, Prefs.ASKED_BATTERY, true);
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("允许后台持续播放")
@@ -2000,14 +1881,12 @@ public class MainActivity extends Activity {
     }
 
     public boolean isIgnoringBattery() {
-        if (Build.VERSION.SDK_INT < 23) return true;
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
     }
 
     @SuppressLint("BatteryLife")
     public void requestIgnoreBattery() {
-        if (Build.VERSION.SDK_INT < 23) return;
         try {
             startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:" + getPackageName())));

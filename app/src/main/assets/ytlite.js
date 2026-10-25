@@ -1432,18 +1432,18 @@
       }
       return;
     }
-    var hits = [];
+    var hits = [], hitSet = new Set();   // (449) set lookups instead of indexOf on long feeds
     if (watchedHere()) {
-      var bars = document.querySelectorAll(RULES.sel.watchedBar);
+      var bars = document.querySelectorAll(RULES.sel.watchedBar), min = seenMin();
       for (var i = 0; i < bars.length; i++) {
-        if (watchedPct(bars[i]) < seenMin()) continue;
+        if (watchedPct(bars[i]) < min) continue;
         var item = bars[i].closest(RULES.sel.feedItem);
-        if (item && hits.indexOf(item) < 0) hits.push(item);
+        if (item && !hitSet.has(item)) { hitSet.add(item); hits.push(item); }
       }
     }
     if (seenCount || hits.length) {
       var old = document.querySelectorAll('[data-ytl-seen]');
-      for (var j = 0; j < old.length; j++) if (hits.indexOf(old[j]) < 0) old[j].removeAttribute('data-ytl-seen');
+      for (var j = 0; j < old.length; j++) if (!hitSet.has(old[j])) old[j].removeAttribute('data-ytl-seen');
     }
     for (var k = 0; k < hits.length; k++) if (!hits[k].hasAttribute('data-ytl-seen')) hits[k].setAttribute('data-ytl-seen', '');
     seenCount = hits.length;
@@ -1736,6 +1736,9 @@
     // skip watched autoplay targets (311, off by default): YouTube's autoplay stays off while its
     // target is one already watched, the ended handler picks the next one
     if (cfg.skipWatchedNext && upNextWatched()) return false;
+    // blocked autoplay target (444): channel / keyword / locally hidden; judged on the spot because the
+    // DOM pass that marks cards is off with the screen off
+    if (upNextBlocked()) return false;
     return true;
   }
   function itemWatched(item) {
@@ -1832,6 +1835,10 @@
       var u = firstUnwatchedLink(id);
       if (u) { log('next', 'skipped a watched autoplay target'); u.click(); return; }
     }
+    if (mode === 'allowed') {
+      var al = firstAllowedLink(id, !!cfg.skipWatchedNext);
+      if (al) { log('next', 'skipped a blocked autoplay target'); al.click(); return; }
+    }
     next();
   }
   /** Link of what YouTube's autoplay would play (313). */
@@ -1842,6 +1849,28 @@
   /** Up next (311): the first related video, i.e. what YouTube's autoplay would play. */
   function upNextItem() {
     return document.querySelector('ytm-compact-autoplay-renderer') || document.querySelector(RULES.sel.relatedItem);
+  }
+  /** What autoplay would play is hidden by the user's own filters (444). */
+  function cardBlocked(it) {
+    if (!it) return false;
+    var f = it.getAttribute('data-ytl-filter');
+    if (f && f !== 'ad') return true;
+    if (filtersPaused || !anyFilter()) return false;
+    try { return !!filterReason(cardInfo(it), false, it); } catch (e) { return false; }
+  }
+  function upNextBlocked() { return cardBlocked(upNextItem()); }
+  /** First related video that is not blocked (and not watched when that is asked for), 444. */
+  function firstAllowedLink(id, skipWatched) {
+    var items = document.querySelectorAll(RULES.sel.relatedItem);
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var a = it.querySelector('a[href*="/watch?v="]');
+      var m = a && /[?&]v=([\w-]{6,})/.exec(a.getAttribute('href') || '');
+      if (!m || m[1] === id || cardBlocked(it)) continue;
+      if (skipWatched && (it.hasAttribute('data-ytl-seen') || itemWatched(it))) continue;
+      return a;
+    }
+    return null;
   }
   function upNextWatched() {
     var it = upNextItem();
@@ -1868,6 +1897,7 @@
     return isWatch() || !t.muted;
   }
   var unmutedFor = '';
+  var lateNavFor = '';
 
   var pendingStop = false;    // sleep "after N videos": stop at the end of the next video (16)
   var bgFallbacks = 0;
@@ -2000,10 +2030,14 @@
     }
     if (countMode && endedFor !== id) { endedFor = id; call('videoEnded', id); }
     if (stopAtEnd || userPaused) return;
+    // "Continue watching?" can come up at the end instead of the next video (446)
+    setTimeout(function () { if (!userPaused && !stopAtEnd) dismissStillWatching(true); }, 1200);
     clearTimeout(endTimer);
     var mode = ruleMode();
     // recommended, but the autoplay target was already watched (311): pick the first unwatched one
     if (mode === 'rec' && cfg.skipWatchedNext && !looping() && upNextWatched()) mode = 'unseen';
+    // the autoplay target is one the user blocked (444): the first allowed one instead
+    if (mode === 'rec' && !looping() && upNextBlocked()) mode = 'allowed';
     if (mode !== 'rec') {
       endTimer = setTimeout(guard('next-rule', function () {
         if (videoId() === id && !userPaused) nextByRule(mode, id);
@@ -2034,6 +2068,11 @@
     loopTick(v);
     posTick(v, now, false);
     if (isFinite(v.duration) && v.duration > 0 && !adNow()) curProgress = Math.max(curProgress, (v.currentTime || 0) / v.duration);
+    // 20 s before the end (445): the related list is there by now, so the autoplay switch is decided
+    // again (with the screen off the DOM pass that does this is not running)
+    if (lateNavFor !== curId && isFinite(v.duration) && v.duration > 40 && v.duration - v.currentTime <= 20 && !adNow()) {
+      lateNavFor = curId; autonavFor = ''; forceAutonav();
+    }
     // sleep timer: end of current video (fade over the last N s, then pause)
     if (stopAtEnd && isFinite(v.duration) && v.duration > 0) {
       var left = v.duration - v.currentTime;
@@ -2051,7 +2090,7 @@
   var STILL_RE = textRe('still');
   var STILL_YES_RE = textRe('stillYes');
   var STILL_NO_RE = textRe('stillNo');
-  var dismissStillWatching = guard('still', function () {
+  var dismissStillWatching = guard('still', function (atEnd) {
     if (userPaused) return;
     var dlg = document.querySelector(RULES.sel.stillDialog);
     if (!dlg) {
@@ -2076,6 +2115,8 @@
     if (!pickBtn) return;
     log('still', 'dismissed by ' + how);
     pickBtn.click();
+    // at the end of a video (446) the click itself lets YouTube move on; play() would restart the old one
+    if (atEnd === true) return;
     setTimeout(function () { var v = video(); if (v && v.paused && !userPaused) play(); }, 300);
   });
 
@@ -2094,6 +2135,15 @@
     try { if (B && typeof B.isOnline === 'function' && B.isOnline() === false) return true; } catch (e) {}
     return false;
   }
+  var LIGHT_LAST = 'ytl_light_last', LIGHT_ZERO = 'ytl_light_zero';
+  function lightZeros() { try { return Number(localStorage.getItem(LIGHT_ZERO)) || 0; } catch (e) { return 0; } }
+  /** After a refresh (447): count light refreshes in a row that brought no new video. */
+  function noteRefreshResult(n) {
+    try {
+      var wasLight = localStorage.getItem(LIGHT_LAST) === '1';
+      localStorage.setItem(LIGHT_ZERO, String(wasLight && n === 0 ? lightZeros() + 1 : 0));
+    } catch (e) {}
+  }
   /** Returns false when it decided not to reload (offline / asking first). */
   function refresh(force) {
     if (refreshing) return true;
@@ -2105,6 +2155,9 @@
     var done = false;
     var go = function () { if (done) return; done = true; refreshing = false; call('hardReload'); };
     var light = !!cfg.lightRefresh;   // (316, experimental): service worker and static caches stay
+    // two light refreshes in a row brought nothing new (447): this one clears everything
+    if (light && lightZeros() >= 2) { light = false; log('refresh', 'light refresh found nothing twice: full refresh'); }
+    try { localStorage.setItem(LIGHT_LAST, light ? '1' : '0'); } catch (e) {}
     try {
       if (!light) sessionStorage.clear();
       else {
@@ -2264,11 +2317,25 @@
     if (key.charAt(0) === '@') key = key.toLowerCase();
     return { key: key, name: lc(name) };
   }
+  /* parsed once per list (449): the block list and the hidden ids are looked up for every card */
+  var blockCache = { src: null, list: [] }, hiddenCache = { src: null, len: -1, set: null };
+  function blockEntries() {
+    var bl = cfg.blockChannels || [];
+    if (blockCache.src !== bl) blockCache = { src: bl, list: bl.map(blockEntry) };
+    return blockCache.list;
+  }
+  function isHiddenId(id) {
+    if (hiddenCache.src !== hiddenList || hiddenCache.len !== hiddenList.length) {
+      var st = new Set(hiddenList);
+      hiddenCache = { src: hiddenList, len: hiddenList.length, set: st };
+    }
+    return hiddenCache.set.has(id);
+  }
   function filterReason(info, deep, it) {
-    if (info.id && hiddenList.indexOf(info.id) >= 0) return 'hidden';
-    var ch = lc(info.channel), bl = cfg.blockChannels || [], keys = null;
+    if (info.id && isHiddenId(info.id)) return 'hidden';
+    var ch = lc(info.channel), bl = blockEntries(), keys = null;
     for (var i = 0; i < bl.length; i++) {
-      var be = blockEntry(bl[i]);
+      var be = bl[i];
       if (be.name && ch && be.name === ch) return 'channel';
       if (be.key && it) {
         if (keys === null) keys = cardChannelKeys(it);
@@ -2358,7 +2425,7 @@
       if (it.__ytlF === mark) continue;   // already judged (recycled nodes get a new href)
       it.__ytlF = mark;
       var why = adLabelHit(it) ? 'ad' : userOn ? filterReason(cardInfo(it), deep, it)
-        : chanHidden && hiddenList.indexOf(linkId(a)) >= 0 ? 'hidden' : '';
+        : chanHidden && isHiddenId(linkId(a)) ? 'hidden' : '';
       if (why) { if (it.getAttribute('data-ytl-filter') !== why) { it.setAttribute('data-ytl-filter', why); filtered++; } }
       else if (it.hasAttribute('data-ytl-filter')) it.removeAttribute('data-ytl-filter');
     }
@@ -2408,8 +2475,10 @@
     var hist = homeHistory();
     var nh = hist.concat([ids]).slice(-3);
     try { localStorage.setItem(HOME_HIST, JSON.stringify(nh)); localStorage.setItem('ytl_home_ids', JSON.stringify(ids)); } catch (e) {}
-    if (!wasRefresh || !cfg.refreshCount || !hist.length) return;
+    if (!wasRefresh || !hist.length) return;
     var n = newCount(ids, hist);
+    noteRefreshResult(n);
+    if (!cfg.refreshCount) return;
     // how many cards the filters took away (321), so a short feed is not a mystery
     var gone = document.querySelectorAll('[data-ytl-filter]:not([data-ytl-filter="ad"]), [data-ytl-seen]').length;
     call('toast', (n ? S('newVideos', '更新了 {n} 个新视频').replace('{n}', n) : S('noNew', '暂时没有新视频，稍后再刷新试试')) +
@@ -3028,6 +3097,8 @@
 
   // test / diagnostics surface (no behaviour of its own)
   window.ytl._ = {
+    upNextBlocked: upNextBlocked, firstAllowedLink: firstAllowedLink, lightZeros: lightZeros, noteRefreshResult: noteRefreshResult,
+    blockEntries: blockEntries, isHiddenId: isHiddenId, lateNavFor: function () { return lateNavFor; },
     RULES: RULES, css: function () { return CSS; }, pageType: pageType, isPlayerResponse: isPlayerResponse,
     prune: prune, lenById: function () { return lenById; }, lenMismatch: lenMismatch, adNow: adNow,
     cleanUrl: cleanUrl, cleanText: cleanText, retryOnce: retryOnce, nav: nav, selfCheck: selfCheck,

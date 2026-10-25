@@ -7,7 +7,7 @@
     "coverage": "c8 --allowExternal --reporter=text-summary --include=**/assets/ytlite.js --report-dir=/tmp/ytl-coverage --temp-directory=/tmp/ytl-coverage/tmp node --test"
   },
   "devDependencies": {
-    "c8": "10.1.3",
+    "c8": "12.0.0",
     "esbuild": "0.25.11",
     "jsdom": "24.1.3"
   }

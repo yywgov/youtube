@@ -31,3 +31,16 @@
 
 ## 依赖
 `.github/dependabot.yml` 每月为 Gradle、tests/js 的 npm、GitHub Actions 开更新 PR，走同一套 CI，不自动合并。
+
+## 个人自用精简（v1.10.0 起删掉的功能）
+这个 App 只给自己用，下面这些已删除；想要回来，按原编号从 git 历史（v1.9.0 tag）找回即可。
+它们的设置 key 全部保留在备份白名单里：旧备份照常导入（不计「已忽略」），导出时原样带上，退回旧版本不丢设置。
+- A-B 循环（152）、播放列表随机/顺序（153，YouTube 列表面板自带）、屏幕方向锁定与「记住屏幕方向」（132/388，系统「自动旋转」重复；key orientLock/orientRemember 不再读取）。
+- 键盘快捷键（133）。
+- 横屏时播放器不占满（387，key landscapeLayout 不再读取）。
+- 设置里只删了行、行为照旧按已存的值：打开搜索时弹出键盘（searchFocus）、未登录时记住观看进度（resumeLocal）。
+- 合并成一行（key 不变）：网页字号 = fontFollow + fontLarge；夜间提示 = nightPrompt + nightStart/End；下拉刷新 = lightRefresh + refreshCount；
+  隐藏已看完 = hideWatched + seenMin + hideWatchedRelated；搜索结果只留视频和频道 = hideSearchExtras + hideSearchMix（映射在 PrefsModel，JUnit Round2Test）。
+- 强调色：只在不是品牌蓝时出现「改回品牌蓝」一行。备份只存文件（剪贴板恢复保留，兼容以前的剪贴板备份）。
+- 「记录与隐私」卡、开源许可弹窗、数据页说明脚注、睡眠页只读「当前」行删除；问题报告并入「诊断」页。
+- 保活跳转只保留 ColorOS/OPPO 组件。

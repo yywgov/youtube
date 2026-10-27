@@ -399,13 +399,3 @@ test('local data: exported as plain lists, merged back without removing what is 
   assert.deepEqual(JSON.parse(dst.w.localStorage.getItem('ytl_pos')).aaaaaaaaaa2, [300, 2000]);
   assert.equal(dst.w.ytl.importLocal('{"hidden":"nope"}'), 0);
 });
-
-/* ---------- 387: landscape layout ---------- */
-test('landscape layout: attribute follows the setting, the rule steps aside in full screen', async () => {
-  const env = await setupWatch({ cfg: { landscape: true } });
-  const d = env.w.document;
-  assert.equal(d.documentElement.getAttribute('data-ytl-landscape'), '1');
-  assert.ok(/data-ytl-landscape\]\[data-ytl-page="watch"\]:not\(\[data-ytl-fs\]\) #player-container-id\{max-width:calc\(70vh/.test(env.w.ytl._.css()));
-  env.w.ytl.cfg({ landscape: false });
-  assert.equal(d.documentElement.hasAttribute('data-ytl-landscape'), false);
-});

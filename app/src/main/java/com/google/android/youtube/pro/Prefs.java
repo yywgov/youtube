@@ -94,8 +94,8 @@ public final class Prefs {
     public static final String NIGHT_END = "nightEnd";               // night window end hour (307)
     public static final String SKIP_WATCHED_NEXT = "skipWatchedNext"; // recommended: skip watched autoplay targets (311)
     public static final String FONT_LARGE = "fontLarge";             // text zoom up to 160 % (378)
-    public static final String ORIENT_REMEMBER = "orientRemember";   // keep the orientation lock across starts (388)
-    public static final String ORIENT_LOCK = "orientLock";           // 0 follow system, 1 portrait, 2 landscape (388)
+    public static final String ORIENT_REMEMBER = "orientRemember";   // (388) feature removed in v1.10 (452); key kept for old backups
+    public static final String ORIENT_LOCK = "orientLock";           // (388) feature removed in v1.10 (452); key kept for old backups
     // ---- batch 6 (v1.8.0): new keys only, every older key keeps its name / type / meaning ----
     public static final String HIDE_WATCHED_RELATED = "hideWatchedRelated"; // related videos also hide watched ones (327)
     public static final String HIDE_SEARCH_MIX = "hideSearchMix";    // search: no auto-generated mixes (333)
@@ -106,7 +106,7 @@ public final class Prefs {
     public static final String LIST_END_NEXT = "listEndNext";        // playlist finished: go on with a recommendation (313)
     public static final String SLEEP_STRICT = "sleepStrict";         // sleeping, same channel only: stop when none (315)
     public static final String PRE_RASTER = "preRaster";             // WebView offscreen pre-raster (267, experimental)
-    public static final String LANDSCAPE_LAYOUT = "landscapeLayout"; // landscape, not full screen: player 70 % high (387)
+    public static final String LANDSCAPE_LAYOUT = "landscapeLayout"; // (387) feature removed in v1.10 (454); key kept for old backups
     // state (not settings)
     public static final String UPDATE_READY = "updateReady";         // tag of a newer release found by the daily check (137)
     public static final String LAST_RUN_VERSION = "lastRunVersion";  // (138)
@@ -461,9 +461,7 @@ public final class Prefs {
             o.put("lightRefresh", on(c, LIGHT_REFRESH));
             o.put("listEndNext", on(c, LIST_END_NEXT));
             o.put("sleepStrict", on(c, SLEEP_STRICT));
-            // landscape layout (387): only while the screen is landscape
-            o.put("landscape", on(c, LANDSCAPE_LAYOUT)
-                    && c.getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE);
+            // landscape layout (387) removed in v1.10 (454); landscapeLayout stays a known key for old backups
             return o.toString();
         } catch (Exception e) {
             return "{}";

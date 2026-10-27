@@ -35,7 +35,6 @@
     setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
     setAttr('data-ytl-nomix', cfg.hideSearchMix ? '1' : '');            // (333)
     setAttr('data-ytl-sleepmode', sleepMode ? '1' : '');                // (340)
-    setAttr('data-ytl-landscape', cfg.landscape ? '1' : '');            // (387)
     var gear = document.getElementById('ytl-gear');
     if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';

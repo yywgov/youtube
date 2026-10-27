@@ -23,7 +23,7 @@
     if (had && countMode && endedFor !== curId && curProgress >= 0.9) { endedFor = curId; countedOnChange = Date.now(); call('videoEnded', curId); }
     curProgress = 0;
     curId = id;
-    if (had) { loopOne = false; abA = abB = -1; }
+    if (had) loopOne = false;
     if (pendingStop) { pendingStop = false; stopAtEnd = true; }
     lastMetaKey = '';
     stalled = false;
@@ -131,9 +131,9 @@
       log('len-misjudge', lenMis.id + ' d=' + Math.round(v.duration || 0));
     }
     if (adNow()) return;
-    // single-video / A-B loop (152): start over instead of moving on
-    if ((loopOne || (abA >= 0 && abB > abA)) && !stopAtEnd && !userPaused) {
-      v.currentTime = abB > abA && abA >= 0 ? abA : 0;
+    // single-video loop (152): start over instead of moving on
+    if (loopOne && !stopAtEnd && !userPaused) {
+      v.currentTime = 0;
       play();
       loopWrapped();
       return;

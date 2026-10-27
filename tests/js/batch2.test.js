@@ -66,7 +66,7 @@ test('"after N videos": each finished video is reported once; last one stops at 
 });
 
 /* 152: loop */
-test('single-video loop jumps back before the end; A-B loop stays inside A..B', async () => {
+test('single-video loop jumps back before the end', async () => {
   const env = await setupWatch();
   const { w, v } = env;
   const st = fakeMedia(v, { duration: 200, currentTime: 10 });
@@ -80,16 +80,6 @@ test('single-video loop jumps back before the end; A-B loop stays inside A..B', 
   fire(w, v, 'ended');
   assert.equal(st.currentTime, 0, 'ended also starts over');
   w.ytl.loop(false);
-  st.currentTime = 50; w.ytl.ab('a');
-  st.currentTime = 60; w.ytl.ab('b');
-  assert.equal(JSON.parse(w.ytl.state()).a, 50);
-  st.currentTime = 61;
-  fire(w, v, 'timeupdate');
-  assert.equal(st.currentTime, 50);
-  w.ytl.ab('clear');
-  st.currentTime = 70;
-  fire(w, v, 'timeupdate');
-  assert.equal(st.currentTime, 70);
   assert.equal(w.ytl._.wantAutonav(), true);
 });
 
@@ -172,23 +162,6 @@ test('default quality: mapping, Wi-Fi vs metered, applied once per video, auto u
   assert.equal(set[set.length - 1], 'tiny');
   env.w.ytl.bg(false);
   assert.equal(set[set.length - 1], 'hd720');
-});
-
-/* 133: keyboard */
-test('keyboard: space pauses on the watch page, ignored while typing', async () => {
-  const env = await setupWatch({ body: PLAYER_HTML + '<input id=q>' });
-  const { w, v } = env;
-  const st = fakeMedia(v, { duration: 600, currentTime: 100, paused: false });
-  let paused = 0;
-  w.HTMLMediaElement.prototype.pause = function () { paused++; };
-  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
-  assert.equal(paused, 1);
-  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
-  assert.equal(st.currentTime, 105);
-  const q = w.document.getElementById('q');
-  q.focus();
-  q.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'l', bubbles: true, cancelable: true }));
-  assert.equal(st.currentTime, 105);
 });
 
 /* 36/155: CSS switches */

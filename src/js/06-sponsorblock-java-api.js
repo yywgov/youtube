@@ -137,8 +137,6 @@
     seekBy: function (s) { seekBy(s); },
     setRate: function (r) { setRate(r); },
     loop: function (b) { setLoop(b); },
-    ab: function (w) { setAB(String(w)); },
-    shuffle: function (b) { return setShuffle(b); },
     state: function () { return JSON.stringify(toolState()); },
     sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); if (started) updateToolsBtn(); },
     countMode: function (b) { countMode = !!b; },

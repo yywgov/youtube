@@ -242,10 +242,6 @@
     out.push('#ytl-tools[data-ytl-off]{display:none!important}');
     // one-tap sleep mode (340): no comments under the player (related videos stay: the same-channel rule reads them)
     rule(RULES.sleepHide.map(function (x) { return 'html[data-ytl-sleepmode][data-ytl-page="watch"] ' + x; }), 'display:none!important');
-    // landscape, not full screen (387): the player is as wide as a 70 %-high 16:9 picture, centred, so
-    // the title and the related list stay in view; the player keeps its own aspect ratio inside
-    out.push('html[data-ytl-landscape][data-ytl-page="watch"]:not([data-ytl-fs]) ' + RULES.sel.playerBox +
-      '{max-width:calc(70vh * 16 / 9)!important;margin-left:auto!important;margin-right:auto!important}');
     // empty feed note (326)
     out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
       'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +

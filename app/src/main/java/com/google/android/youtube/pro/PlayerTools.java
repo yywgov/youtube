@@ -1,7 +1,6 @@
 package com.google.android.youtube.pro;
 
 import android.app.Dialog;
-import android.content.pm.ActivityInfo;
 import android.graphics.Typeface;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -16,8 +15,8 @@ import org.json.JSONObject;
 
 /**
  * Native bottom sheet with the playback tools (moon button next to the settings gear):
- * sleep timer, black screen (157), touch lock (131), orientation lock (132),
- * fine speed (151), single-video / A-B loop (152), playlist shuffle (153), -10 / +30 s.
+ * sleep timer, black screen (157), touch lock (131), fine speed (151), single-video loop (152), -10 / +30 s.
+ * A-B loop, playlist shuffle and the orientation lock were removed in v1.10 (450/451/452).
  */
 public final class PlayerTools {
     private final MainActivity a;
@@ -109,44 +108,7 @@ public final class PlayerTools {
                 MainActivity.js("ytl.loop(" + !loop + ")");
                 refresh();
             }));
-
-            double ab_a = st.optDouble("a", -1), ab_b = st.optDouble("b", -1);
-            String abState = ab_a >= 0 && ab_b > ab_a ? "正在循环 " + fmtTime(ab_a) + " – " + fmtTime(ab_b)
-                    : ab_a >= 0 ? "A 点 " + fmtTime(ab_a) + "，再设 B 点" : "先在起点设 A，再在终点设 B";
-            box.addView(row("A-B 循环", abState, null));
-            LinearLayout abRow = new LinearLayout(a);
-            abRow.setOrientation(LinearLayout.HORIZONTAL);
-            abRow.setPadding(dp(12), 0, dp(12), dp(4));
-            abRow.addView(Ui.chip(a, "设 A 点", v -> { MainActivity.js("ytl.ab('a')"); refresh(); }), Ui.chipWeight(a));
-            abRow.addView(Ui.chip(a, "设 B 点", v -> { MainActivity.js("ytl.ab('b')"); refresh(); }), Ui.chipWeight(a));
-            abRow.addView(Ui.chip(a, "清除", v -> { MainActivity.js("ytl.ab('clear')"); refresh(); }), Ui.chipWeight(a));
-            box.addView(abRow);
-
-            if (st.optBoolean("list", false) && st.optBoolean("shuffle", false)) {
-                LinearLayout sh = new LinearLayout(a);
-                sh.setOrientation(LinearLayout.HORIZONTAL);
-                sh.setPadding(dp(12), dp(4), dp(12), dp(4));
-                sh.addView(Ui.chip(a, "列表随机播放", v -> { MainActivity.js("ytl.shuffle(true)"); toast("已开启随机播放"); }), Ui.chipWeight(a));
-                sh.addView(Ui.chip(a, "顺序播放", v -> { MainActivity.js("ytl.shuffle(false)"); toast("已恢复顺序播放"); }), Ui.chipWeight(a));
-                box.addView(sh);
-            }
         }
-
-        box.addView(header("屏幕方向"));
-        int lock = a.orientationLock();
-        LinearLayout or = new LinearLayout(a);
-        or.setOrientation(LinearLayout.HORIZONTAL);
-        or.setPadding(dp(12), dp(4), dp(12), dp(4));
-        or.addView(orient("跟随系统", ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, lock), Ui.chipWeight(a));
-        or.addView(orient("锁定竖屏", ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, lock), Ui.chipWeight(a));
-        or.addView(orient("锁定横屏", ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, lock), Ui.chipWeight(a));
-        box.addView(or);
-        // remembered across starts (388)
-        final boolean remember = Prefs.on(a, Prefs.ORIENT_REMEMBER);
-        box.addView(row(remember ? "记住屏幕方向：开 ✓" : "记住屏幕方向：关", "下次打开 App 沿用这里选的方向", v -> {
-            a.setOrientRemember(!remember);
-            refresh();
-        }));
         return box;
     }
 
@@ -157,14 +119,6 @@ public final class PlayerTools {
         seekSum = 0;
         if (seekShown != null) { seekShown.setText((String) seekShown.getTag()); seekShown = null; }
     };
-
-    /** Orientation chip: the current one carries a check icon (354). */
-    private Button orient(String label, final int o, int cur) {
-        Button b = Ui.chip(a, label, v -> { a.setOrientationLock(o); refresh(); });
-        Ui.markChip(b, o == cur);
-        if (o == cur) b.setContentDescription(label + "，当前");
-        return b;
-    }
 
     private Button seekChip(String label, final int sec) {
         final Button b = Ui.chip(a, label, null);
@@ -286,13 +240,6 @@ public final class PlayerTools {
         return String.format(java.util.Locale.US, "%.2fx", r);
     }
 
-    private static String fmtTime(double sec) {
-        int s = (int) Math.max(0, Math.floor(sec));
-        int h = s / 3600, m = (s % 3600) / 60, ss = s % 60;
-        return h > 0 ? String.format(java.util.Locale.US, "%d:%02d:%02d", h, m, ss)
-                : String.format(java.util.Locale.US, "%d:%02d", m, ss);
-    }
-
     private View row(String title, String sub, View.OnClickListener click) {
         LinearLayout l = new LinearLayout(a);
         l.setOrientation(LinearLayout.VERTICAL);
@@ -319,10 +266,6 @@ public final class PlayerTools {
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
         t.setTextColor(color);
         return t;
-    }
-
-    private void toast(String s) {
-        a.say(s);
     }
 
     private int dp(int v) {

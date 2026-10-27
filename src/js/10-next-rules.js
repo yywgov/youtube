@@ -7,7 +7,7 @@
     return 'rec';
   }
   function wantAutonav() {
-    if (ruleMode() !== 'rec' || loopOne || (abA >= 0 && abB > abA)) return false;
+    if (ruleMode() !== 'rec' || loopOne) return false;
     // skip watched autoplay targets (311, off by default): YouTube's autoplay stays off while its
     // target is one already watched, the ended handler picks the next one
     if (cfg.skipWatchedNext && upNextWatched()) return false;

@@ -123,10 +123,5 @@
     retryOnce('player-error');
   }
   window.addEventListener('online', function () { setTimeout(onNet, 1500); });
-  // full screen video (387): the landscape layout rule steps aside
-  document.addEventListener('fullscreenchange', function () {
-    var on = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    if (on) document.documentElement.setAttribute('data-ytl-fs', ''); else document.documentElement.removeAttribute('data-ytl-fs');
-  });
   window.addEventListener('offline', function () { var v = video(); if (v && !v.paused) stalled = true; });
 

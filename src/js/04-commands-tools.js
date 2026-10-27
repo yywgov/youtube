@@ -68,9 +68,9 @@
     return x * x;
   }
 
-  /* ---------- 3b. playback tools: seek by, fine speed, loop / A-B, shuffle (26/151/152/153) ---------- */
+  /* ---------- 3b. playback tools: seek by, fine speed, single-video loop (26/151/152) ---------- */
+  // A-B loop, playlist shuffle (152/153) and keyboard keys (133) were removed in v1.10 (450/451/453)
   var loopOne = false;
-  var abA = -1, abB = -1;
   var ourRate = 0;            // rate we set ourselves (not a user change to remember)
   function seekBy(sec) {
     var v = video(); if (!v || adNow()) return;
@@ -91,61 +91,27 @@
     if (cfg.rememberRate) { cfg.rate = r; call('saveRate', String(r)); }
   }
   function loopChanged() { autonavFor = ''; if (started) forceAutonav(); }
-  function setLoop(on) { loopOne = !!on; if (loopOne) { abA = abB = -1; } loopChanged(); }
-  function setAB(which) {
-    var v = video();
-    if (which === 'clear' || !v) { abA = abB = -1; loopChanged(); return; }
-    var t = v.currentTime || 0;
-    if (which === 'a') { abA = t; if (abB >= 0 && abB <= abA + 1) abB = -1; loopOne = false; }
-    else if (which === 'b' && abA >= 0 && t > abA + 1) { abB = t; loopOne = false; }
-    loopChanged();
-  }
-  function setShuffle(on) {
-    var p = player();
-    if (p && typeof p.setShuffle === 'function') { p.setShuffle(!!on); return true; }
-    return false;
-  }
+  function setLoop(on) { loopOne = !!on; loopChanged(); }
   function hasList() { return /[?&]list=/.test(location.search); }
   function toolState() {
     var v = video();
     return {
       // a loaded video counts, also in the mini player while browsing (338)
       watch: !!(curId && v) || isWatch(), id: curId, rate: v ? (v.playbackRate || 1) : 1, loop: loopOne,
-      a: abA, b: abB, list: hasList(), shuffle: !!(player() && typeof player().setShuffle === 'function')
+      list: hasList()
     };
   }
-  function looping() { return loopOne || (abA >= 0 && abB > abA); }
+  function looping() { return loopOne; }
   /** A loop came round (312): with an "after N videos" timer every repeat counts as one video. */
   var loopRound = 0;
   function loopWrapped() {
     loopRound++;
     if (countMode) call('videoEnded', curId + '#' + loopRound);
   }
-  /** Loop / A-B check on every timeupdate; jumps back before the end so YouTube never moves on. */
+  /** Loop check on every timeupdate; jumps back before the end so YouTube never moves on. */
   function loopTick(v) {
     if (adNow() || stopAtEnd) return;
     var t = v.currentTime || 0, rate = v.playbackRate || 1;
-    if (abA >= 0 && abB > abA) {
-      if (t >= abB) { v.currentTime = abA; loopWrapped(); }
-      else if (t < abA - 2) v.currentTime = abA;
-      return;
-    }
     if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) { v.currentTime = 0; loopWrapped(); }
   }
-
-  /* ---------- 3c. keyboard (133): space / k pause, arrows / j l seek ---------- */
-  document.addEventListener('keydown', guard('keys', function (e) {
-    if (!isWatch() || e.ctrlKey || e.altKey || e.metaKey) return;
-    var ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
-    var v = video(); if (!v) return;
-    var k = e.key, done = true;
-    if (k === ' ' || k === 'k' || k === 'K') { if (v.paused) play(); else pause(); }
-    else if (k === 'ArrowLeft') seekBy(-5);
-    else if (k === 'ArrowRight') seekBy(5);
-    else if (k === 'j' || k === 'J') seekBy(-10);
-    else if (k === 'l' || k === 'L') seekBy(10);
-    else done = false;
-    if (done) { e.preventDefault(); e.stopPropagation(); }
-  }), true);
 

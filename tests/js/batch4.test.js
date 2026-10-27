@@ -55,18 +55,7 @@ test('single-video loop: every repeat counts for an "after N videos" timer, last
   assert.ok(calls.some((c) => c[0] === 'sleepFired'), 'paused at the end');
 });
 
-test('A-B loop rounds count too; without a count timer nothing is reported', async () => {
-  const env = await setupWatch({ cfg: { countMode: true } });
-  const { w, v, calls } = env;
-  const st = fakeMedia(v, { duration: 300, currentTime: 20 });
-  fire(w, v, 'loadedmetadata');
-  w.ytl.ab('a');
-  st.currentTime = 40;
-  w.ytl.ab('b');
-  st.currentTime = 40.5;
-  fire(w, v, 'timeupdate');
-  assert.equal(st.currentTime, 20);
-  assert.equal(calls.filter((c) => c[0] === 'videoEnded').length, 1);
+test('without a count timer a loop round is not reported', async () => {
   const plain = await setupWatch();
   const st2 = fakeMedia(plain.v, { duration: 100, currentTime: 99.8 });
   fire(plain.w, plain.v, 'loadedmetadata');

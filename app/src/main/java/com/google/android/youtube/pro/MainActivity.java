@@ -94,7 +94,7 @@ public class MainActivity extends Activity {
     private View blackView;
     private View lockView;
     private float savedBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
-    private int orientationLock = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+    private final int orientationLock = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;   // in-app lock removed (452)
     private long lastBackAt = 0;
     private boolean coldStart = false;
 
@@ -214,7 +214,6 @@ public class MainActivity extends Activity {
         Diag.session(appVersion());   // separator line per run (251)
         Diag.log("start", "v" + appVersion() + " docStartScript=" + docStartScript + " script=" + script.length());
         com.google.android.youtube.pro.webview.AdBlocker.load(this);   // today's block counts so far (281)
-        restoreOrientation();
         String startUrl = Links.fromIntent(getIntent(), HOME);
         coldStart = savedInstanceState == null && HOME.equals(startUrl);
         // start page (63): subscriptions instead of home when launched from the icon
@@ -276,8 +275,6 @@ public class MainActivity extends Activity {
     public void onConfigurationChanged(android.content.res.Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         requestHighRefreshRate();
-        // landscape player layout (387) follows the orientation
-        if (Prefs.on(this, Prefs.LANDSCAPE_LAYOUT)) js("ytl.cfg({landscape:" + (newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) + "})");
     }
 
     // ===================== high refresh rate (120 Hz LTPO etc.): FrameRate (436) =====================
@@ -809,10 +806,6 @@ public class MainActivity extends Activity {
         try { if (web != null) web.getSettings().setOffscreenPreRaster(Prefs.on(this, Prefs.PRE_RASTER)); } catch (Throwable ignored) {}
     }
 
-    /** Load a YouTube page inside the app (settings links). */
-    public void loadInApp(String url) {
-        if (web != null && url != null && url.startsWith("https://m.youtube.com/")) web.loadUrl(url);
-    }
 
     // ===================== batch 3: theme bars (92/145), font (93), haptics (120), keyboard (124) =====================
 
@@ -1051,16 +1044,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** ColorOS / other vendor auto-start managers, falling back to app details (99). */
+    /** ColorOS / OPPO auto-start list (99); other vendors' pages were dropped in v1.10 (467). */
     public void openAutostartSettings() {
         String[][] targets = {
                 {"com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
                 {"com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"},
                 {"com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity"},
                 {"com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"},
-                {"com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"},
-                {"com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"},
-                {"com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"},
         };
         for (String[] t : targets) {
             try {
@@ -1444,36 +1434,8 @@ public class MainActivity extends Activity {
 
     public int orientationLock() { return orientationLock; }
 
-    /** Remembered lock (388): 0 follow system, 1 portrait, 2 landscape. */
-    private void restoreOrientation() {
-        if (!Prefs.on(this, Prefs.ORIENT_REMEMBER)) return;
-        int v = Prefs.num(this, Prefs.ORIENT_LOCK);
-        orientationLock = v == 1 ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                : v == 2 ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-        if (orientationLock != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) setRequestedOrientation(orientationLock);
-    }
-
-    public void setOrientRemember(boolean on) {
-        Prefs.put(this, Prefs.ORIENT_REMEMBER, on);
-        saveOrientation();
-        say(on ? "下次打开沿用当前屏幕方向" : "下次打开跟随系统");
-    }
-
-    private void saveOrientation() {
-        if (!Prefs.on(this, Prefs.ORIENT_REMEMBER)) return;
-        int v = orientationLock == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? 1
-                : orientationLock == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ? 2 : 0;
-        Prefs.put(this, Prefs.ORIENT_LOCK, v);
-    }
-
-    public void setOrientationLock(int o) {
-        orientationLock = o;
-        saveOrientation();
-        if (chrome == null || !chrome.isFullscreen()) setRequestedOrientation(o);
-        say(o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED ? "屏幕方向：跟随系统"
-                : o == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ? "已锁定竖屏" : "已锁定横屏");
-    }
+    // the in-app orientation lock and its "remember" switch (132/388) were removed in v1.10 (452):
+    // the system's own auto-rotate toggle does the same; full screen still turns to landscape
 
     // ===================== top progress bar + offline screen (112/113) =====================
 
@@ -1873,7 +1835,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
                 .setTitle("允许后台持续播放")
                 .setMessage("为了息屏后也能一直播放（听着入睡），请在下一步允许 " + getString(R.string.app_name) + "「不受电池优化限制」。\n\n"
-                        + "国产系统（ColorOS、MIUI/HyperOS、EMUI/HarmonyOS 等）还需要开启「自启动」并把耗电策略设为「无限制」，可点「自启动」直接跳过去。")
+                        + "ColorOS 还需要开启「自启动」并把耗电设为「允许后台运行」，可点「自启动」直接跳过去。")
                 .setPositiveButton("去设置", (d, w) -> requestIgnoreBattery())
                 .setNeutralButton("自启动", (d, w) -> openAutostartSettings())
                 .setNegativeButton("以后再说", null)

@@ -85,8 +85,8 @@
     hideSearchMix: false,   // search results: no auto-generated mixes (333)
     lightRefresh: false,    // refresh keeps the service worker / static caches (316, experimental)
     listEndNext: false,     // a playlist played to its end goes on with a recommendation (313)
-    sleepStrict: false,     // sleeping with the same-channel rule: stop when there is none (315)
-    landscape: false        // landscape, not full screen: player at most 70 % of the height (387, experimental)
+    sleepStrict: false      // sleeping with the same-channel rule: stop when there is none (315)
+    // removed in v1.10 (personal-use trim, 454): landscape (387)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
@@ -401,10 +401,6 @@
     out.push('#ytl-tools[data-ytl-off]{display:none!important}');
     // one-tap sleep mode (340): no comments under the player (related videos stay: the same-channel rule reads them)
     rule(RULES.sleepHide.map(function (x) { return 'html[data-ytl-sleepmode][data-ytl-page="watch"] ' + x; }), 'display:none!important');
-    // landscape, not full screen (387): the player is as wide as a 70 %-high 16:9 picture, centred, so
-    // the title and the related list stay in view; the player keeps its own aspect ratio inside
-    out.push('html[data-ytl-landscape][data-ytl-page="watch"]:not([data-ytl-fs]) ' + RULES.sel.playerBox +
-      '{max-width:calc(70vh * 16 / 9)!important;margin-left:auto!important;margin-right:auto!important}');
     // empty feed note (326)
     out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
       'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +
@@ -605,9 +601,9 @@
     return x * x;
   }
 
-  /* ---------- 3b. playback tools: seek by, fine speed, loop / A-B, shuffle (26/151/152/153) ---------- */
+  /* ---------- 3b. playback tools: seek by, fine speed, single-video loop (26/151/152) ---------- */
+  // A-B loop, playlist shuffle (152/153) and keyboard keys (133) were removed in v1.10 (450/451/453)
   var loopOne = false;
-  var abA = -1, abB = -1;
   var ourRate = 0;            // rate we set ourselves (not a user change to remember)
   function seekBy(sec) {
     var v = video(); if (!v || adNow()) return;
@@ -628,63 +624,29 @@
     if (cfg.rememberRate) { cfg.rate = r; call('saveRate', String(r)); }
   }
   function loopChanged() { autonavFor = ''; if (started) forceAutonav(); }
-  function setLoop(on) { loopOne = !!on; if (loopOne) { abA = abB = -1; } loopChanged(); }
-  function setAB(which) {
-    var v = video();
-    if (which === 'clear' || !v) { abA = abB = -1; loopChanged(); return; }
-    var t = v.currentTime || 0;
-    if (which === 'a') { abA = t; if (abB >= 0 && abB <= abA + 1) abB = -1; loopOne = false; }
-    else if (which === 'b' && abA >= 0 && t > abA + 1) { abB = t; loopOne = false; }
-    loopChanged();
-  }
-  function setShuffle(on) {
-    var p = player();
-    if (p && typeof p.setShuffle === 'function') { p.setShuffle(!!on); return true; }
-    return false;
-  }
+  function setLoop(on) { loopOne = !!on; loopChanged(); }
   function hasList() { return /[?&]list=/.test(location.search); }
   function toolState() {
     var v = video();
     return {
       // a loaded video counts, also in the mini player while browsing (338)
       watch: !!(curId && v) || isWatch(), id: curId, rate: v ? (v.playbackRate || 1) : 1, loop: loopOne,
-      a: abA, b: abB, list: hasList(), shuffle: !!(player() && typeof player().setShuffle === 'function')
+      list: hasList()
     };
   }
-  function looping() { return loopOne || (abA >= 0 && abB > abA); }
+  function looping() { return loopOne; }
   /** A loop came round (312): with an "after N videos" timer every repeat counts as one video. */
   var loopRound = 0;
   function loopWrapped() {
     loopRound++;
     if (countMode) call('videoEnded', curId + '#' + loopRound);
   }
-  /** Loop / A-B check on every timeupdate; jumps back before the end so YouTube never moves on. */
+  /** Loop check on every timeupdate; jumps back before the end so YouTube never moves on. */
   function loopTick(v) {
     if (adNow() || stopAtEnd) return;
     var t = v.currentTime || 0, rate = v.playbackRate || 1;
-    if (abA >= 0 && abB > abA) {
-      if (t >= abB) { v.currentTime = abA; loopWrapped(); }
-      else if (t < abA - 2) v.currentTime = abA;
-      return;
-    }
     if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) { v.currentTime = 0; loopWrapped(); }
   }
-
-  /* ---------- 3c. keyboard (133): space / k pause, arrows / j l seek ---------- */
-  document.addEventListener('keydown', guard('keys', function (e) {
-    if (!isWatch() || e.ctrlKey || e.altKey || e.metaKey) return;
-    var ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable)) return;
-    var v = video(); if (!v) return;
-    var k = e.key, done = true;
-    if (k === ' ' || k === 'k' || k === 'K') { if (v.paused) play(); else pause(); }
-    else if (k === 'ArrowLeft') seekBy(-5);
-    else if (k === 'ArrowRight') seekBy(5);
-    else if (k === 'j' || k === 'J') seekBy(-10);
-    else if (k === 'l' || k === 'L') seekBy(10);
-    else done = false;
-    if (done) { e.preventDefault(); e.stopPropagation(); }
-  }), true);
 
   /* ---------- 4. quality: lowest in background, preferred default in foreground (29) ---------- */
   var QMAP = { '1080': 'hd1080', '720': 'hd720', '480': 'large' };
@@ -811,11 +773,6 @@
     retryOnce('player-error');
   }
   window.addEventListener('online', function () { setTimeout(onNet, 1500); });
-  // full screen video (387): the landscape layout rule steps aside
-  document.addEventListener('fullscreenchange', function () {
-    var on = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    if (on) document.documentElement.setAttribute('data-ytl-fs', ''); else document.documentElement.removeAttribute('data-ytl-fs');
-  });
   window.addEventListener('offline', function () { var v = video(); if (v && !v.paused) stalled = true; });
 
   /* ---------- 6. SponsorBlock: skip + 2 s undo prompt (9/10) ---------- */
@@ -957,8 +914,6 @@
     seekBy: function (s) { seekBy(s); },
     setRate: function (r) { setRate(r); },
     loop: function (b) { setLoop(b); },
-    ab: function (w) { setAB(String(w)); },
-    shuffle: function (b) { return setShuffle(b); },
     state: function () { return JSON.stringify(toolState()); },
     sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); if (started) updateToolsBtn(); },
     countMode: function (b) { countMode = !!b; },
@@ -1381,7 +1336,6 @@
     setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
     setAttr('data-ytl-nomix', cfg.hideSearchMix ? '1' : '');            // (333)
     setAttr('data-ytl-sleepmode', sleepMode ? '1' : '');                // (340)
-    setAttr('data-ytl-landscape', cfg.landscape ? '1' : '');            // (387)
     var gear = document.getElementById('ytl-gear');
     if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';
@@ -1732,7 +1686,7 @@
     return 'rec';
   }
   function wantAutonav() {
-    if (ruleMode() !== 'rec' || loopOne || (abA >= 0 && abB > abA)) return false;
+    if (ruleMode() !== 'rec' || loopOne) return false;
     // skip watched autoplay targets (311, off by default): YouTube's autoplay stays off while its
     // target is one already watched, the ended handler picks the next one
     if (cfg.skipWatchedNext && upNextWatched()) return false;
@@ -1913,7 +1867,7 @@
     if (had && countMode && endedFor !== curId && curProgress >= 0.9) { endedFor = curId; countedOnChange = Date.now(); call('videoEnded', curId); }
     curProgress = 0;
     curId = id;
-    if (had) { loopOne = false; abA = abB = -1; }
+    if (had) loopOne = false;
     if (pendingStop) { pendingStop = false; stopAtEnd = true; }
     lastMetaKey = '';
     stalled = false;
@@ -2021,9 +1975,9 @@
       log('len-misjudge', lenMis.id + ' d=' + Math.round(v.duration || 0));
     }
     if (adNow()) return;
-    // single-video / A-B loop (152): start over instead of moving on
-    if ((loopOne || (abA >= 0 && abB > abA)) && !stopAtEnd && !userPaused) {
-      v.currentTime = abB > abA && abA >= 0 ? abA : 0;
+    // single-video loop (152): start over instead of moving on
+    if (loopOne && !stopAtEnd && !userPaused) {
+      v.currentTime = 0;
       play();
       loopWrapped();
       return;

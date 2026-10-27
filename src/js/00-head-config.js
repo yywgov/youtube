@@ -85,8 +85,8 @@
     hideSearchMix: false,   // search results: no auto-generated mixes (333)
     lightRefresh: false,    // refresh keeps the service worker / static caches (316, experimental)
     listEndNext: false,     // a playlist played to its end goes on with a recommendation (313)
-    sleepStrict: false,     // sleeping with the same-channel rule: stop when there is none (315)
-    landscape: false        // landscape, not full screen: player at most 70 % of the height (387, experimental)
+    sleepStrict: false      // sleeping with the same-channel rule: stop when there is none (315)
+    // removed in v1.10 (personal-use trim, 454): landscape (387)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 

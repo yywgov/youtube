@@ -399,4 +399,28 @@ public final class PrefsModel {
     public static String notifLayout(boolean seek, boolean watchLater) {
         return (seek ? "快退 10 秒 · 播放 · 快进 30 秒" : "上一个 · 播放 · 下一个") + " · 睡眠" + (watchLater ? " · 稍后观看" : "");
     }
+
+    // ---------- merged rows, round 2 (455 / 459) ----------
+
+    /** Web text size row (455): 0 fixed, 1 follow the system (85–130 %), 2 follow, very large allowed (≤160 %). */
+    public static int fontChoice(boolean follow, boolean large) {
+        return !follow ? 0 : large ? 2 : 1;
+    }
+
+    /** Writes both keys; "fixed" keeps fontLarge as it was so switching back restores it. */
+    public static void writeFontChoice(Store s, int choice) {
+        if (choice <= 0) { s.put(Prefs.FONT_FOLLOW, false); return; }
+        s.put(Prefs.FONT_FOLLOW, true);
+        s.put(Prefs.FONT_LARGE, choice >= 2);
+    }
+
+    /** Search results "only videos and channels" (459): on when either of the two hiding rules is on. */
+    public static boolean searchTidy(boolean extras, boolean mix) {
+        return extras || mix;
+    }
+
+    public static void writeSearchTidy(Store s, boolean on) {
+        s.put(Prefs.HIDE_SEARCH_EXTRAS, on);
+        s.put(Prefs.HIDE_SEARCH_MIX, on);
+    }
 }

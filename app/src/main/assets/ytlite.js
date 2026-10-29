@@ -50,7 +50,6 @@
     captions: 'yt',         // yt | off | zh | zhHans | zhHant | en (31/341)
     origAudio: true,        // prefer the original audio track over auto-dubs (32)
     noEndWall: true,        // no recommendation wall when a video ends (36)
-    normalize: false,       // WebAudio compressor, experimental (20)
     sleepBadge: true,       // sleep time left in the player corner (154)
     subSize: 'default', subBg: 'default',  // caption style (155)
     // batch 3 (v1.4.0) – lists, look, interaction; defaults keep the old behaviour
@@ -1353,7 +1352,6 @@
       updateBadge();
       reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
-      if (isWatch() && (cfg.normalize || audioFx.ctx)) applyNormalize(video());
     }
   }
 
@@ -1613,34 +1611,6 @@
     else return;
     posSave(st);
   }
-
-  /* ---------- 10c. volume levelling (20, experimental, off by default) ----------
-   * Audio is only routed through WebAudio once the user switched it on; switching it off later
-   * connects the element straight to the output again. */
-  var audioFx = { ctx: null, src: null, comp: null, el: null };
-  var applyNormalize = guard('normalize', function (v) {
-    if (!v || (!cfg.normalize && !audioFx.ctx)) return;
-    if (!audioFx.ctx) {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      audioFx.ctx = new AC();
-    }
-    var ctx = audioFx.ctx;
-    if (audioFx.el !== v) {
-      audioFx.src = ctx.createMediaElementSource(v);
-      audioFx.el = v;
-    }
-    if (!audioFx.comp) {
-      var c = ctx.createDynamicsCompressor();
-      c.threshold.value = -26; c.knee.value = 24; c.ratio.value = 4; c.attack.value = 0.005; c.release.value = 0.3;
-      var g = ctx.createGain(); g.gain.value = 1.35;
-      c.connect(g); g.connect(ctx.destination);
-      audioFx.comp = c;
-    }
-    try { audioFx.src.disconnect(); } catch (e) {}
-    audioFx.src.connect(cfg.normalize ? audioFx.comp : ctx.destination);
-    if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function () {});
-  });
 
   /* ---------- 10d. sleep time left on the player (154) ---------- */
   var updateBadge = guard('badge', function () {
@@ -1914,7 +1884,6 @@
     // m.youtube sometimes starts autoplayed videos muted (YTPro had an unmute loop for this)
     if (v.muted && isWatch() && unmutedFor !== curId) { unmutedFor = curId; v.muted = false; }
     onVideoStart(v);
-    if (cfg.normalize || audioFx.ctx) applyNormalize(v);
     sendMeta();
     call('mediaState', 'playing', pos(v), v.playbackRate || 1);
   });

@@ -425,7 +425,6 @@ public final class Prefs {
             o.put("captions", str(c, CAPTIONS, "yt"));
             o.put("origAudio", on(c, ORIG_AUDIO));
             o.put("noEndWall", on(c, NO_END_WALL));
-            o.put("normalize", on(c, NORMALIZE));
             o.put("sleepBadge", on(c, SLEEP_BADGE));
             o.put("subSize", str(c, SUB_SIZE, "default"));
             o.put("subBg", str(c, SUB_BG, "default"));

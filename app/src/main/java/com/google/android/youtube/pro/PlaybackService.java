@@ -146,7 +146,6 @@ public class PlaybackService extends Service {
         if (st != PlaybackState.STATE_BUFFERING) longBuffer = false;
         if (st == PlaybackState.STATE_PLAYING) { interrupted = false; netNote = false; }
         if (st == PlaybackState.STATE_BUFFERING && state == PlaybackState.STATE_PLAYING && !MainActivity.isVisible()) bgBuffering++;
-        trackWatch(c, st == PlaybackState.STATE_PLAYING);
         state = st;
         positionMs = pos;
         rate = r > 0 ? r : 1f;
@@ -229,51 +228,7 @@ public class PlaybackService extends Service {
         }
     }
 
-    // ---- local watch time (159): seconds per day, last 14 days, only ever on this phone ----
-    private static long playingSince = 0;
-
-    private static void trackWatch(Context c, boolean playing) {
-        long now = SystemClock.elapsedRealtime();
-        if (playing) {
-            if (playingSince == 0) playingSince = now;
-            return;
-        }
-        if (playingSince == 0) return;
-        long sec = (now - playingSince) / 1000;
-        playingSince = 0;
-        if (sec <= 0 || sec > 12 * 3600) return;
-        try {
-            org.json.JSONObject o = new org.json.JSONObject(Prefs.str(c, Prefs.WATCH_STATS, "{}"));
-            String day = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(new java.util.Date());
-            o.put(day, o.optLong(day, 0) + sec);
-            java.util.List<String> keys = new java.util.ArrayList<>();
-            java.util.Iterator<String> it = o.keys();
-            while (it.hasNext()) keys.add(it.next());
-            java.util.Collections.sort(keys);
-            for (int i = 0; i < keys.size() - 14; i++) o.remove(keys.get(i));
-            Prefs.put(c, Prefs.WATCH_STATS, o.toString());
-        } catch (Exception ignored) {}
-    }
-
-    private static long statsSum(Context c, int days) {
-        try {
-            org.json.JSONObject o = new org.json.JSONObject(Prefs.str(c, Prefs.WATCH_STATS, "{}"));
-            java.util.Calendar cal = java.util.Calendar.getInstance();
-            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US);
-            long sum = 0;
-            for (int i = 0; i < days; i++) {
-                sum += o.optLong(f.format(cal.getTime()), 0);
-                cal.add(java.util.Calendar.DAY_OF_MONTH, -1);
-            }
-            if (playingSince > 0) sum += (SystemClock.elapsedRealtime() - playingSince) / 1000;
-            return sum;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
-    public static long weekSeconds(Context c) { return statsSum(c, 7); }
-    public static long todaySeconds(Context c) { return statsSum(c, 1); }
+    // the local watch-time statistics (159) were removed (478): no write to preferences on every pause any more
 
     /** Sleep timer ended (paused): release everything that keeps the phone awake (17). */
     public static boolean isPlaying() {
@@ -449,7 +404,7 @@ public class PlaybackService extends Service {
         MAIN.removeCallbacks(clickDone);
         MAIN.removeCallbacks(idleGuardRun);
         MAIN.removeCallbacks(freezeRun);
-        if (bgBuffering > 0) Diag.log("net", "buffering with the screen off this session: " + bgBuffering + " (wifiSaver=" + Prefs.on(this, Prefs.WIFI_SAVER) + ")");
+        if (bgBuffering > 0) Diag.log("net", "buffering with the screen off this session: " + bgBuffering);
         bgBuffering = 0;
         releaseLocks();
         try { if (noisyReceiver != null) unregisterReceiver(noisyReceiver); } catch (Exception ignored) {}
@@ -559,15 +514,8 @@ public class PlaybackService extends Service {
 
     private void acquireLocks() {
         try { if (wakeLock != null) wakeLock.acquire(WAKE_LOCK_MS); } catch (Exception ignored) {}
-        // Wi-Fi saver (271, off by default): with the screen off at the lowest background quality the
-        // high-performance Wi-Fi lock is not held; the wake lock still is. On screen / setting off: as before.
-        boolean wifiSaver = Prefs.on(this, Prefs.WIFI_SAVER) && Prefs.lowQualityBg(this) && !MainActivity.isVisible();
-        try {
-            if (wifiLock != null) {
-                if (wifiSaver) { if (wifiLock.isHeld()) wifiLock.release(); }
-                else if (!wifiLock.isHeld()) wifiLock.acquire();
-            }
-        } catch (Exception ignored) {}
+        // the Wi-Fi saver experiment (271) is gone (473): the lock is always held while playing, so a night stream never drops
+        try { if (wifiLock != null && !wifiLock.isHeld()) wifiLock.acquire(); } catch (Exception ignored) {}
     }
 
     private void releaseLocks() {

@@ -51,8 +51,8 @@ public class SettingsPage {
             c.addView(nav(R.drawable.ic_set_play, "播放", "画质、声音与速度、续播提示、字幕、SponsorBlock", this::playPage));
             c.addView(nav(R.drawable.ic_moon_white, "后台与睡眠", "保活、睡眠定时、接下来播放、通知栏与耳机", this::sleepPage));
             c.addView(nav(R.drawable.ic_set_home, "首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
-            c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、列表样式、长按菜单、轻震、保持位置", this::lookPage));
-            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "更新、备份与恢复、记录与隐私、诊断、关于", this::dataPage));
+            c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、字号、轻震、列表样式、滑动流畅度", this::lookPage));
+            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "更新、备份与恢复、关于与诊断", this::dataPage));
         });
     }
 
@@ -102,7 +102,6 @@ public class SettingsPage {
                     + " · 省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
             LinearLayout s = card(box, "声音、速度与续播");
             s.addView(toggle("优先原声音轨", "有多条音轨（AI 自动配音）时切回原声", Prefs.ORIG_AUDIO));
-            s.addView(toggle("音量均衡（实验）", "压缩忽大忽小的音量；若息屏后没声音请关闭", Prefs.NORMALIZE));
             s.addView(toggle("记住播放速度", "下一个视频沿用上次选的速度（最高 2 倍）", Prefs.REMEMBER_RATE));
             // "remember progress when signed out" lost its row (461): signed in anyway; resumeLocal keeps its stored value
             s.addView(toggle("重开时提示继续上次视频", "被系统清掉后打开 App，底部提示一键回到断点", Prefs.RESUME_PROMPT));
@@ -201,25 +200,71 @@ public class SettingsPage {
         page("后台与睡眠", box -> {
             LinearLayout k = card(box, "后台保活（息屏续播必需）");
             k.addView(dyn("保活状态", this::keepAliveLabel, v -> keepAliveSheet()));
-            k.addView(toggle("息屏省电 Wi-Fi（实验）", "息屏且后台最低画质时不持高性能 Wi-Fi 锁；夜里断流请关闭", Prefs.WIFI_SAVER));
             LinearLayout c = card(box, "睡眠定时");
             c.addView(dyn("默认时长", this::sleepDefaultLabel, v -> pickSleepDefault()));
-            c.addView(choiceInt("淡出时长", "到点前音量逐渐变小的时间", Prefs.SLEEP_FADE,
-                    new String[]{"10 秒", "30 秒", "60 秒"}, new int[]{10, 30, 60}, 60));
-            c.addView(choiceInt("延长按钮", "通知栏、锁屏和播放器角标上「+N 分钟」的步长", Prefs.EXTEND_STEP,
-                    new String[]{"+10 分钟", "+15 分钟", "+30 分钟"}, new int[]{10, 15, 30}, 15));
-            c.addView(toggle("暂停时定时也暂停", "分钟定时在暂停期间不走，继续播放后接着倒数", Prefs.SLEEP_HOLD));
-            c.addView(toggle("播放器角上显示剩余时间", "左上角小字，点一下延长，长按改时长", Prefs.SLEEP_BADGE));
-            c.addView(toggle("一键睡眠模式 10 秒后黑屏", "开一键睡眠模式时顺便进入黑屏播放（双击恢复）", Prefs.SLEEP_MODE_BLACK));
+            // fade, extend step, pause-holds-timer, corner badge and one-tap black screen share one row (474)
+            c.addView(dyn("定时细节", this::sleepDetailLabel, v -> pickSleepDetails()));
             // night window + night prompt in one row (456)
             c.addView(dyn("夜间打开时提示开睡眠定时", this::nightPromptLabel, v -> pickNightPrompt()));
             c.addView(toggle("无操作保护", "连续 3 小时没碰手机、没按耳机键又没开定时，自动开 30 分钟睡眠定时", Prefs.IDLE_GUARD));
             LinearLayout n = card(box, "续播");
             n.addView(dyn("接下来播放", this::nextLabel, v -> pickNext()));
             LinearLayout h = card(box, "通知栏与耳机");
-            h.addView(dyn("通知栏按钮", () -> PrefsModel.notifLayout(Prefs.on(a, Prefs.NOTIF_SEEK), Prefs.on(a, Prefs.NOTIF_WL)), v -> pickNotif()));
-            h.addView(toggle("耳机按键多击", "按一下暂停/播放，两下下一个，三下上一个", Prefs.HEADSET_MULTI));
+            // the headset multi-click switch moved into this row's sheet (475)
+            h.addView(dyn("通知栏按钮与耳机", () -> PrefsModel.notifLayout(Prefs.on(a, Prefs.NOTIF_SEEK), Prefs.on(a, Prefs.NOTIF_WL))
+                    + (Prefs.on(a, Prefs.HEADSET_MULTI) ? " · 耳机多击" : " · 耳机多击已关"), v -> pickNotif()));
         });
+    }
+
+    private String sleepDetailLabel() {
+        return PrefsModel.sleepDetailLabel(Prefs.get(a).getInt(Prefs.SLEEP_FADE, 60), Prefs.get(a).getInt(Prefs.EXTEND_STEP, 15),
+                Prefs.on(a, Prefs.SLEEP_HOLD), Prefs.on(a, Prefs.SLEEP_BADGE), Prefs.on(a, Prefs.SLEEP_MODE_BLACK));
+    }
+
+    private static final int[] FADE_VALUES = {10, 30, 60};
+    private static final int[] STEP_VALUES = {10, 15, 30};
+
+    private static int indexOf(int[] v, int x, int def) {
+        for (int i = 0; i < v.length; i++) if (v[i] == x) return i;
+        return def;
+    }
+
+    /** Timer details (474): five rows that were always changed once and left alone, in one sheet. Keys unchanged. */
+    private void pickSleepDetails() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.addView(Ui.title(a, "淡出时长（到点前音量逐渐变小）"));
+        final android.widget.RadioGroup g1 = radios(box, new String[]{"10 秒", "30 秒", "60 秒"}, indexOf(FADE_VALUES, Prefs.get(a).getInt(Prefs.SLEEP_FADE, 60), 2));
+        box.addView(Ui.title(a, "延长按钮（通知栏、锁屏、角标上的「+N 分钟」）"));
+        final android.widget.RadioGroup g2 = radios(box, new String[]{"+10 分钟", "+15 分钟", "+30 分钟"}, indexOf(STEP_VALUES, Prefs.get(a).getInt(Prefs.EXTEND_STEP, 15), 1));
+        final android.widget.CheckBox hold = check(box, "暂停时定时也暂停（继续播放后接着倒数）", Prefs.on(a, Prefs.SLEEP_HOLD));
+        final android.widget.CheckBox badge = check(box, "播放器左上角显示剩余时间（点一下延长，长按改时长）", Prefs.on(a, Prefs.SLEEP_BADGE));
+        final android.widget.CheckBox black = check(box, "一键睡眠模式 10 秒后黑屏（双击恢复）", Prefs.on(a, Prefs.SLEEP_MODE_BLACK));
+        ScrollView sv = new ScrollView(a);
+        sv.addView(box);
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("定时细节")
+                .setView(sv)
+                .setPositiveButton("确定", (d, w) -> {
+                    Prefs.put(a, Prefs.SLEEP_FADE, FADE_VALUES[Math.max(0, checkedIndex(g1))]);
+                    Prefs.put(a, Prefs.EXTEND_STEP, STEP_VALUES[Math.max(0, checkedIndex(g2))]);
+                    Prefs.put(a, Prefs.SLEEP_HOLD, hold.isChecked());
+                    Prefs.put(a, Prefs.SLEEP_BADGE, badge.isChecked());
+                    Prefs.put(a, Prefs.SLEEP_MODE_BLACK, black.isChecked());
+                    applied();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private android.widget.CheckBox check(LinearLayout parent, String text, boolean on) {
+        android.widget.CheckBox cb = new android.widget.CheckBox(a);
+        cb.setText(text);
+        cb.setTextColor(Ui.TEXT);
+        cb.setChecked(on);
+        parent.addView(cb);
+        return cb;
     }
 
     private String keepAliveLabel() {
@@ -497,6 +542,8 @@ public class SettingsPage {
         final android.widget.RadioGroup g1 = radios(box, new String[]{"上一个 / 下一个", "快退 10 秒 / 快进 30 秒"}, Prefs.on(a, Prefs.NOTIF_SEEK) ? 1 : 0);
         box.addView(Ui.title(a, "第五个键"));
         final android.widget.RadioGroup g2 = radios(box, new String[]{"稍后观看（需登录）", "不显示"}, Prefs.on(a, Prefs.NOTIF_WL) ? 0 : 1);
+        box.addView(Ui.title(a, "耳机"));
+        final android.widget.CheckBox multi = check(box, "耳机按键多击：一下暂停/播放，两下下一个，三下上一个", Prefs.on(a, Prefs.HEADSET_MULTI));
         TextView note = Ui.text(a, "睡眠定时中第五键让位给「+" + SleepTimer.extendMin(a) + " 分钟」；暂停时第五键是「关闭」；未登录时不显示「稍后观看」。Android 13+ 的锁屏/下拉媒体卡片同样生效。", 13, Ui.TEXT_2);
         note.setPadding(0, dp(8), 0, 0);
         box.addView(note);
@@ -508,6 +555,7 @@ public class SettingsPage {
                 .setPositiveButton("确定", (d, w) -> {
                     Prefs.put(a, Prefs.NOTIF_SEEK, checkedIndex(g1) == 1);
                     Prefs.put(a, Prefs.NOTIF_WL, checkedIndex(g2) == 0);
+                    Prefs.put(a, Prefs.HEADSET_MULTI, multi.isChecked());
                     applied();
                 })
                 .setNegativeButton("取消", null)
@@ -665,23 +713,65 @@ public class SettingsPage {
 
     private void lookPage() {
         page("外观与交互", box -> {
-            LinearLayout c = card(box, "主题");
+            LinearLayout c = card(box, "主题与手感");
             c.addView(toggle("纯黑主题（AMOLED）", "深色模式下背景纯黑，更省电、夜里不刺眼", Prefs.AMOLED));
             // accent (463): only offered while a colour other than the brand blue is still set
             if (!accentIsDefault()) c.addView(accentRow());
             c.addView(fontRow());   // two font switches became one choice (455)
-            LinearLayout l = card(box, "列表样式");
-            l.addView(boolChoice("首页列表布局", "紧凑：小图在左、标题在右，一屏看更多", Prefs.COMPACT, "大图（默认）", "紧凑列表"));
-            l.addView(toggle("统一卡片样式", "缩略图圆角统一、标题两行、时长和进度条更醒目", Prefs.CARD_STYLE));
-            l.addView(toggle("深色模式压暗缩略图", "夜里看列表不刺眼", Prefs.DIM_THUMBS));
-            LinearLayout t = card(box, "交互");
-            t.addView(toggle("长按视频卡片快捷菜单", "稍后观看、不再显示此频道、本地隐藏等", Prefs.LONG_PRESS));
-            t.addView(toggle("轻震提示", "开定时、刷新完成、长按菜单时轻震一下", Prefs.HAPTIC));
-            t.addView(toggle("返回列表时保持位置", "从视频返回时回到刚才滑到的地方", Prefs.KEEP_SCROLL));
-            LinearLayout h = card(box, "高级");
-            h.addView(toggle("列表渲染优化", "屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭", Prefs.PERF_CSS));
-            h.addView(toggle("预渲染屏外内容（实验）", "滑动更跟手，但更耗内存和电；可用「关于 → 流畅度自测」对比", Prefs.PRE_RASTER));
+            c.addView(toggle("轻震提示", "开定时、刷新完成、长按菜单时轻震一下", Prefs.HAPTIC));
+            // the long-press menu and keep-scroll switches lost their rows (477): both stay on (the defaults)
+            LinearLayout l = card(box, "列表");
+            l.addView(dyn("列表样式", this::listStyleLabel, v -> pickListStyle()));       // compact / uniform cards / dim thumbnails (476)
+            l.addView(dyn("滑动流畅度", this::perfLabel, v -> pickPerf()));               // list rendering + off-screen pre-raster (476)
         });
+    }
+
+    private String listStyleLabel() {
+        return PrefsModel.listStyleLabel(Prefs.on(a, Prefs.COMPACT), Prefs.on(a, Prefs.CARD_STYLE), Prefs.on(a, Prefs.DIM_THUMBS));
+    }
+
+    /** List look (476): compact layout, uniform card style and dimmed thumbnails in one sheet. */
+    private void pickListStyle() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(4), dp(20), 0);
+        final android.widget.CheckBox compact = check(box, "首页紧凑列表（小图在左、标题在右，一屏看更多）", Prefs.on(a, Prefs.COMPACT));
+        final android.widget.CheckBox card = check(box, "统一卡片样式（缩略图圆角统一、标题两行、时长和进度条更醒目）", Prefs.on(a, Prefs.CARD_STYLE));
+        final android.widget.CheckBox dim = check(box, "深色模式压暗缩略图（夜里看列表不刺眼）", Prefs.on(a, Prefs.DIM_THUMBS));
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("列表样式")
+                .setView(box)
+                .setPositiveButton("确定", (d, w) -> {
+                    Prefs.put(a, Prefs.COMPACT, compact.isChecked());
+                    Prefs.put(a, Prefs.CARD_STYLE, card.isChecked());
+                    Prefs.put(a, Prefs.DIM_THUMBS, dim.isChecked());
+                    applied();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private String perfLabel() {
+        return PrefsModel.perfLabel(Prefs.on(a, Prefs.PERF_CSS), Prefs.on(a, Prefs.PRE_RASTER));
+    }
+
+    /** Smoothness (476): list rendering optimisation and the off-screen pre-raster experiment. */
+    private void pickPerf() {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(4), dp(20), 0);
+        final android.widget.CheckBox perf = check(box, "列表渲染优化（屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭）", Prefs.on(a, Prefs.PERF_CSS));
+        final android.widget.CheckBox ras = check(box, "预渲染屏外内容（实验：滑动更跟手，但更耗内存和电；可用「关于与诊断 → 流畅度自测」对比）", Prefs.on(a, Prefs.PRE_RASTER));
+        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("滑动流畅度")
+                .setView(box)
+                .setPositiveButton("确定", (d, w) -> {
+                    Prefs.put(a, Prefs.PERF_CSS, perf.isChecked());
+                    Prefs.put(a, Prefs.PRE_RASTER, ras.isChecked());
+                    applied();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     // accent (103/351/361/463): the brand blue is the only colour now; an older pick can be set back
@@ -740,8 +830,7 @@ public class SettingsPage {
             b.addView(row("恢复默认设置", "开关和选项回到默认；屏蔽列表、登录和记录不动；10 秒内可撤销", v -> confirmDefaults()));
             // the history row and two explanation lines went (464); report + logs share one page (465)
             LinearLayout d = card(box);
-            d.addView(nav(0, "诊断", "复制问题报告、漏网广告记录、诊断日志、网络拦截统计", this::logsPage));
-            d.addView(nav(0, "关于", "版本、WebView、刷新率、本机观看统计", this::aboutPage));
+            d.addView(nav(0, "关于与诊断", "版本、WebView、刷新率、流畅度自测、问题报告、日志", this::logsPage));   // two pages became one (472)
         });
     }
 
@@ -756,43 +845,37 @@ public class SettingsPage {
                 .show();
     }
 
+    private static final String REFRESH_HINT = " · 滑动时大多没到最高刷新率，可能被系统按应用限制了；点此打开显示设置，在「屏幕刷新率 → 应用」里设为高刷";
+
     private void logsPage() {
-        page("诊断", box -> {
-            LinearLayout r = card(box);
+        page("关于与诊断", box -> {
+            LinearLayout c = card(box);
+            c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
+            c.addView(row("WebView", MainActivity.webViewVersion(a), null));
+            if (a.refreshLimited()) {
+                c.addView(row("屏幕刷新率", a.refreshRateLabel() + REFRESH_HINT, v -> a.openDisplaySettings()));
+            } else {
+                c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
+            }
+            c.addView(dyn("睡眠定时耗电", () -> {
+                String n = NightLog.last(a);
+                return n.isEmpty() ? "开睡眠定时睡一晚后显示（充电中或不到 10 分钟的不记）" : n;
+            }, null));
+            c.addView(row("流畅度自测", "在首页列表上自动滚动 10 秒，统计掉帧并写入诊断日志", v -> { closeAll(); a.runSmoothTest(); }));
+            LinearLayout r = card(box, "问题与日志");
             r.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
-            LinearLayout c = card(box, "日志");
-            c.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));
-            c.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行 · 只保留最近 30 天", v -> copyLog(Diag.DIAG, "诊断日志")));
-            c.addView(dyn("复制崩溃记录", () -> { String k = Diag.lastCrash(a); return k.isEmpty() ? "没有崩溃记录" : "最近 3 次崩溃的完整堆栈"; },
+            r.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));
+            r.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行 · 只保留最近 30 天", v -> copyLog(Diag.DIAG, "诊断日志")));
+            r.addView(dyn("复制崩溃记录", () -> { String k = Diag.lastCrash(a); return k.isEmpty() ? "没有崩溃记录" : "最近 3 次崩溃的完整堆栈"; },
                     v -> copyLog(Diag.CRASH, "崩溃记录")));
-            c.addView(dyn("网络拦截统计", com.google.android.youtube.pro.webview.AdBlocker::summary, null));
-            c.addView(row("清空以上记录", "只清本机日志", v -> {
+            r.addView(dyn("网络拦截统计", com.google.android.youtube.pro.webview.AdBlocker::summary, null));
+            r.addView(row("清空以上记录", "只清本机日志", v -> {
                 Diag.clear(a, Diag.ADS);
                 Diag.clear(a, Diag.DIAG);
                 Diag.clear(a, Diag.CRASH);
                 refreshAll();
                 toastShort("已清空");
             }));
-        });
-    }
-
-    private void aboutPage() {
-        page("关于", box -> {
-            LinearLayout c = card(box);
-            c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
-            c.addView(row("WebView", MainActivity.webViewVersion(a), null));
-            if (a.refreshLimited()) {
-                c.addView(row("屏幕刷新率", a.refreshRateLabel() + " · 滑动时大多没到最高刷新率，可能被系统按应用限制了；点此打开显示设置，在「屏幕刷新率 → 应用」里设为高刷", v -> a.openDisplaySettings()));
-            } else {
-                c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
-            }
-            c.addView(dyn("本机观看统计", () -> "近 7 天 " + fmtDuration(PlaybackService.weekSeconds(a)) + " · 今天 " + fmtDuration(PlaybackService.todaySeconds(a)), null));
-            c.addView(dyn("睡眠定时耗电", () -> {
-                String n = NightLog.last(a);
-                return n.isEmpty() ? "开睡眠定时睡一晚后显示（充电中或不到 10 分钟的不记）" : n;
-            }, null));
-            c.addView(row("流畅度自测", "在首页列表上自动滚动 10 秒，统计掉帧并写入诊断日志", v -> { closeAll(); a.runSmoothTest(); }));
-            c.addView(row("开源许可", "基于 YTPro（MIT）· AndroidX（Apache 2.0）· SponsorBlock 数据（CC BY-NC-SA 4.0）", null));   // no dialog (468)
         });
     }
 
@@ -1451,11 +1534,6 @@ public class SettingsPage {
         } catch (Exception e) {
             Toast.makeText(a, "复制失败", Toast.LENGTH_SHORT).show();
         }
-    }
-
-    private static String fmtDuration(long sec) {
-        long h = sec / 3600, m = (sec % 3600) / 60;
-        return h > 0 ? h + " 小时 " + m + " 分" : m + " 分钟";
     }
 
     private void toastShort(String s) {

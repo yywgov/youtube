@@ -395,6 +395,26 @@ public final class PrefsModel {
         return start + ":00–" + end + ":00";
     }
 
+    /** Timer details row summary (474). */
+    public static String sleepDetailLabel(int fade, int step, boolean hold, boolean badge, boolean black) {
+        return "淡出 " + fade + " 秒 · +" + step + " 分钟" + (hold ? " · 暂停时定时也暂停" : "") + (badge ? " · 角标" : "") + (black ? " · 一键睡眠黑屏" : "");
+    }
+
+    /** List style row summary (476). */
+    public static String listStyleLabel(boolean compact, boolean cards, boolean dim) {
+        if (!compact && !cards && !dim) return "默认";
+        StringBuilder b = new StringBuilder();
+        if (compact) b.append("紧凑");
+        if (cards) { if (b.length() > 0) b.append(" · "); b.append("统一卡片"); }
+        if (dim) { if (b.length() > 0) b.append(" · "); b.append("压暗缩略图"); }
+        return b.toString();
+    }
+
+    /** Smoothness row summary (476). */
+    public static String perfLabel(boolean perfCss, boolean preRaster) {
+        return (perfCss ? "列表渲染优化 开" : "列表渲染优化 关") + (preRaster ? " · 预渲染 开" : "");
+    }
+
     /** Notification buttons, as the row summary shows them (237). */
     public static String notifLayout(boolean seek, boolean watchLater) {
         return (seek ? "快退 10 秒 · 播放 · 快进 30 秒" : "上一个 · 播放 · 下一个") + " · 睡眠" + (watchLater ? " · 稍后观看" : "");

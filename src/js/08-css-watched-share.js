@@ -52,7 +52,6 @@
       updateBadge();
       reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
-      if (isWatch() && (cfg.normalize || audioFx.ctx)) applyNormalize(video());
     }
   }
 

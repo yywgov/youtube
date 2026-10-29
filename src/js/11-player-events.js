@@ -70,7 +70,6 @@
     // m.youtube sometimes starts autoplayed videos muted (YTPro had an unmute loop for this)
     if (v.muted && isWatch() && unmutedFor !== curId) { unmutedFor = curId; v.muted = false; }
     onVideoStart(v);
-    if (cfg.normalize || audioFx.ctx) applyNormalize(v);
     sendMeta();
     call('mediaState', 'playing', pos(v), v.playbackRate || 1);
   });

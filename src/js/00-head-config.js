@@ -50,7 +50,6 @@
     captions: 'yt',         // yt | off | zh | zhHans | zhHant | en (31/341)
     origAudio: true,        // prefer the original audio track over auto-dubs (32)
     noEndWall: true,        // no recommendation wall when a video ends (36)
-    normalize: false,       // WebAudio compressor, experimental (20)
     sleepBadge: true,       // sleep time left in the player corner (154)
     subSize: 'default', subBg: 'default',  // caption style (155)
     // batch 3 (v1.4.0) – lists, look, interaction; defaults keep the old behaviour

@@ -119,7 +119,6 @@ public class SettingsPage {
             LinearLayout c = card(box);
             c.addView(choice("默认画质", "每个视频开始时设一次，之后可手动改", Prefs.QUALITY, Q_LABELS, Q_VALUES, "auto"));
             c.addView(toggle("后台/息屏时最低画质", "省电省流量；回到前台恢复默认画质", Prefs.LOW_QUALITY_BG));
-            c.addView(toggle("省电模式时降画质、关动画", "系统开启省电模式时画质最高 480p", Prefs.POWER_SAVE_AUTO));
             footnote(box, "同时生效时的优先级：一键睡眠模式 > 后台/息屏最低 > 省电上限 480p > 默认画质。");   // (441)
         });
     }
@@ -136,8 +135,6 @@ public class SettingsPage {
             s.addView(choice("默认字幕", "跟随 YouTube 时不做任何改动；人工字幕优先于自动字幕", Prefs.CAPTIONS, CAP_LABELS, CAP_VALUES, "yt"));
             s.addView(choice("字幕大小", "只改显示大小，不影响字幕内容", Prefs.SUB_SIZE,
                     new String[]{"默认", "小", "大", "特大"}, new String[]{"default", "s", "l", "xl"}, "default"));
-            s.addView(choice("字幕背景", "夜里看可选半透明或无背景", Prefs.SUB_BG,
-                    new String[]{"默认", "半透明", "无背景（文字描边）"}, new String[]{"default", "half", "none"}, "default"));
         });
     }
 
@@ -575,12 +572,10 @@ public class SettingsPage {
             f.addView(sub("内容过滤", this::filterLabel, this::filterPage));
             LinearLayout m = card(box, "隐藏模块与搜索");
             m.addView(toggle("隐藏首页货架", "新闻、合集、「可能喜欢」等横向模块", Prefs.HIDE_SHELVES));
-            m.addView(toggle("订阅页隐藏社区帖子", "订阅页只显示视频", Prefs.SUBS_ONLY_VIDEOS));
             // two search switches became one (459); "open the keyboard" lost its row (460), searchFocus keeps its value
             m.addView(toggle("搜索结果只留视频和频道", "隐藏「人们还看了」等插入模块和自动生成的合辑",
                     () -> PrefsModel.searchTidy(Prefs.on(a, Prefs.HIDE_SEARCH_EXTRAS), Prefs.on(a, Prefs.HIDE_SEARCH_MIX)),
                     on -> { Prefs.PrefStore st = new Prefs.PrefStore(Prefs.get(a)); PrefsModel.writeSearchTidy(st, on); st.apply(); }));
-            m.addView(toggle("搜索结果快捷筛选", "顶部一排：最新、只看视频、本周、按时长", Prefs.SEARCH_CHIPS));
         });
     }
 
@@ -718,7 +713,6 @@ public class SettingsPage {
             // accent (463): only offered while a colour other than the brand blue is still set
             if (!accentIsDefault()) c.addView(accentRow());
             c.addView(fontRow());   // two font switches became one choice (455)
-            c.addView(toggle("轻震提示", "开定时、刷新完成、长按菜单时轻震一下", Prefs.HAPTIC));
             // the long-press menu and keep-scroll switches lost their rows (477): both stay on (the defaults)
             LinearLayout l = card(box, "列表");
             l.addView(dyn("列表样式", this::listStyleLabel, v -> pickListStyle()));       // compact / uniform cards / dim thumbnails (476)

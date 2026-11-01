@@ -415,7 +415,6 @@ public class SettingsPage {
         box.addView(Ui.sheetRow(a, "自启动", "ColorOS 自启动管理；找不到时打开应用详情", v -> { d[0].dismiss(); a.openAutostartSettings(); }));
         box.addView(Ui.sheetRow(a, "后台运行（耗电管理）", "ColorOS：允许后台运行 / 耗电策略无限制", v -> { d[0].dismiss(); a.openBatterySettings(); }));
         box.addView(Ui.sheetRow(a, "通知", a.notificationsOk() ? "已开启 ✓（锁屏控制需要）" : "已关闭：锁屏和通知栏无法控制播放，点此打开", v -> { d[0].dismiss(); a.openNotificationSettings(); }));
-        box.addView(Ui.sheetRow(a, "应用详情", "耗电管理 → 允许后台运行", v -> { d[0].dismiss(); a.openAppDetails(); }));
         d[0] = Ui.sheet(a, box);
         d[0].setOnDismissListener(x -> refreshAll());
         d[0].show();
@@ -855,7 +854,6 @@ public class SettingsPage {
                 String n = NightLog.last(a);
                 return n.isEmpty() ? "开睡眠定时睡一晚后显示（充电中或不到 10 分钟的不记）" : n;
             }, null));
-            c.addView(row("流畅度自测", "在首页列表上自动滚动 10 秒，统计掉帧并写入诊断日志", v -> { closeAll(); a.runSmoothTest(); }));
             LinearLayout r = card(box, "问题与日志");
             r.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
             r.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));

@@ -406,3 +406,21 @@ test('memory trim keeps the current video length', async () => {
   assert.ok(env.w.ytl._.lenById()[VID]);
   assert.ok(!env.w.ytl._.lenById().otherother1);
 });
+
+/* ---------- prefetched player response in resolve_url / get_watch (daily 2026-11-06, after uBlock quick-fix) ---------- */
+test('resolve_url / get_watch are on the prune list; prefetched player response loses its ad keys', async () => {
+  const { w } = await load({ path: '/' });
+  const re = w.ytl._.PRUNE_URL;
+  assert.ok(re.test('https://m.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false'));
+  assert.ok(re.test('https://m.youtube.com/youtubei/v1/get_watch?prettyPrint=false'));
+  assert.ok(re.test('https://m.youtube.com/youtubei/v1/player?key=x'));
+  assert.ok(!re.test('https://m.youtube.com/youtubei/v1/browse'));
+  const r = w.JSON.parse(JSON.stringify({
+    responseContext: {},
+    endpoint: { watchEndpoint: { videoId: VID, unserializedPrefetchData: { playerResponse: playerResponse() } } }
+  }));
+  const pr = r.endpoint.watchEndpoint.unserializedPrefetchData.playerResponse;
+  for (const k of ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams']) assert.ok(!(k in pr), k);
+  assert.ok('streamingData' in pr && 'videoDetails' in pr);
+  assert.equal(r.endpoint.watchEndpoint.videoId, VID);
+});

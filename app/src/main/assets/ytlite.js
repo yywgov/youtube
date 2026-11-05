@@ -951,7 +951,9 @@
   var AD_ALT = AD_KEYS.join('|');
   var AD_TEST = new RegExp('"(?:' + AD_ALT + ')"');
   var AD_SUB = new RegExp('"(' + AD_ALT + ')"', 'g');
-  var PRUNE_URL = /\/youtubei\/v1\/(?:player|next|reel\/)|[?&]pbj=1/;
+  // navigation/resolve_url and get_watch can carry a whole prefetched player response (with its ad
+  // keys) for the video a tapped link opens; uBlock added m.youtube.com to its resolve_url fix (2026-11)
+  var PRUNE_URL = /\/youtubei\/v1\/(?:player|next|reel\/|navigation\/resolve_url|get_watch)|[?&]pbj=1/;
   function toSet(a) { var o = {}; for (var i = 0; i < a.length; i++) o[a[i]] = true; return o; }
   // fields a player response keeps (playback, captions, storyboards, history/watch time, sign-in, end screen)
   var PR_KEEP = toSet([
@@ -1054,6 +1056,10 @@
       if (o.playerResponse) prune(o.playerResponse, depth + 1);
       if (o.response && typeof o.response === 'object') prune(o.response, depth + 1);
       if (o.args && o.args.raw_player_response) prune(o.args.raw_player_response, depth + 1);
+      // resolve_url / get_watch: endpoint.watchEndpoint.unserializedPrefetchData.playerResponse
+      var we = o.endpoint && o.endpoint.watchEndpoint;
+      var pf = we && we.unserializedPrefetchData;
+      if (pf && typeof pf === 'object' && pf.playerResponse) prune(pf.playerResponse, depth + 1);
     }
     return o;
   }
@@ -3025,7 +3031,7 @@
     RULES: RULES, css: function () { return CSS; }, pageType: pageType, isPlayerResponse: isPlayerResponse,
     prune: prune, lenById: function () { return lenById; }, lenMismatch: lenMismatch, adNow: adNow,
     cleanUrl: cleanUrl, cleanText: cleanText, retryOnce: retryOnce, nav: nav, selfCheck: selfCheck,
-    guard: guard, worthChecking: worthChecking, domPass: domPass,
+    guard: guard, worthChecking: worthChecking, PRUNE_URL: PRUNE_URL, domPass: domPass,
     observing: function () { return !!mo; }, observerRoot: function () { return moRoot; },
     segments: function () { return segments; },
     prefQuality: prefQuality, ruleMode: ruleMode, wantAutonav: wantAutonav, sameChannelLink: sameChannelLink,

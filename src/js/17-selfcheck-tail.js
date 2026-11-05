@@ -28,7 +28,7 @@
     RULES: RULES, css: function () { return CSS; }, pageType: pageType, isPlayerResponse: isPlayerResponse,
     prune: prune, lenById: function () { return lenById; }, lenMismatch: lenMismatch, adNow: adNow,
     cleanUrl: cleanUrl, cleanText: cleanText, retryOnce: retryOnce, nav: nav, selfCheck: selfCheck,
-    guard: guard, worthChecking: worthChecking, domPass: domPass,
+    guard: guard, worthChecking: worthChecking, PRUNE_URL: PRUNE_URL, domPass: domPass,
     observing: function () { return !!mo; }, observerRoot: function () { return moRoot; },
     segments: function () { return segments; },
     prefQuality: prefQuality, ruleMode: ruleMode, wantAutonav: wantAutonav, sameChannelLink: sameChannelLink,

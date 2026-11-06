@@ -209,7 +209,7 @@ const ADDED = {
   str: []
 };
 
-test('contract: the 51 v1.5.1 setting keys are unchanged, new ones only added, each in exactly one backup list', async () => {
+test('contract: the 51 v1.5.1 setting keys are unchanged, new ones only added, each in exactly one key list', async () => {
   const all = BOOL.concat(INT, STR);
   assert.equal(BOOL.length, 35 + ADDED.bool.length);
   assert.equal(INT.length, 5 + ADDED.int.length);
@@ -230,9 +230,9 @@ test('contract: the 51 v1.5.1 setting keys are unchanged, new ones only added, e
   // every constant in Prefs is either a setting in a backup list or a known state key
   for (const [n, v] of Object.entries(consts)) {
     if (n === 'FILE') continue;
-    assert.ok(all.includes(v) || STATE.includes(v), 'constant ' + n + '="' + v + '" is neither backed up nor declared state');
+    assert.ok(all.includes(v) || STATE.includes(v), 'constant ' + n + '="' + v + '" is neither a setting nor declared state');
   }
-  for (const s of STATE.concat(['prefsSchema', 'lastSnapshot', 'compact_choice'])) assert.ok(!all.includes(s), s + ' must not be backed up');
+  for (const s of STATE.concat(['prefsSchema', 'lastSnapshot', 'compact_choice'])) assert.ok(!all.includes(s), s + ' is state, not a setting');
 });
 
 test('contract: jsConfig keys == the script\'s cfg defaults, and defaults agree with Java', async () => {
@@ -253,10 +253,12 @@ test('contract: jsConfig keys == the script\'s cfg defaults, and defaults agree 
   }
 });
 
-test('contract: backup v2 keeps app "YiWei"; SponsorBlock categories agree', async () => {
+test('contract: the settings dump in a report keeps app "YiWei"; backup / restore are gone; SponsorBlock categories agree', async () => {
   assert.ok(/o\.put\("app", "YiWei"\)/.test(prefsSrc));
-  assert.ok(/o\.put\("v", 2\)/.test(prefsSrc));
-  assert.ok(/"YiWei"\.equals\(app\) \|\| "YT Lite"\.equals\(app\)/.test(modelSrc), 'old backups (YT Lite) still import');
+  // removed in v1.15: no import, no restore defaults, no snapshot undo
+  for (const gone of ['importJson', 'importMap', 'importDiff', 'restoreDefaults', 'undoSnapshot', 'saveSnapshot', 'exportJsonWithLocal']) {
+    assert.ok(!new RegExp('\\b' + gone + '\\(').test(prefsSrc + modelSrc), gone + ' is gone');
+  }
   const cats = /SB_CATS = \{([^}]*)\}/.exec(modelSrc)[1].match(/"(\w+)"/g).map((s) => s.slice(1, -1));
   const jsLabels = /var SB_LABEL = \{([\s\S]*?)\};/.exec(jsSrc)[1].match(/(\w+):/g).map((s) => s.slice(0, -1));
   assert.deepEqual(cats.sort(), jsLabels.sort());

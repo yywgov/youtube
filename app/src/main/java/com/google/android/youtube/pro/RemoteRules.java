@@ -37,8 +37,6 @@ public final class RemoteRules {
     private static final String LAST_RESULT = "rulesLastResult";
 
     private static final java.util.concurrent.ExecutorService IO = Bg.NET;   // shared pool (262)
-    /** Mainland fallback (287): the same mirror the updater offers; only ever trusted with a hash fetched elsewhere. */
-    static final String MIRROR = "https://ghfast.top/";
     static final String API_SHA = "https://api.github.com/repos/yywgov/youtube/contents/rules/rules.json.sha256?ref=main";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile String cache = null;
@@ -113,17 +111,16 @@ public final class RemoteRules {
         IO.execute(() -> {
             String result;
             try {
-                // direct first; if raw.githubusercontent.com is unreachable (common on mainland networks, 287)
-                // the file comes from the mirror and its SHA-256 from GitHub directly (raw or API), so the
-                // mirror can never change the rules
+                // GitHub only (v1.15: the mirror fallback is gone): the file from raw.githubusercontent.com,
+                // its SHA-256 from there too or from the GitHub API
                 String body = null, sum = null, route = "直连";
                 try { body = get(BASE + FILE); } catch (Exception e) { Diag.log("rules", "direct: " + e.getMessage()); }
+                if (body == null) throw new Exception("无法连接 GitHub");
                 try { sum = parseSum(get(BASE + FILE + ".sha256")); } catch (Exception e) { /* API below */ }
                 if (sum == null) {
-                    try { sum = parseSum(apiSha()); route = body == null ? "镜像" : "直连+API"; } catch (Exception e) { Diag.log("rules", "api: " + e.getMessage()); }
+                    try { sum = parseSum(apiSha()); route = "直连+API"; } catch (Exception e) { Diag.log("rules", "api: " + e.getMessage()); }
                 }
                 if (sum == null) throw new Exception("拿不到校验值");
-                if (body == null) { body = get(MIRROR + BASE + FILE); route = "镜像"; }
                 if (!sum.equals(sha256(body))) throw new Exception("校验不通过（" + route + "）");
                 String err = validate(body);
                 if (err != null) throw new Exception(err);

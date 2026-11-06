@@ -41,32 +41,6 @@ public class Round2Test {
         assertEquals(false, s.get(Prefs.HIDE_SEARCH_MIX));
     }
 
-    /** A v1.9 backup carrying keys of removed features still imports in full: nothing ignored, nothing lost. */
-    @Test public void oldBackupWithRemovedFeaturesImports() {
-        Map<String, Object> b = new LinkedHashMap<>();
-        b.put("app", "YiWei");
-        b.put("v", 2);
-        b.put(Prefs.ORIENT_LOCK, 2);
-        b.put(Prefs.ORIENT_REMEMBER, true);
-        b.put(Prefs.LANDSCAPE_LAYOUT, true);
-        b.put(Prefs.SEARCH_FOCUS, false);
-        b.put(Prefs.RESUME_LOCAL, false);
-        b.put(Prefs.FONT_LARGE, true);
-        b.put(Prefs.HIDE_SEARCH_MIX, true);
-        b.put(Prefs.ACCENT, "#9C6BFF");
-        PrefsModel.MapStore s = new PrefsModel.MapStore();
-        PrefsModel.ImportResult r = PrefsModel.importMap(b, s, false);
-        assertFalse(r.notBackup);
-        assertEquals(8, r.applied);
-        assertEquals(0, r.ignored);
-        assertEquals(2, s.get(Prefs.ORIENT_LOCK));
-        assertEquals("#9C6BFF", s.get(Prefs.ACCENT));
-        // and the export of such a store still carries them, so going back a version loses nothing
-        Map<String, Object> out = PrefsModel.exportMap(s);
-        assertEquals(true, out.get(Prefs.LANDSCAPE_LAYOUT));
-        assertEquals(false, out.get(Prefs.SEARCH_FOCUS));
-    }
-
     @Test public void migrationStillIdempotent() {
         PrefsModel.MapStore s = new PrefsModel.MapStore();
         s.put(Prefs.ORIENT_LOCK, 1);

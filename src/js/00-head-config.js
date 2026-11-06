@@ -46,7 +46,6 @@
     quality: 'auto',        // auto | wifiMax | 1080 | 720 | 480 (29)
     rememberRate: false, rate: 1,   // (30)
     captions: 'yt',         // yt | off | zh | zhHans | zhHant | en (31/341)
-    origAudio: true,        // prefer the original audio track over auto-dubs (32)
     noEndWall: true,        // no recommendation wall when a video ends (36)
     subSize: 'default', subBg: 'default',  // caption style (155)
     // batch 3 (v1.4.0) – lists, look, interaction; defaults keep the old behaviour

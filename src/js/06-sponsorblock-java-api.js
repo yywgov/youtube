@@ -67,38 +67,6 @@
     },
     onNet: onNet,
     netChanged: function () { netChanged(); },
-    /* backup with local data (403): hidden videos and local resume positions, only from this phone */
-    localData: function () {
-      var o = { hidden: hiddenIds().filter(function (x) { return /^[\w-]{6,20}$/.test(x); }).slice(0, 300) };
-      var p = posStore(), out = {};
-      for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k) && /^[\w-]{6,20}$/.test(k) && Array.isArray(p[k])) out[k] = p[k];
-      o.pos = out;
-      return o;
-    },
-    /* restore it: merged into what is here, never replacing it; returns how many entries were added */
-    importLocal: guard('import-local', function (json) {
-      var o = typeof json === 'string' ? JSON.parse(json) : json, added = 0;
-      if (!o || typeof o !== 'object') return 0;
-      if (Array.isArray(o.hidden)) {
-        hiddenList = hiddenIds();
-        o.hidden.forEach(function (id) { if (/^[\w-]{6,20}$/.test(id) && hiddenList.indexOf(id) < 0) { hiddenList.push(id); added++; } });
-        if (hiddenList.length > 300) hiddenList.length = 300;
-        saveHidden();
-        filterKey = '';
-      }
-      if (o.pos && typeof o.pos === 'object') {
-        var st = posStore();
-        for (var id in o.pos) {
-          if (!Object.prototype.hasOwnProperty.call(o.pos, id) || !/^[\w-]{6,20}$/.test(id)) continue;
-          var e = o.pos[id];
-          if (!Array.isArray(e) || !(e[0] > 0) || !(e[1] > 0)) continue;
-          if (!st[id] || st[id][1] < e[1]) { st[id] = [Math.floor(e[0]), e[1]]; added++; }
-        }
-        posSave(st);
-      }
-      if (started) filterCards();
-      return added;
-    }),
     /* fresh verified rules from Java (288): applied at once instead of on the next page load */
     remote: guard('remote-apply', function (json) {
       var r;

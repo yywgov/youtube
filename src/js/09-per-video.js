@@ -49,7 +49,7 @@
       if (pick) { if (typeof p.loadModule === 'function') p.loadModule('captions'); p.setOption('captions', 'track', pick); }
     }), 1500);
   }
-  // original audio instead of an auto-dub (32): only for videos that have several audio tracks
+  // original audio instead of an auto-dub (32): always on since v1.15; only for videos with several audio tracks
   function trackId(t) {
     try {
       var li = t && t.getLanguageInfo && t.getLanguageInfo();
@@ -58,7 +58,6 @@
     } catch (e) { return ''; }
   }
   function applyOrigAudio() {
-    if (!cfg.origAudio) return;
     var id = curId, want = origAudio[id];
     var p = player();
     if (!want || !p || typeof p.getAvailableAudioTracks !== 'function' || typeof p.setAudioTrack !== 'function') return;

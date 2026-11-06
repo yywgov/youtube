@@ -212,10 +212,8 @@ public class MainActivity extends Activity {
         if (startupDone || isFinishing()) return;
         startupDone = true;
         MAIN.removeCallbacks(startupRun);
-        final boolean offer = coldStart;
         Runnable[] jobs = {
                 this::maybeWhatsNew,
-                () -> { if (offer) offerResume(); },
                 this::checkNotifications,
                 () -> { Updater.cleanup(this); Updater.autoCheck(this); },
                 () -> RemoteRules.autoCheck(this),
@@ -679,10 +677,6 @@ public class MainActivity extends Activity {
         return at > 0 && System.currentTimeMillis() - at < 3 * 24 * 3600_000L ? at : 0;
     }
 
-    public void clearFgsDenied() {
-        Prefs.get(this).edit().remove(Prefs.FGS_DENIED_AT).apply();
-    }
-
     // ===================== keep the screen on: fullscreen and black screen share one flag (337) =====================
 
     private final Set<String> screenOnHolders = new HashSet<>();
@@ -912,54 +906,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** ColorOS / OPPO auto-start list (99); other vendors' pages were dropped in v1.10 (467). */
-    public void openAutostartSettings() {
-        String[][] targets = {
-                {"com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"},
-                {"com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"},
-                {"com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity"},
-                {"com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"},
-        };
-        for (String[] t : targets) {
-            try {
-                Intent i = new Intent().setComponent(new android.content.ComponentName(t[0], t[1])).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                if (getPackageManager().resolveActivity(i, 0) == null) continue;
-                startActivity(i);
-                Toast.makeText(this, "找到 " + getString(R.string.app_name) + " 并允许自启动", Toast.LENGTH_LONG).show();
-                return;
-            } catch (Exception ignored) {}
-        }
-        openAppDetails();
-    }
-
-    /**
-     * ColorOS 14/15 "耗电管理 → 允许后台运行" page for this app (390), tried component by component;
-     * falls back to the app details page.
-     */
-    public void openBatterySettings() {
-        String[][] targets = {
-                {"com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerAppsBgSetting"},
-                {"com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerConsumptionActivity"},
-                {"com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerUsageModelActivity"},
-                {"com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerAppsBgSetting"},
-                {"com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerConsumptionActivity"},
-                {"com.coloros.oppoguardelf", "com.coloros.powermanager.fuelgaue.PowerUsageModelActivity"},
-        };
-        for (String[] t : targets) {
-            try {
-                Intent i = new Intent().setComponent(new android.content.ComponentName(t[0], t[1]))
-                        .putExtra("pkgName", getPackageName()).putExtra("package_name", getPackageName())
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                if (getPackageManager().resolveActivity(i, 0) == null) continue;
-                startActivity(i);
-                Toast.makeText(this, "找到 " + getString(R.string.app_name) + "，设为「允许后台运行」", Toast.LENGTH_LONG).show();
-                return;
-            } catch (Exception ignored) {}
-        }
-        Toast.makeText(this, "耗电管理 → 允许后台运行", Toast.LENGTH_LONG).show();
-        openAppDetails();
-    }
-
     /** First start after an upgrade: show this version's notes once (138). */
     private void maybeWhatsNew() {
         try {
@@ -1056,26 +1002,6 @@ public class MainActivity extends Activity {
             String next = snackQueue.pollFirst();
             if (next != null && !isFinishing()) showSnack(next, null, null, 2600);
         }).start();
-    }
-
-    /** Cold start from the launcher: offer the video that was playing when the app was last closed (27). */
-    private void offerResume() {
-        try {
-            if (isFinishing() || !Prefs.on(this, Prefs.RESUME_PROMPT)) return;
-            android.content.SharedPreferences p = Prefs.get(this);
-            final String id = p.getString(Prefs.LAST_VIDEO, null);
-            long at = p.getLong(Prefs.LAST_AT, 0), pos = p.getLong(Prefs.LAST_POS, 0);
-            long age = System.currentTimeMillis() - at;
-            if (id == null || at <= 0 || age < 0 || age > 12 * 3600_000L || pos < 10) return;
-            if (currentUrl != null && isPlayerUrl(currentUrl)) return;
-            String title = p.getString(Prefs.LAST_TITLE, "");
-            final long fpos = pos;
-            showSnack("继续播放：" + (title == null || title.isEmpty() ? "上次的视频" : title), "继续", () -> {
-                if (web != null) web.loadUrl(HOME + "watch?v=" + id + "&t=" + fpos + "s");
-            }, 9000);
-        } catch (Throwable t) {
-            Diag.log("resume", String.valueOf(t));
-        }
     }
 
     private void clearLastVideo() {
@@ -1643,6 +1569,11 @@ public class MainActivity extends Activity {
 
     // ===================== first-run permissions =====================
 
+    /**
+     * First run: the notification permission (lock screen / notification controls) is asked once.
+     * The battery-optimisation / auto-start guidance was removed in v1.15: background playback runs as a
+     * foreground media service with wake + Wi-Fi locks; the exemption is only checked silently and logged.
+     */
     private void askPermissionsOnce() {
         if (isFinishing()) return;
         if (Build.VERSION.SDK_INT >= 33
@@ -1650,41 +1581,13 @@ public class MainActivity extends Activity {
                 && !Prefs.get(this).getBoolean(Prefs.ASKED_NOTIF, false)) {
             Prefs.put(this, Prefs.ASKED_NOTIF, true);
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
-            return;
         }
-        askBatteryOnce();
-    }
-
-    private void askBatteryOnce() {
-        if (isIgnoringBattery() || Prefs.get(this).getBoolean(Prefs.ASKED_BATTERY, false)) return;
-        Prefs.put(this, Prefs.ASKED_BATTERY, true);
-        new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("允许后台持续播放")
-                .setMessage("为了息屏后也能一直播放（听着入睡），请在下一步允许 " + getString(R.string.app_name) + "「不受电池优化限制」。\n\n"
-                        + "ColorOS 还需要开启「自启动」并把耗电设为「允许后台运行」，可点「自启动」直接跳过去。")
-                .setPositiveButton("去设置", (d, w) -> requestIgnoreBattery())
-                .setNeutralButton("自启动", (d, w) -> openAutostartSettings())
-                .setNegativeButton("以后再说", null)
-                .show();
+        if (!isIgnoringBattery()) Diag.log("battery", "battery optimisation applies to the app (no prompt)");
     }
 
     public boolean isIgnoringBattery() {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
-    }
-
-    @SuppressLint("BatteryLife")
-    public void requestIgnoreBattery() {
-        try {
-            startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:" + getPackageName())));
-        } catch (Exception e) {
-            try {
-                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-            } catch (Exception ignored) {
-                openAppDetails();
-            }
-        }
     }
 
     public void openAppDetails() {
@@ -1697,26 +1600,10 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQ_NOTIF) {
-            askBatteryOnce();
-        } else if (requestCode == REQ_MIC) {
+        if (requestCode == REQ_MIC) {
             // the voice search that asked goes on by itself (411)
             boolean ok = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             if (chrome != null) chrome.onMicPermission(ok);
         }
-    }
-
-    // ---- backup to / from a file (402): system file picker, no storage permission ----
-    public static final int REQ_BACKUP_SAVE = 201;
-    public static final int REQ_BACKUP_OPEN = 202;
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQ_BACKUP_SAVE && requestCode != REQ_BACKUP_OPEN) return;
-        Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
-        if (uri == null) return;
-        if (requestCode == REQ_BACKUP_SAVE) SettingsPage.onBackupSaved(this, uri);
-        else SettingsPage.onBackupOpened(this, uri);
     }
 }

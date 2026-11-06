@@ -341,21 +341,3 @@ test('rules handed over by Java apply at once; an older version is ignored', asy
 });
 
 /* ---------- 403: local data in a backup ---------- */
-test('local data: exported as plain lists, merged back without removing what is here', async () => {
-  const src = await load({ path: '/', before: (w) => {
-    w.localStorage.setItem('ytl_hidden', JSON.stringify(['aaaaaaaaaa1', 'bad id!']));
-    w.localStorage.setItem('ytl_pos', JSON.stringify({ aaaaaaaaaa2: [120, 1000], 'x y': [1, 1] }));
-  } });
-  // the page's objects live in the jsdom realm; Java only ever sees them through JSON.stringify
-  const data = JSON.parse(JSON.stringify(src.w.ytl.localData()));
-  assert.deepStrictEqual(data, { hidden: ['aaaaaaaaaa1'], pos: { aaaaaaaaaa2: [120, 1000] } });
-  const dst = await load({ path: '/', before: (w) => {
-    w.localStorage.setItem('ytl_hidden', JSON.stringify(['ccccccccccc']));
-    w.localStorage.setItem('ytl_pos', JSON.stringify({ aaaaaaaaaa2: [300, 2000] }));
-  } });
-  const added = dst.w.ytl.importLocal(JSON.stringify(data));
-  assert.equal(added, 1, 'one hidden video added, the newer local position kept');
-  assert.deepEqual(JSON.parse(dst.w.localStorage.getItem('ytl_hidden')), ['ccccccccccc', 'aaaaaaaaaa1']);
-  assert.deepEqual(JSON.parse(dst.w.localStorage.getItem('ytl_pos')).aaaaaaaaaa2, [300, 2000]);
-  assert.equal(dst.w.ytl.importLocal('{"hidden":"nope"}'), 0);
-});

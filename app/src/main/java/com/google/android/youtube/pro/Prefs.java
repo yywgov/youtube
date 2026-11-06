@@ -38,7 +38,7 @@ public final class Prefs {
     /** Headset button: double press = next, triple = previous (24). */
     public static final String HEADSET_MULTI = "headsetMulti";
     /** Reopened after the system killed the app: offer to continue the last video (27). */
-    public static final String RESUME_PROMPT = "resumePrompt";
+    public static final String RESUME_PROMPT = "resumePrompt";   // removed in v1.15; key kept, never read
     public static final String LAST_VIDEO = "lastVideo";
     public static final String LAST_POS = "lastPos";
     public static final String LAST_TITLE = "lastTitle";
@@ -52,7 +52,7 @@ public final class Prefs {
     public static final String RATE = "rate";
     /** Captions default: yt / off / zh (31). */
     public static final String CAPTIONS = "captions";
-    /** Prefer the original audio track over auto-dubbing (32). */
+    /** Prefer the original audio track over auto-dubbing (32); always on since v1.15, key kept, never read. */
     public static final String ORIG_AUDIO = "origAudio";
     /** No recommendation wall at the end of a video (36). */
     public static final String NO_END_WALL = "noEndWall";
@@ -74,7 +74,7 @@ public final class Prefs {
     public static final String REFRESH_COUNT = "refreshCount";       // (64)
     public static final String HIDE_SEARCH_EXTRAS = "hideSearchExtras"; // (70)
     public static final String REMOTE_RULES = "remoteRules";         // (73)
-    public static final String UPDATE_MIRROR = "updateMirror";       // (87)
+    public static final String UPDATE_MIRROR = "updateMirror";       // (87) removed in v1.15: GitHub only; key kept, never read
     public static final String AMOLED = "amoled";                    // (91)
     public static final String FONT_FOLLOW = "fontFollow";           // (93)
     public static final String COMPACT = "compact";                  // (108)
@@ -192,7 +192,7 @@ public final class Prefs {
     public static boolean def(String key) { return PrefsModel.defBool(key); }
     public static boolean on(Context c, String key) { return get(c).getBoolean(key, def(key)); }
 
-    /** Every user setting (not state): backup / restore (98) and "restore defaults" (136); the lists live in {@link PrefsModel}. */
+    /** Every known setting key (not state); the lists live in {@link PrefsModel}. */
     public static final String[] BOOL_KEYS = PrefsModel.BOOL_KEYS;
     public static final String[] INT_KEYS = PrefsModel.INT_KEYS;
     public static final String[] STR_KEYS = PrefsModel.STR_KEYS;
@@ -238,16 +238,15 @@ public final class Prefs {
         }
     }
 
-    /** Backup v2 (241): {"app":"YiWei","v":2,"schema":2,"exportedAt":…,"appVersion":…, keys…}. */
-    public static String exportJson(Context c) { return exportJson(c, null); }
-
+    /**
+     * Every stored setting as JSON, for the problem report only (backup / restore were removed in v1.15).
+     * The header keeps the old backup shape ("app":"YiWei") so reports read the same as before.
+     */
     public static String exportJson(Context c, String appVersion) {
         try {
             JSONObject o = new JSONObject();
-            o.put("app", "YiWei");   // ASCII name: v1.5.1 and older only accept "YiWei" / "YT Lite"
-            o.put("v", 2);
+            o.put("app", "YiWei");
             o.put("schema", PrefsModel.SCHEMA);
-            o.put("exportedAt", System.currentTimeMillis());
             if (appVersion != null) o.put("appVersion", appVersion);
             for (java.util.Map.Entry<String, Object> en : PrefsModel.exportMap(new PrefStore(get(c))).entrySet()) o.put(en.getKey(), en.getValue());
             return o.toString(1);
@@ -256,90 +255,8 @@ public final class Prefs {
         }
     }
 
-    private static java.util.Map<String, Object> toMap(JSONObject o) {
-        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-        java.util.Iterator<String> it = o.keys();
-        while (it.hasNext()) {
-            String k = it.next();
-            Object v = o.opt(k);
-            if (v != null && v != JSONObject.NULL) m.put(k, v);
-        }
-        return m;
-    }
-
-    /** What importing {@code json} would change (404); null when it is not a backup. */
-    public static java.util.List<String[]> importDiff(Context c, String json) {
-        try {
-            return PrefsModel.importDiff(toMap(new JSONObject(json.trim())), new PrefStore(get(c)));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** Settings backup plus this phone's hidden videos / local positions (403), "local" in the same file. */
-    public static String exportJsonWithLocal(Context c, String appVersion, String localJson) {
-        try {
-            JSONObject o = new JSONObject(exportJson(c, appVersion));
-            if (localJson != null && localJson.startsWith("{")) o.put("local", new JSONObject(localJson));
-            return o.toString(1);
-        } catch (Exception e) {
-            return exportJson(c, appVersion);
-        }
-    }
-
-    /** The "local" part of a backup (403), or null. */
-    public static String backupLocal(String json) {
-        try {
-            JSONObject l = new JSONObject(json.trim()).optJSONObject("local");
-            return l == null ? null : l.toString();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * Import a backup (v1 or v2); every value is checked against the options this version offers,
-     * the rest is skipped and counted. Returns null when the text is not a backup of this app.
-     */
-    public static PrefsModel.ImportResult importJson(Context c, String json) { return importJson(c, json, false); }
-
-    public static PrefsModel.ImportResult importJson(Context c, String json, boolean replace) {
-        try {
-            JSONObject o = new JSONObject(json.trim());
-            PrefStore s = new PrefStore(get(c));
-            PrefsModel.ImportResult r = PrefsModel.importMap(toMap(o), s, replace);
-            if (r.notBackup) return null;
-            s.apply();
-            return r;
-        } catch (Exception ex) {
-            return null;
-        }
-    }
-
-    /** "Restore defaults" (136): block lists are kept (240), see {@link #clearBlockLists}. */
-    public static void restoreDefaults(Context c) {
-        PrefStore s = new PrefStore(get(c));
-        PrefsModel.restoreDefaults(s);
-        s.apply();
-    }
-
     public static void clearBlockLists(Context c) {
         get(c).edit().remove(BLOCK_CHANNELS).remove(BLOCK_WORDS).apply();
-    }
-
-    /** Snapshot before "restore defaults" / import, kept for undo (406). */
-    public static void saveSnapshot(Context c) {
-        put(c, PrefsModel.SNAPSHOT, exportJson(c));
-    }
-
-    /** Put the settings back exactly as in the last snapshot. False when there is none. */
-    public static boolean undoSnapshot(Context c) {
-        String snap = str(c, PrefsModel.SNAPSHOT, "");
-        if (snap.isEmpty()) return false;
-        PrefsModel.ImportResult r = importJson(c, snap, true);
-        if (r == null) return false;
-        get(c).edit().remove(PrefsModel.SNAPSHOT).apply();
-        return true;
     }
 
     static java.util.List<String> lines(Context c, String key) {
@@ -417,7 +334,6 @@ public final class Prefs {
             try { rate = Double.parseDouble(str(c, RATE, "1")); } catch (Exception ignored) {}
             o.put("rate", rate);
             o.put("captions", str(c, CAPTIONS, "yt"));
-            o.put("origAudio", on(c, ORIG_AUDIO));
             o.put("noEndWall", on(c, NO_END_WALL));
             o.put("subSize", str(c, SUB_SIZE, "default"));
             o.put("subBg", str(c, SUB_BG, "default"));

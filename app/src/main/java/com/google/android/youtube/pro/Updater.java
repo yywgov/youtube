@@ -46,11 +46,6 @@ public final class Updater {
     private static final String API_TAG = "https://api.github.com/repos/yywgov/youtube/releases/tags/";
     public static final String RELEASES = "https://github.com/yywgov/youtube/releases";
     private static final String LATEST_PAGE = "https://github.com/yywgov/youtube/releases/latest";
-    /**
-     * Optional download mirrors for mainland networks (87/400), tried in turn (the one that worked last
-     * time first), one attempt each; only used when the APK hash is known, so none of them can change the file.
-     */
-    static final String[] MIRRORS = {"https://ghfast.top/", "https://gh-proxy.com/", "https://ghproxy.net/"};
     private static final String UPDATE_CHANNEL = "updates";
     private static final int UPDATE_NOTIF_ID = 2;
     private static final String APK_MIME = "application/vnd.android.package-archive";
@@ -342,14 +337,6 @@ public final class Updater {
         }
     }
 
-    /** Mirrors in the order to try (400): last good one first. */
-    static java.util.List<String> mirrorOrder(String lastGood) {
-        java.util.List<String> l = new java.util.ArrayList<>();
-        if (lastGood != null) for (String m : MIRRORS) if (m.equals(lastGood)) l.add(m);
-        for (String m : MIRRORS) if (!l.contains(m)) l.add(m);
-        return l;
-    }
-
     // ---- background download (396): progress in a notification, the install offered when done ----
     private static void notifyProgress(android.content.Context c, String tag, long done, long total, String text, boolean finished, boolean ok) {
         try {
@@ -440,18 +427,14 @@ public final class Updater {
                     f.delete();
                 String expect = r.sha256;
                 if (expect == null && r.shaUrl != null) expect = fetchSha(r.shaUrl);
+                // GitHub only (v1.15: the mainland mirrors are gone); each source is retried 3 times
                 java.util.List<String> urls = new java.util.ArrayList<>();
-                // mirrors only when the result can be verified (87/400), one try each, last good first
-                int mirrors = 0;
-                if (expect != null && Prefs.on(a, Prefs.UPDATE_MIRROR)) {
-                    for (String m : mirrorOrder(Prefs.str(appCtx, Prefs.MIRROR_OK, ""))) { urls.add(m + r.apkUrl); mirrors++; }
-                }
                 urls.add(r.apkUrl);
                 if (r.altApkUrl != null) urls.add(r.altApkUrl);
                 Exception last = null;
                 boolean ok = false;
                 for (int u = 0; u < urls.size() && !ok; u++) {
-                    int tries = u < mirrors ? 1 : 3;
+                    int tries = 3;
                     for (int attempt = 0; attempt < tries && !ok; attempt++) {
                         if (cancelled.get()) throw new InterruptedException();
                         try {
@@ -467,7 +450,6 @@ public final class Updater {
                                 break;                   // this source gave a bad file: next source
                             }
                             ok = true;
-                            if (u < mirrors) Prefs.put(appCtx, Prefs.MIRROR_OK, urls.get(u).substring(0, urls.get(u).length() - r.apkUrl.length()));
                         } catch (InterruptedException ie) {
                             throw ie;
                         } catch (java.io.FileNotFoundException nf) {

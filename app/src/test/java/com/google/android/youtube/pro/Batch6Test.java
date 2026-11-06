@@ -22,28 +22,13 @@ public class Batch6Test {
         }
         assertTrue(PrefsModel.isInt(Prefs.EXTEND_STEP));
         assertEquals(15, PrefsModel.defInt(Prefs.EXTEND_STEP));
-        assertEquals(30, PrefsModel.validate(Prefs.EXTEND_STEP, 30));
-        assertNull(PrefsModel.validate(Prefs.EXTEND_STEP, 20));
-        assertNull(PrefsModel.validate(Prefs.SLEEP_HOLD, "true"));
-        // a backup made by this version restores into a clean store and carries the new keys
+        // stored values are exported as they are (problem report)
         PrefsModel.MapStore s = new PrefsModel.MapStore();
         s.put(Prefs.EXTEND_STEP, 30);
         s.put(Prefs.SLEEP_STRICT, true);
         Map<String, Object> out = PrefsModel.exportMap(s);
-        Map<String, Object> b = new LinkedHashMap<>(out);
-        b.put("app", "YiWei");
-        b.put("v", 2);
-        PrefsModel.MapStore t = new PrefsModel.MapStore();
-        PrefsModel.ImportResult r = PrefsModel.importMap(b, t, false);
-        assertEquals(2, r.applied);
-        assertEquals(30, t.get(Prefs.EXTEND_STEP));
-        // an older backup without them leaves them at their defaults (absent)
-        Map<String, Object> old = new LinkedHashMap<>();
-        old.put("app", "YiWei");
-        old.put(Prefs.SPONSOR_BLOCK, false);
-        PrefsModel.MapStore u = new PrefsModel.MapStore();
-        PrefsModel.importMap(old, u, false);
-        assertNull(u.get(Prefs.EXTEND_STEP));
+        assertEquals(30, out.get(Prefs.EXTEND_STEP));
+        assertEquals(true, out.get(Prefs.SLEEP_STRICT));
     }
 
     /** 260: the streaming rename gives exactly what the whole-page rename gave, however the page is split. */
@@ -108,33 +93,4 @@ public class Batch6Test {
         assertTrue(f.contains("=== t5 thread=main\nat X.y(X.java:5)"));
     }
 
-    /** 404: the preview lists exactly what an import would change, with the same checks as the import. */
-    @Test public void importPreview() {
-        PrefsModel.MapStore cur = new PrefsModel.MapStore();
-        cur.put(Prefs.QUALITY, "720");
-        cur.put(Prefs.BLOCK_WORDS, "a\nb");
-        Map<String, Object> b = new LinkedHashMap<>();
-        b.put("app", "YiWei");
-        b.put("v", 2);
-        b.put(Prefs.QUALITY, "1080");              // changes
-        b.put(Prefs.SPONSOR_BLOCK, true);          // same as the default: no row
-        b.put(Prefs.EXTEND_STEP, 30);              // changes from the default 15
-        b.put(Prefs.SLEEP_FADE, 45);               // not an allowed value: ignored, no row
-        b.put(Prefs.BLOCK_WORDS, "a\nb\nc");      // shown as a count
-        java.util.List<String[]> d = PrefsModel.importDiff(b, cur);
-        assertEquals(3, d.size());
-        java.util.Map<String, String[]> byKey = new java.util.HashMap<>();
-        for (String[] r : d) byKey.put(r[0], r);
-        assertEquals("默认画质", byKey.get(Prefs.QUALITY)[1]);
-        assertEquals("720", byKey.get(Prefs.QUALITY)[2]);
-        assertEquals("1080", byKey.get(Prefs.QUALITY)[3]);
-        assertEquals("15", byKey.get(Prefs.EXTEND_STEP)[2]);
-        assertEquals("2 个", byKey.get(Prefs.BLOCK_WORDS)[2]);
-        assertEquals("3 个", byKey.get(Prefs.BLOCK_WORDS)[3]);
-        assertEquals("720", cur.get(Prefs.QUALITY));   // the preview never writes
-        Map<String, Object> notBackup = new LinkedHashMap<>();
-        notBackup.put("app", "Other");
-        assertNull(PrefsModel.importDiff(notBackup, cur));
-        for (String k : PrefsModel.allKeys()) assertFalse("label for " + k, PrefsModel.label(k).equals(k));
-    }
 }

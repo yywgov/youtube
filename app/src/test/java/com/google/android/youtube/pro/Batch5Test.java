@@ -78,41 +78,13 @@ public class Batch5Test {
         assertEquals("@secret|My Secret\nOther", m.get(Prefs.BLOCK_CHANNELS));   // original untouched
     }
 
-    /** New settings: validated on import, absent = default, never in the old 51. */
-    @Test public void newSettingsValidateAndDefault() {
+    /** Batch 5 keys: absent = default (validation went with backup / restore in v1.15). */
+    @Test public void newSettingsDefault() {
         assertEquals(22, PrefsModel.defInt(Prefs.NIGHT_START));
         assertEquals(5, PrefsModel.defInt(Prefs.NIGHT_END));
         assertEquals(0, PrefsModel.defInt(Prefs.ORIENT_LOCK));
         assertTrue(PrefsModel.defBool(Prefs.IDLE_GUARD));
         assertFalse(PrefsModel.defBool(Prefs.WIFI_SAVER));
-        assertEquals(23, PrefsModel.validate(Prefs.NIGHT_START, 23));
-        assertNull(PrefsModel.validate(Prefs.NIGHT_START, 24));
-        assertNull(PrefsModel.validate(Prefs.ORIENT_LOCK, 3));
-        assertEquals("zhHant", PrefsModel.validate(Prefs.CAPTIONS, "zhHant"));
-        assertEquals("en", PrefsModel.validate(Prefs.CAPTIONS, "en"));
-        assertEquals("zh", PrefsModel.validate(Prefs.CAPTIONS, "zh"));        // old value keeps working
-        assertNull(PrefsModel.validate(Prefs.CAPTIONS, "fr"));
-        assertEquals(true, PrefsModel.validate(Prefs.WIFI_SAVER, true));
-    }
-
-    /** A v1.6 backup (no new keys) imports into v1.7 without touching the new defaults. */
-    @Test public void oldBackupLeavesNewKeysAtDefault() {
-        Map<String, Object> b = new LinkedHashMap<>();
-        b.put("app", "YiWei");
-        b.put("v", 2);
-        b.put(Prefs.QUALITY, "1080");
-        b.put(Prefs.CAPTIONS, "zh");
-        PrefsModel.MapStore s = new PrefsModel.MapStore();
-        PrefsModel.ImportResult r = PrefsModel.importMap(b, s, false);
-        assertEquals(2, r.applied);
-        assertNull(s.get(Prefs.IDLE_GUARD));
-        assertNull(s.get(Prefs.NIGHT_START));
-        // and a v1.7 backup's new keys are simply unknown to v1.6 (it ignores unknown keys)
-        b.put(Prefs.NIGHT_START, 21);
-        b.put(Prefs.WIFI_SAVER, true);
-        PrefsModel.MapStore s2 = new PrefsModel.MapStore();
-        assertEquals(4, PrefsModel.importMap(b, s2, false).applied);
-        assertEquals(21, s2.get(Prefs.NIGHT_START));
     }
 
     /** Migration stays idempotent with the new keys around. */

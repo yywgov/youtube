@@ -36,9 +36,6 @@ public class SettingsPage {
         this.a = a;
     }
 
-    /** Undo for "restore defaults" / import (406): offered on the root page for 10 s. */
-    private static long undoUntil = 0;
-    private static String undoWhat = "";
     private int hiddenCount = -1;
 
     public void show() {
@@ -52,32 +49,21 @@ public class SettingsPage {
             c.addView(nav(R.drawable.ic_set_bg, "后台播放", "接下来播放、通知栏与耳机", this::bgPage));
             c.addView(nav(R.drawable.ic_set_home, "首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
             c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、字号、轻震、列表样式、滑动流畅度", this::lookPage));
-            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "更新、备份与恢复、关于与诊断", this::dataPage));
+            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "检查更新、远程规则、关于与诊断", this::dataPage));
         });
     }
 
-    /** Root status card (225/291/292): only shown when something needs attention. */
+    /**
+     * Root status card (225/292): only shown when something needs attention: a new version, or
+     * notifications switched off (then the lock screen / notification can't control playback).
+     * The keep-alive guidance (battery optimisation, auto-start, refused foreground start) was removed
+     * in v1.15; the battery state is still in "关于与诊断" and in the problem report.
+     */
     private void statusCard(LinearLayout box) {
         List<View> rows = new ArrayList<>();
-        if (System.currentTimeMillis() < undoUntil) {
-            final View[] self = new View[1];
-            self[0] = row("撤销刚才的「" + undoWhat + "」", "10 秒内可撤销，回到之前的设置", v -> {
-                undoUntil = 0;
-                if (Prefs.undoSnapshot(a)) {
-                    a.applySettings();
-                    toastShort("已撤销");
-                    reopen();
-                } else toastShort("没有可撤销的内容");
-            });
-            rows.add(self[0]);
-            final long left = Math.max(0, undoUntil - System.currentTimeMillis());
-            self[0].postDelayed(() -> self[0].setVisibility(View.GONE), left);
-        }
         String ready = Updater.readyTag(a);
         if (ready != null) rows.add(row("发现新版本 " + ready, "点此下载并安装（不会自动弹窗打扰）", v -> Updater.checkNow(a)));
         if (!a.notificationsOk()) rows.add(row("通知已关闭", "锁屏和通知栏无法控制播放 · 点此打开通知设置", v -> a.openNotificationSettings()));
-        if (!a.isIgnoringBattery()) rows.add(row("后台保活未完成", "电池优化仍在限制本 App，息屏播放可能中断 · 点此设置", v -> keepAliveSheet()));
-        if (a.fgsDeniedAt() > 0) rows.add(row("上次后台播放没能保持前台", "系统拒绝了后台播放服务 · 点此检查保活设置", v -> { a.clearFgsDenied(); keepAliveSheet(); }));
         if (rows.isEmpty()) return;
         LinearLayout card = card(box);
         for (View r : rows) card.addView(r);
@@ -100,10 +86,10 @@ public class SettingsPage {
             q.addView(sub("画质策略", () -> pick(Q_VALUES, Q_SHORT, Prefs.str(a, Prefs.QUALITY, "auto"))
                     + " · 省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
             LinearLayout s = card(box, "声音、速度与续播");
-            s.addView(toggle("优先原声音轨", "有多条音轨（AI 自动配音）时切回原声", Prefs.ORIG_AUDIO));
+            // the original audio track is always preferred since v1.15 (origAudio no longer read)
             s.addView(toggle("记住播放速度", "下一个视频沿用上次选的速度（最高 2 倍）", Prefs.REMEMBER_RATE));
-            // "remember progress when signed out" lost its row (461): signed in anyway; resumeLocal keeps its stored value
-            s.addView(toggle("重开时提示继续上次视频", "被系统清掉后打开 App，底部提示一键回到断点", Prefs.RESUME_PROMPT));
+            // "remember progress when signed out" lost its row (461): signed in anyway; resumeLocal keeps its stored value;
+            // "offer the last video when reopened" (resumePrompt) was removed in v1.15
             LinearLayout c = card(box, "字幕与片段");
             c.addView(sub("字幕", () -> pick(CAP_VALUES, CAP_SHORT, Prefs.str(a, Prefs.CAPTIONS, "yt"))
                     + " · 大小" + pick(new String[]{"default", "s", "l", "xl"}, new String[]{"默认", "小", "大", "特大"}, Prefs.str(a, Prefs.SUB_SIZE, "default"))
@@ -213,15 +199,6 @@ public class SettingsPage {
         cb.setChecked(on);
         parent.addView(cb);
         return cb;
-    }
-
-    private String keepAliveLabel() {
-        StringBuilder b = new StringBuilder();
-        b.append(a.isIgnoringBattery() ? "电池优化 ✓" : "电池优化未关闭");
-        b.append(" · ").append(a.notificationsOk() ? "通知 ✓" : "通知已关闭");
-        if (a.fgsDeniedAt() > 0) b.append(" · 上次后台播放没能保持前台");
-        b.append(" · 点此设置自启动和后台运行");
-        return b.toString();
     }
 
     // ===================== settings search (442) =====================
@@ -338,37 +315,6 @@ public class SettingsPage {
         TextView t = Ui.text(a, text, 12, Ui.TEXT_2);
         t.setPadding(dp(32), dp(2), dp(32), dp(8));
         box.addView(t);
-    }
-
-    /** Restore (440): from a file or from the clipboard. */
-    private void restoreSheet() {
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        TextView head = Ui.text(a, "恢复设置", 18, Ui.TEXT);
-        head.setPadding(dp(20), dp(4), dp(20), dp(8));
-        box.addView(head);
-        final android.app.Dialog[] d = new android.app.Dialog[1];
-        box.addView(Ui.sheetRow(a, "从文件恢复", "选择之前保存的备份文件", v -> { d[0].dismiss(); openBackupFile(); }));
-        box.addView(Ui.sheetRow(a, "从剪贴板恢复", "先复制之前备份的那段文字，再点这里", v -> { d[0].dismiss(); importSettings(); }));
-        d[0] = Ui.sheet(a, box);
-        d[0].show();
-    }
-
-    /** Keep-alive sheet (238/390/292): every system page that keeps playback alive with the screen off. */
-    private void keepAliveSheet() {
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        TextView head = Ui.text(a, "后台保活", 18, Ui.TEXT);
-        head.setPadding(dp(20), dp(4), dp(20), dp(8));
-        box.addView(head);
-        final android.app.Dialog[] d = new android.app.Dialog[1];
-        box.addView(Ui.sheetRow(a, "电池优化", a.isIgnoringBattery() ? "已不受限制 ✓" : "点此关闭电池优化（息屏持续播放必需）", v -> { d[0].dismiss(); a.requestIgnoreBattery(); }));
-        box.addView(Ui.sheetRow(a, "自启动", "ColorOS 自启动管理；找不到时打开应用详情", v -> { d[0].dismiss(); a.openAutostartSettings(); }));
-        box.addView(Ui.sheetRow(a, "后台运行（耗电管理）", "ColorOS：允许后台运行 / 耗电策略无限制", v -> { d[0].dismiss(); a.openBatterySettings(); }));
-        box.addView(Ui.sheetRow(a, "通知", a.notificationsOk() ? "已开启 ✓（锁屏控制需要）" : "已关闭：锁屏和通知栏无法控制播放，点此打开", v -> { d[0].dismiss(); a.openNotificationSettings(); }));
-        d[0] = Ui.sheet(a, box);
-        d[0].setOnDismissListener(x -> refreshAll());
-        d[0].show();
     }
 
     private static final String[] NEXT_VALUES = {"rec", "channel", "playlist"};
@@ -570,7 +516,7 @@ public class SettingsPage {
                 refreshAll();
                 toastShort("已恢复");
             }));
-            l.addView(row("清空屏蔽列表", "删除全部屏蔽的频道和关键词（「恢复默认」不会动它们）", v -> confirmClearBlocks()));
+            l.addView(row("清空屏蔽列表", "删除全部屏蔽的频道和关键词", v -> confirmClearBlocks()));
             a.evalJs("window.ytl&&ytl.hiddenCount?ytl.hiddenCount():-1", r -> {
                 try { hiddenCount = r == null || "null".equals(r) ? -1 : (int) Double.parseDouble(r); } catch (Exception e) { hiddenCount = -1; }
                 refreshAll();
@@ -701,14 +647,8 @@ public class SettingsPage {
                 return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + " · 每天自动检查一次"
                         + (last.isEmpty() ? "（有新版只显示小红点）" : " · 上次：" + last);
             }, v -> Updater.checkNow(a)));
-            u.addView(toggle("国内网络用镜像下载", "下载慢时开启；安装包都会做 SHA-256 校验，失败自动改回直连", Prefs.UPDATE_MIRROR));
             u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新 · " : "已关闭 · ") + RemoteRules.status(a), v -> rulesDialog()));
-            LinearLayout b = card(box, "备份与恢复");
-            // four rows that only differed in where the backup goes became two (440)
-            // straight to a file (466); clipboard export removed, clipboard restore kept for old copies
-            b.addView(row("备份设置", "保存为 .json 文件，可选带上本地隐藏和进度", v -> withLocal(this::saveBackupFile)));
-            b.addView(row("恢复设置", "从文件或剪贴板恢复，先看会改哪些；10 秒内可撤销", v -> restoreSheet()));
-            b.addView(row("恢复默认设置", "开关和选项回到默认；屏蔽列表、登录和记录不动；10 秒内可撤销", v -> confirmDefaults()));
+            // backup / restore, "restore defaults" and its 10 s undo were removed in v1.15
             // the history row and two explanation lines went (464); report + logs share one page (465)
             LinearLayout d = card(box);
             d.addView(nav(0, "关于与诊断", "版本、WebView、刷新率、流畅度自测、问题报告、日志", this::logsPage));   // two pages became one (472)
@@ -733,6 +673,11 @@ public class SettingsPage {
             LinearLayout c = card(box);
             c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
             c.addView(row("WebView", MainActivity.webViewVersion(a), null));
+            // background playback (v1.15): read-only, no guidance; the foreground media service and its
+            // wake / Wi-Fi locks are what keep playback going with the screen off
+            c.addView(dyn("后台播放", () -> "前台媒体服务" + (PlaybackService.isForeground() ? "运行中" : "未运行")
+                    + " · 电池优化" + (a.isIgnoringBattery() ? "：不受限制" : "：受系统管理")
+                    + (a.notificationsOk() ? "" : " · 通知已关闭"), null));
             if (a.refreshLimited()) {
                 c.addView(row("屏幕刷新率", a.refreshRateLabel() + REFRESH_HINT, v -> a.openDisplaySettings()));
             } else {
@@ -1168,181 +1113,6 @@ public class SettingsPage {
                     for (String s : Prefs.lines(a, key)) { if (b.length() > 0) b.append('\n'); b.append(s); }
                     Prefs.put(a, key, b.toString());
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    // ---- local data in a backup (403): hidden videos + local resume positions, chosen per backup ----
-    private static String pendingLocal = null;
-
-    /** Ask what goes into the backup, read the page's local data if wanted, then run {@code next}. */
-    private void withLocal(final Runnable next) {
-        Ui.choiceSheet(a, "备份内容", new String[]{"只备份设置", "设置 + 本地隐藏的视频和观看进度"}, null, -1, which -> {
-            if (which == 0) { pendingLocal = null; next.run(); return; }
-            a.evalJs("window.ytl&&ytl.localData?JSON.stringify(ytl.localData()):''", r -> {
-                pendingLocal = jsString(r);
-                if (pendingLocal == null || !pendingLocal.startsWith("{")) { pendingLocal = null; toastShort("页面还没准备好，只备份了设置"); }
-                next.run();
-            });
-        });
-    }
-
-    /** evaluateJavascript hands back a JSON-encoded string: decode it. */
-    private static String jsString(String r) {
-        try { return r == null || "null".equals(r) ? null : new org.json.JSONArray("[" + r + "]").getString(0); } catch (Exception e) { return null; }
-    }
-
-    // ---- backup files (402): the system picker, no storage permission ----
-    private static SettingsPage filePage;   // the settings screen that started the picker
-
-    private void saveBackupFile() {
-        try {
-            String day = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(new java.util.Date());
-            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_CREATE_DOCUMENT)
-                    .addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("application/json")
-                    .putExtra(android.content.Intent.EXTRA_TITLE, a.getString(R.string.app_name) + "-设置-" + day + ".json");
-            filePage = this;
-            a.startActivityForResult(i, MainActivity.REQ_BACKUP_SAVE);
-        } catch (Exception e) {
-            toastShort("无法打开文件选择器");
-        }
-    }
-
-    private void openBackupFile() {
-        try {
-            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
-                    .addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*")
-                    .putExtra(android.content.Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
-            filePage = this;
-            a.startActivityForResult(i, MainActivity.REQ_BACKUP_OPEN);
-        } catch (Exception e) {
-            toastShort("无法打开文件选择器");
-        }
-    }
-
-    public static void onBackupSaved(MainActivity a, android.net.Uri uri) {
-        try (java.io.OutputStream os = a.getContentResolver().openOutputStream(uri, "wt")) {
-            if (os == null) throw new java.io.IOException("no stream");
-            os.write(Prefs.exportJsonWithLocal(a, Updater.installedVersion(a), pendingLocal).getBytes("UTF-8"));
-            Toast.makeText(a, pendingLocal != null ? "设置和本地数据已保存到文件" : "设置已保存到文件", Toast.LENGTH_SHORT).show();
-            pendingLocal = null;
-        } catch (Exception e) {
-            Diag.log("backup", "save: " + e);
-            Toast.makeText(a, "保存失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    public static void onBackupOpened(MainActivity a, android.net.Uri uri) {
-        String text;
-        try (java.io.InputStream in = a.getContentResolver().openInputStream(uri)) {
-            if (in == null) throw new java.io.IOException("no stream");
-            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                bos.write(buf, 0, n);
-                if (bos.size() > 256 * 1024) throw new java.io.IOException("文件太大");
-            }
-            text = bos.toString("UTF-8");
-        } catch (Exception e) {
-            Toast.makeText(a, "读取失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
-            return;
-        }
-        SettingsPage p = filePage != null && filePage.a == a ? filePage : new SettingsPage(a);
-        filePage = null;
-        p.importText(text, "从文件恢复");
-    }
-
-    /** Import (241): every value checked, snapshot first (406), then settings reopen with the new values. */
-    private void importSettings() {
-        String clip = "";
-        try {
-            ClipboardManager cm = (ClipboardManager) a.getSystemService(Context.CLIPBOARD_SERVICE);
-            ClipData d = cm.getPrimaryClip();
-            if (d != null && d.getItemCount() > 0 && d.getItemAt(0).getText() != null) clip = d.getItemAt(0).getText().toString();
-        } catch (Exception ignored) {}
-        importText(clip, "从剪贴板恢复");
-    }
-
-    /**
-     * Import from the clipboard or a file (241/402); says when / by which version it was made (408) and,
-     * before anything changes, which settings it would change (404).
-     */
-    private void importText(final String text, final String what) {
-        if (text == null || text.isEmpty() || !looksLikeBackup(text)) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
-        java.util.List<String[]> diff = Prefs.importDiff(a, text);
-        if (diff == null) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
-        final String local = Prefs.backupLocal(text);
-        if (diff.isEmpty() && local == null) { toastShort("备份里的设置和现在完全一样"); return; }
-        String made = backupMade(text);
-        StringBuilder m = new StringBuilder();
-        if (!made.isEmpty()) m.append("备份于 ").append(made).append("\n\n");
-        if (diff.isEmpty()) m.append("设置和现在一样。\n");
-        else {
-            m.append("会改 ").append(diff.size()).append(" 项：\n");
-            for (int i = 0; i < Math.min(25, diff.size()); i++) {
-                String[] d = diff.get(i);
-                m.append("· ").append(d[1]).append("：").append(d[2]).append(" → ").append(d[3]).append('\n');
-            }
-            if (diff.size() > 25) m.append("……还有 ").append(diff.size() - 25).append(" 项\n");
-        }
-        if (local != null) m.append("\n另含本地隐藏的视频和观看进度，会合并到本机（不会删掉现有的）。\n");
-        m.append("\n恢复后 10 秒内可在设置首页撤销设置的改动。");
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("从备份恢复？")
-                .setMessage(m.toString())
-                .setPositiveButton("恢复", (d, w) -> applyImport(text, what, local))
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private void applyImport(String text, String what, String local) {
-        String made = backupMade(text);
-        Prefs.saveSnapshot(a);
-        PrefsModel.ImportResult r = Prefs.importJson(a, text);
-        if (r == null) { toastShort("没有找到 " + a.getString(R.string.app_name) + " 的设置备份"); return; }
-        a.applySettings();
-        if (local != null) MainActivity.js("window.ytl&&ytl.importLocal&&ytl.importLocal(" + org.json.JSONObject.quote(local) + ")");
-        Toast.makeText(a, "已恢复 " + r.applied + " 项设置" + (r.ignored > 0 ? "，已忽略 " + r.ignored + " 项（取值不支持）" : "")
-                + (local != null ? "，本地数据已合并" : "") + (made.isEmpty() ? "" : "\n备份于 " + made), Toast.LENGTH_LONG).show();
-        offerUndo(what);
-    }
-
-    /** "2026-10-24 21:30 · v1.7.0" from a v2 backup's header; "" for older ones (408). */
-    private static String backupMade(String json) {
-        try {
-            org.json.JSONObject o = new org.json.JSONObject(json.trim());
-            long at = o.optLong("exportedAt", 0);
-            String v = o.optString("appVersion", "");
-            String when = at > 0 ? new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(new java.util.Date(at)) : "";
-            if (when.isEmpty() && v.isEmpty()) return "";
-            return when + (v.isEmpty() ? "" : (when.isEmpty() ? "" : " · ") + "v" + v);
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private static boolean looksLikeBackup(String s) {
-        return s.contains("\"app\"") && (s.contains("YiWei") || s.contains("YT Lite"));
-    }
-
-    private void offerUndo(String what) {
-        undoWhat = what;
-        undoUntil = System.currentTimeMillis() + 10_000L;
-        reopen();
-    }
-
-    private void confirmDefaults() {
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("恢复默认设置？")
-                .setMessage("会恢复：所有开关和选项回到默认值。\n\n不会动：屏蔽的频道和关键词、登录、观看记录、本地隐藏的视频、日志。\n\n恢复后 10 秒内可在设置首页撤销。")
-                .setPositiveButton("恢复默认", (d, w) -> {
-                    Prefs.saveSnapshot(a);
-                    Prefs.restoreDefaults(a);
-                    a.applySettings();
-                    toastShort("已恢复默认");
-                    offerUndo("恢复默认");
                 })
                 .setNegativeButton("取消", null)
                 .show();

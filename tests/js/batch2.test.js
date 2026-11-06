@@ -278,7 +278,7 @@ test('original audio track chosen when a video has several audio tracks', async 
   assert.equal(set, tracks[1]);
 });
 
-test('single-track videos and the switch off leave audio alone', async () => {
+test('single-track videos leave audio alone (also with an old "off" value stored)', async () => {
   const env = await setupWatch({ cfg: { origAudio: false } });
   env.w.JSON.parse(JSON.stringify({
     responseContext: {}, playabilityStatus: {}, videoDetails: { videoId: VID, lengthSeconds: '600' },

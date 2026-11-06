@@ -52,7 +52,6 @@
     skipAd();
     var v = e.target;
     call('setPortrait', v.videoHeight > v.videoWidth);
-    if (bg) applyQuality();
   });
 
   on('playing', 'ev-playing', function (e) {

@@ -39,7 +39,7 @@
 
   var B = window.YTL || null; // Java bridge
   var cfg = {
-    sponsorBlock: true, lowQualityBg: true, hideWatched: true, perfCss: true,
+    sponsorBlock: true, hideWatched: true, perfCss: true,
     // batch 2 (v1.3.0) – every one has a safe default that keeps the old behaviour
     fadeSec: 60,            // sleep fade length (13)
     nextSource: 'rec',      // what plays next: rec | channel | playlist (22)

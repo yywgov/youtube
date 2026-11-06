@@ -205,9 +205,10 @@
     var want = contentRoot();
     if (moRoot !== want || !moRoot.isConnected) { disconnectObserver(); connectObserver(); }
   }
+  /* app in the background / screen off: only the DOM work stops. Playback, quality and the player
+   * are left exactly as they are, so nothing re-buffers when the app is left (v1.15). */
   function setBg(b) {
     bg = b;
-    applyQuality();
     if (bg) {
       disconnectObserver();
       hideSbPrompt();

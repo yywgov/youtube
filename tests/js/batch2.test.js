@@ -157,11 +157,10 @@ test('default quality: mapping, Wi-Fi vs metered, applied once per video, auto u
   fakeMedia(env2.v, { duration: 600 });
   fire(env2.w, env2.v, 'loadedmetadata');
   assert.deepEqual(set2, []);
-  // background still forces the lowest quality, and foreground goes back to the preference
+  // going to the background / screen off never touches the quality (v1.15: that re-buffered ~5 s)
   env.w.ytl.bg(true);
-  assert.equal(set[set.length - 1], 'tiny');
   env.w.ytl.bg(false);
-  assert.equal(set[set.length - 1], 'hd720');
+  assert.deepEqual(set, ['hd720']);
 });
 
 /* 36/155: CSS switches */
@@ -369,3 +368,4 @@ test('volume levelling: no AudioContext unless switched on', async () => {
   fire(env.w, env.v, 'playing');
   assert.equal(made, 0);
 });
+

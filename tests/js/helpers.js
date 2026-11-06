@@ -20,7 +20,7 @@ async function load(opts) {
   });
   const w = dom.window;
   const calls = [];
-  const cfg = Object.assign({ sponsorBlock: true, lowQualityBg: true, hideWatched: true, perfCss: true }, opts.cfg || {});
+  const cfg = Object.assign({ sponsorBlock: true, hideWatched: true, perfCss: true }, opts.cfg || {});
   const rec = (name) => function () { calls.push([name].concat(Array.prototype.slice.call(arguments))); };
   w.YTL = {
     getConfig: () => JSON.stringify(cfg),

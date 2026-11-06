@@ -97,8 +97,7 @@ public class SettingsPage {
     private void playPage() {
         page("播放", box -> {
             LinearLayout q = card(box, "画质");
-            q.addView(sub("画质策略", () -> "前台 " + pick(Q_VALUES, Q_SHORT, Prefs.str(a, Prefs.QUALITY, "auto"))
-                    + " · 后台 " + (Prefs.on(a, Prefs.LOW_QUALITY_BG) ? "最低" : "不变")
+            q.addView(sub("画质策略", () -> pick(Q_VALUES, Q_SHORT, Prefs.str(a, Prefs.QUALITY, "auto"))
                     + " · 省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
             LinearLayout s = card(box, "声音、速度与续播");
             s.addView(toggle("优先原声音轨", "有多条音轨（AI 自动配音）时切回原声", Prefs.ORIG_AUDIO));
@@ -118,8 +117,9 @@ public class SettingsPage {
         page("画质策略", box -> {
             LinearLayout c = card(box);
             c.addView(choice("默认画质", "每个视频开始时设一次，之后可手动改", Prefs.QUALITY, Q_LABELS, Q_VALUES, "auto"));
-            c.addView(toggle("后台/息屏时最低画质", "省电省流量；回到前台恢复默认画质", Prefs.LOW_QUALITY_BG));
-            footnote(box, "同时生效时的优先级：一键睡眠模式 > 后台/息屏最低 > 省电上限 480p > 默认画质。");   // (441)
+            // "lowest quality in the background" was removed in v1.15: switching there re-buffered for ~5 s;
+            // lowQualityBg keeps its stored value but is never read
+            footnote(box, "切到后台或息屏时画质保持不变，播放不中断。省电模式开启时最高 480p。");   // (441)
         });
     }
 

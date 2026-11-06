@@ -11,6 +11,7 @@ public final class Prefs {
     public static final String FILE = "ytlite";
 
     public static final String SPONSOR_BLOCK = "sponsorBlock";
+    /** Removed in v1.15 (lowest quality in the background re-buffered for ~5 s); key kept, never read. */
     public static final String LOW_QUALITY_BG = "lowQualityBg";
     /** Home feed: hide videos already watched (>= 80 %). */
     public static final String HIDE_WATCHED = "hideWatched";
@@ -146,7 +147,6 @@ public final class Prefs {
     }
 
     public static boolean sponsorBlock(Context c) { return get(c).getBoolean(SPONSOR_BLOCK, true); }
-    public static boolean lowQualityBg(Context c) { return get(c).getBoolean(LOW_QUALITY_BG, true); }
     public static boolean hideWatched(Context c) { return get(c).getBoolean(HIDE_WATCHED, true); }
     public static boolean perfCss(Context c) { return get(c).getBoolean(PERF_CSS, true); }
 
@@ -410,7 +410,6 @@ public final class Prefs {
         try {
             JSONObject o = new JSONObject();
             o.put("sponsorBlock", sponsorBlock(c));
-            o.put("lowQualityBg", lowQualityBg(c));
             o.put("hideWatched", hideWatched(c));
             o.put("perfCss", perfCss(c));
             o.put("fadeSec", sleepFade(c));

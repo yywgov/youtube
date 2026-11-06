@@ -39,7 +39,7 @@
 
   var B = window.YTL || null; // Java bridge
   var cfg = {
-    sponsorBlock: true, lowQualityBg: true, hideWatched: true, perfCss: true,
+    sponsorBlock: true, hideWatched: true, perfCss: true,
     // batch 2 (v1.3.0) – every one has a safe default that keeps the old behaviour
     fadeSec: 60,            // sleep fade length (13)
     nextSource: 'rec',      // what plays next: rec | channel | playlist (22)
@@ -647,7 +647,9 @@
     if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) { v.currentTime = 0; loopWrapped(); }
   }
 
-  /* ---------- 4. quality: lowest in background, preferred default in foreground (29) ---------- */
+  /* ---------- 4. quality: the preferred default, set once per video (29) ----------
+   * Never touched when the app goes to the background or the screen turns off: switching the
+   * quality there made the player throw its buffer away and stop for ~5 s (removed in v1.15). */
   var QMAP = { '1080': 'hd1080', '720': 'hd720', '480': 'large' };
   function metered() {
     try { return !!(B && typeof B.isMetered === 'function' && B.isMetered()); } catch (e) { return false; }
@@ -670,18 +672,12 @@
   var applyQuality = guard('quality', function () {
     if (!isWatch()) return;
     var p = player(); if (!p) return;
-    if (bg && cfg.lowQualityBg) {
-      setQ(p, 'tiny');
-    } else if (p.__ytlLow) {
-      setQ(p, prefQuality());
-      qualityFor = curId;
-    } else if (qualityFor !== curId && curId) {
+    if (qualityFor !== curId && curId) {
       // once per video, so a quality the user picks by hand afterwards is kept
       qualityFor = curId;
       var q = prefQuality();
       if (q !== 'auto') { setQ(p, q); verifyQuality(q); }
     }
-    p.__ytlLow = bg && cfg.lowQualityBg;
   });
   /* default quality really applied? (339) once per video, 3 s later: a mismatch goes to the diagnostics
    * log (only when the wanted level is one this video offers) */
@@ -1872,7 +1868,6 @@
     skipAd();
     var v = e.target;
     call('setPortrait', v.videoHeight > v.videoWidth);
-    if (bg) applyQuality();
   });
 
   on('playing', 'ev-playing', function (e) {
@@ -2980,9 +2975,10 @@
     var want = contentRoot();
     if (moRoot !== want || !moRoot.isConnected) { disconnectObserver(); connectObserver(); }
   }
+  /* app in the background / screen off: only the DOM work stops. Playback, quality and the player
+   * are left exactly as they are, so nothing re-buffers when the app is left (v1.15). */
   function setBg(b) {
     bg = b;
-    applyQuality();
     if (bg) {
       disconnectObserver();
       hideSbPrompt();

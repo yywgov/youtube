@@ -1,4 +1,6 @@
-  /* ---------- 4. quality: lowest in background, preferred default in foreground (29) ---------- */
+  /* ---------- 4. quality: the preferred default, set once per video (29) ----------
+   * Never touched when the app goes to the background or the screen turns off: switching the
+   * quality there made the player throw its buffer away and stop for ~5 s (removed in v1.15). */
   var QMAP = { '1080': 'hd1080', '720': 'hd720', '480': 'large' };
   function metered() {
     try { return !!(B && typeof B.isMetered === 'function' && B.isMetered()); } catch (e) { return false; }
@@ -21,18 +23,12 @@
   var applyQuality = guard('quality', function () {
     if (!isWatch()) return;
     var p = player(); if (!p) return;
-    if (bg && cfg.lowQualityBg) {
-      setQ(p, 'tiny');
-    } else if (p.__ytlLow) {
-      setQ(p, prefQuality());
-      qualityFor = curId;
-    } else if (qualityFor !== curId && curId) {
+    if (qualityFor !== curId && curId) {
       // once per video, so a quality the user picks by hand afterwards is kept
       qualityFor = curId;
       var q = prefQuality();
       if (q !== 'auto') { setQ(p, q); verifyQuality(q); }
     }
-    p.__ytlLow = bg && cfg.lowQualityBg;
   });
   /* default quality really applied? (339) once per video, 3 s later: a mismatch goes to the diagnostics
    * log (only when the wanted level is one this video offers) */

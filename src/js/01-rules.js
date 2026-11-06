@@ -58,8 +58,13 @@
     captionSeg: '.ytp-caption-segment',
     accentFill: ['.ytp-play-progress', '.ytp-swatch-background-color', '.ytm-progress-bar-played', '.YtProgressBarLineProgressBarPlayed',
       '.ytProgressBarLineProgressBarPlayed', '.ytp-scrubber-button'],
-    amoledBg: ['body', 'ytm-app', 'ytm-mobile-topbar-renderer', '.mobile-topbar-header', 'ytm-pivot-bar-renderer', '#header-bar',
-      'ytm-browse', 'ytm-watch', 'ytm-single-column-watch-next-results-renderer', 'ytm-engagement-panel'],
+    // pure black (91/v1.15): containers that paint the page colour themselves (top bar, bottom bar, pages,
+    // panels, chip bars); everything else gets black through the colour variables (amoledScan)
+    amoledBg: ['body', 'ytm-app', 'ytm-mobile-topbar-renderer', '.mobile-topbar-header', '.mobile-topbar-header-background',
+      '.mobile-topbar-header[data-mode]', 'ytm-pivot-bar-renderer', '#header-bar', 'ytm-browse', 'ytm-watch', 'ytm-search',
+      'ytm-single-column-watch-next-results-renderer', 'ytm-engagement-panel', 'ytm-feed-filter-chip-bar-renderer',
+      'ytm-chip-cloud-renderer', 'ytm-c4-tabbed-header-renderer', 'ytm-page-header-renderer', 'ytm-slim-video-metadata-section-renderer',
+      'ytm-comment-section-renderer', 'ytm-engagement-panel-section-list-renderer'],
     menuBtn: ['ytm-media-item .media-item-menu button', 'ytm-video-with-context-renderer ytm-menu-renderer button',
       'ytm-compact-video-renderer ytm-menu-renderer button'],
     searchExtras: ['ytm-horizontal-card-list-renderer', '[data-ytl-searchx]'],
@@ -180,11 +185,15 @@
     out.push(':root{--ytl-accent:#2f6bff;--ytl-accent-text:#6b95ff;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
     out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick);--ytl-accent-text:var(--ytl-accent-pick)}');
     rule(RULES.accentFill.map(function (x) { return 'html[data-ytl-accent] ' + x; }), 'background:var(--ytl-accent)!important;background-color:var(--ytl-accent)!important');
-    // pure black (91)
-    out.push('html[data-ytl-amoled][dark]{--yt-spec-base-background:#000!important;--yt-spec-brand-background-solid:#000!important;' +
-      '--yt-spec-brand-background-primary:#000!important;--yt-spec-general-background-a:#000!important;--yt-spec-general-background-b:#000!important;' +
-      '--yt-spec-raised-background:#121212!important;--yt-spec-menu-background:#121212!important;background:#000!important}');
-    rule(RULES.amoledBg.map(function (x) { return 'html[data-ytl-amoled][dark] ' + x; }), 'background-color:#000!important');
+    // pure black (91/v1.15). data-ytl-dark is set by this script (YouTube's own html[dark] is not always
+    // there); m.youtube's variable names are hashed per build, so the ones holding dark surface colours are
+    // found at run time (amoledScan) and these named ones only cover older / other modules
+    out.push('html[data-ytl-amoled][data-ytl-dark]{--yt-spec-base-background:#000!important;--yt-spec-brand-background-solid:#000!important;' +
+      '--yt-spec-brand-background-primary:#000!important;--yt-spec-brand-background-secondary:#000!important;' +
+      '--yt-spec-general-background-a:#000!important;--yt-spec-general-background-b:#000!important;--yt-spec-general-background-c:#000!important;' +
+      '--yt-spec-raised-background:#000!important;--yt-spec-menu-background:#000!important;' +
+      'background:#000!important;background-color:#000!important}');
+    rule(RULES.amoledBg.map(function (x) { return 'html[data-ytl-amoled][data-ytl-dark] ' + x; }), 'background-color:#000!important');
     // compact list (108): small thumbnail left, text right
     out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item{display:flex!important;flex-direction:row!important;align-items:flex-start;padding:6px 12px!important;margin:0!important}');
     out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>.media-item-thumbnail-container,' +

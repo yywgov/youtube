@@ -137,3 +137,118 @@ test('updates and remote rules only talk to GitHub; retries and the releases/lat
   assert.ok(/releases\/latest/.test(up), 'releases/latest fallback kept');
   assert.ok(/raw\.githubusercontent\.com/.test(rr) && /api\.github\.com/.test(rr));
 });
+
+/* ---------- I: pure black ---------- */
+// what today's m.youtube serves: hashed variable names in one :root block (dark values last), html painted
+// through them, a top bar with a fixed colour, and no html[dark] attribute
+const YT_CSS = ':root{--t3e41d7b17b187f69:#fff;--t518e925f61bdcb91:#f2f2f2;--tffc2fd3a644f6275:#0f0f0f}' +
+  ':root{--t3e41d7b17b187f69:#0f0f0f;--t518e925f61bdcb91:#212121;--t08a7c6c176cbc5c2:#282828;--te1b64e6971040396:#272727;' +
+  '--tffc2fd3a644f6275:#f1f1f1;--tf3fc855af2285f5f:rgba(255,255,255,0.2);--t3b8e1c2a9f0d1e2f:#3ea6ff}' +
+  'html{color:var(--tffc2fd3a644f6275);background-color:var(--t3e41d7b17b187f69)}' +
+  '.mobile-topbar-header-background{background-color:#0f0f0f;position:fixed}' +
+  '.mobile-topbar-header[data-mode=searching]{z-index:4;background-color:#212121}' +
+  '.thumb-overlay{background-color:rgba(0,0,0,.6)}';
+
+function ytPage(css, htmlStyle) {
+  return {
+    path: '/', body: '<ytm-app><div class="mobile-topbar-header-background"></div></ytm-app>',
+    before: (w) => {
+      const st = w.document.createElement('style');
+      st.textContent = css;
+      w.document.head.appendChild(st);
+      if (htmlStyle) w.document.documentElement.setAttribute('style', htmlStyle);
+    }
+  };
+}
+
+test('pure black is on by default, set at document start, and does not depend on html[dark]', async () => {
+  const env = await load(ytPage(YT_CSS, 'color: rgb(241, 241, 241)'));
+  const h = env.w.document.documentElement;
+  assert.ok(h.hasAttribute('data-ytl-amoled'));
+  assert.ok(h.hasAttribute('data-ytl-dark'));
+  assert.ok(!h.hasAttribute('dark'), 'YouTube never set [dark] here');
+  const css = env.w.document.getElementById('ytl-css').textContent;
+  assert.ok(!/data-ytl-amoled\]\[dark\]/.test(css), 'no rule waits for html[dark] any more');
+  for (const sel of ['ytm-pivot-bar-renderer', '.mobile-topbar-header-background', 'ytm-engagement-panel', 'ytm-search', 'body', 'ytm-app']) {
+    assert.ok(css.includes('html[data-ytl-amoled][data-ytl-dark] ' + sel), sel);
+  }
+  const root = /html\[data-ytl-amoled\]\[data-ytl-dark\]\{(--yt-spec-[^}]*)\}/.exec(css)[1];
+  for (const v of ['base-background', 'raised-background', 'menu-background', 'general-background-a', 'general-background-b', 'general-background-c']) {
+    assert.ok(root.includes('--yt-spec-' + v + ':#000!important'), v);
+  }
+  assert.ok(!/#121212/.test(css), 'menus / sheets are black too, not #121212');
+  assert.deepEqual(env.calls.filter((c) => c[0] === 'pageTheme').map((c) => c[1]).slice(-1), ['#000000']);
+});
+
+test('the hashed colour variables and fixed dark backgrounds are found and turned black', async () => {
+  const env = await load(ytPage(YT_CSS, 'color: rgb(241, 241, 241)'));
+  const { w } = env;
+  w.ytl._.domPass(true);
+  const vars = w.ytl._.amoledVars();
+  for (const n of ['--t3e41d7b17b187f69', '--t518e925f61bdcb91', '--t08a7c6c176cbc5c2', '--te1b64e6971040396']) assert.ok(vars.includes(n), n);
+  for (const n of ['--tffc2fd3a644f6275', '--tf3fc855af2285f5f', '--t3b8e1c2a9f0d1e2f']) assert.ok(!vars.includes(n), n + ' is text / overlay / accent');
+  const sels = w.ytl._.amoledSels();
+  assert.ok(sels.includes('.mobile-topbar-header-background'));
+  assert.ok(sels.some((s) => s.indexOf('.mobile-topbar-header[data-mode') === 0));
+  assert.ok(!sels.includes('.thumb-overlay'), 'translucent overlays stay');
+  const out = w.document.getElementById('ytl-css-amoled').textContent;
+  assert.ok(out.includes('html[data-ytl-amoled][data-ytl-dark]{--t3e41d7b17b187f69:#000!important'));
+  assert.ok(out.includes('html[data-ytl-amoled][data-ytl-dark] .mobile-topbar-header-background{background-color:#000!important}'));
+  // once per stylesheet: another pass reads nothing again
+  const before = out;
+  w.ytl._.domPass(true);
+  w.ytl._.amoledScan();
+  assert.equal(w.document.getElementById('ytl-css-amoled').textContent, before);
+  // a stylesheet YouTube loads later (watch page module) is picked up
+  const late = w.document.createElement('style');
+  late.textContent = ':root{--t9999aaaa0000bbbb:#181818}.ytm-sheet-x{background-color:#212121}';
+  w.document.head.appendChild(late);
+  w.ytl._.domPass(true);
+  assert.ok(w.ytl._.amoledVars().includes('--t9999aaaa0000bbbb'));
+  assert.ok(w.ytl._.amoledSels().includes('.ytm-sheet-x'));
+  assert.equal(w.ytl._.normColor('rgb(15, 15, 15)'), '#0f0f0f');
+  assert.equal(w.ytl._.normColor(' #212121 '), '#212121');
+});
+
+test('light theme: the early dark guess is taken back; switching pure black off removes everything', async () => {
+  const LIGHT = ':root{--a1:#fff;--tx:#0f0f0f}html{color:var(--tx);background-color:var(--a1)}';
+  const env = await load(ytPage(LIGHT, 'color: rgb(15, 15, 15)'));
+  const h = env.w.document.documentElement;
+  env.w.ytl._.reportTheme(true);
+  assert.ok(!h.hasAttribute('data-ytl-dark'), 'light page: no black');
+  assert.equal(env.calls.filter((c) => c[0] === 'pageTheme').map((c) => c[1]).slice(-1)[0], '#ffffff');
+  const dark = await load(ytPage(YT_CSS, 'color: rgb(241, 241, 241)'));
+  dark.w.ytl.cfg({ amoled: false });
+  assert.ok(!dark.w.document.documentElement.hasAttribute('data-ytl-amoled'));
+  assert.equal(dark.calls.filter((c) => c[0] === 'pageTheme').map((c) => c[1]).slice(-1)[0], '#0f0f0f');
+  // the browser's default black text before YouTube's CSS is in says nothing about the theme
+  const early = await load(ytPage('', 'color: rgb(0, 0, 0)'));
+  early.w.ytl._.reportTheme(true);
+  assert.ok(early.w.document.documentElement.hasAttribute('data-ytl-dark'), 'guess kept until the page answers');
+});
+
+test('dark guess from the PREF cookie (f6 bits), dark when nothing says otherwise', async () => {
+  const env = await load({ path: '/' });
+  const { w } = env;
+  assert.equal(w.ytl._.darkHint(), true);
+  w.document.cookie = 'PREF=f6=80000&tz=Asia.Shanghai';
+  assert.equal(w.ytl._.darkHint(), false);
+  w.document.cookie = 'PREF=f6=400&tz=Asia.Shanghai';
+  assert.equal(w.ytl._.darkHint(), true);
+  w.document.cookie = 'PREF=f6=40000400';
+  assert.equal(w.ytl._.darkHint(), true);
+});
+
+test('native side: black window, bars, WebView, sheets and settings with AMOLED, which is on by default', () => {
+  const ui = java('Ui.java'), main = java('MainActivity.java'), settings = java('SettingsPage.java'), model = java('PrefsModel.java');
+  assert.ok(/public static int bg\(Context c\) \{ return amoled\(c\) \? BLACK : BG; \}/.test(ui));
+  assert.ok(/bg\.setColor\(sheetBg\(a\)\)/.test(ui), 'bottom sheets');
+  assert.ok(/web\.setBackgroundColor\(Ui\.bg\(this\)\)/.test(main), 'WebView');
+  assert.ok(/applyStartColors\(\);/.test(main), 'window + bars before the page reports');
+  assert.ok(/setProgressBackgroundColorSchemeColor\(Ui\.sheetBg\(this\)\)/.test(main), 'pull-to-refresh');
+  assert.ok(!/Ui\.BG\b/.test(settings) && /stack\.setBackgroundColor\(Ui\.bg\(a\)\)/.test(settings), 'settings pages');
+  const falseBlock = /public static boolean defBool[\s\S]*?return false;/.exec(model)[0];
+  assert.ok(!/Prefs\.AMOLED/.test(falseBlock), 'AMOLED defaults to on');
+  const colors = fs.readFileSync(path.join(ROOT, 'app', 'src', 'main', 'res', 'values', 'colors.xml'), 'utf8');
+  assert.ok(/name="background">#000000</.test(colors), 'splash / window background');
+});

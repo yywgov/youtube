@@ -172,6 +172,7 @@ public class MainActivity extends Activity {
         setContentView(R.layout.main);
         swipe = findViewById(R.id.swipe);
         web = findViewById(R.id.web);
+        applyStartColors();   // pure black from the first frame with AMOLED (v1.15), before the page reports its colour
         script = readAsset("ytlite.js");
         requestHighRefreshRate();
         setupWebView();
@@ -364,7 +365,7 @@ public class MainActivity extends Activity {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, false); // YouTube's own dark theme
         }
 
-        web.setBackgroundColor(Ui.BG);
+        web.setBackgroundColor(Ui.bg(this));
         if (Build.VERSION.SDK_INT >= 35) web.setRequestedFrameRate(View.REQUESTED_FRAME_RATE_CATEGORY_HIGH);
         web.setOverScrollMode(WebView.OVER_SCROLL_NEVER);
         // keep the renderer important even when not visible (screen off)
@@ -723,6 +724,23 @@ public class MainActivity extends Activity {
 
 
     // ===================== batch 3: theme bars (92/145), font (93), haptics (120), keyboard (124) =====================
+
+    /** Window, bars and the views behind the page before the page has said anything (dark default). */
+    @SuppressWarnings("deprecation")
+    private void applyStartColors() {
+        try {
+            int c = Ui.bg(this);
+            pageTheme = Ui.amoled(this) ? "#000000" : "#0f0f0f";
+            if (swipe != null) swipe.setBackgroundColor(c);
+            getWindow().getDecorView().setBackgroundColor(c);
+            if (Build.VERSION.SDK_INT < 35) {
+                getWindow().setStatusBarColor(c);
+                getWindow().setNavigationBarColor(c);
+            }
+        } catch (Throwable t) {
+            Diag.log("theme", String.valueOf(t));
+        }
+    }
 
     /** Page background reported by the script: system bars and the area behind them follow it. */
     @SuppressWarnings("deprecation")
@@ -1216,7 +1234,7 @@ public class MainActivity extends Activity {
             LinearLayout panel = new LinearLayout(this);
             panel.setOrientation(LinearLayout.VERTICAL);
             panel.setGravity(android.view.Gravity.CENTER);
-            panel.setBackgroundColor(Ui.BG);
+            panel.setBackgroundColor(Ui.bg(this));
             panel.setClickable(true); // swallow touches while shown
             panel.setPadding(dp(32), dp(32), dp(32), dp(32));
             // offline page (357): a line icon, the reason, one filled "retry" and a way to the network settings
@@ -1514,7 +1532,7 @@ public class MainActivity extends Activity {
 
     private void setupSwipe() {
         swipe.setColorSchemeColors(Ui.accent(this));
-        swipe.setProgressBackgroundColorSchemeColor(Ui.SHEET);
+        swipe.setProgressBackgroundColorSchemeColor(Ui.sheetBg(this));
         // pull feel (121): trigger a little earlier, spinner travels a bit further, settles 64dp down
         float dens = getResources().getDisplayMetrics().density;
         swipe.setDistanceToTriggerSync(Math.round(100 * dens));

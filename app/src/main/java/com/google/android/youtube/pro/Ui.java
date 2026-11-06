@@ -46,6 +46,21 @@ public final class Ui {
     public static final int WHITE = 0xFFFFFFFF;
     public static final int TRACK_OFF = 0x40FFFFFF;
 
+    /** Settings cards on the pure-black theme (v1.15): just enough lift to keep the groups apart. */
+    public static final int SURFACE_AMOLED = 0xFF141414;
+
+    /** Pure-black (AMOLED) theme switched on (91; on by default since v1.15). */
+    public static boolean amoled(Context c) { return Prefs.on(c, Prefs.AMOLED); }
+
+    /** Native background: pure black with AMOLED, the page grey otherwise (settings, sheets, WebView, bars). */
+    public static int bg(Context c) { return amoled(c) ? BLACK : BG; }
+
+    /** Bottom-sheet background: black with AMOLED. */
+    public static int sheetBg(Context c) { return amoled(c) ? BLACK : SHEET; }
+
+    /** Settings card background. */
+    public static int surface(Context c) { return amoled(c) ? SURFACE_AMOLED : SURFACE; }
+
     /** Same colour with another alpha (switch track). */
     public static int withAlpha(int color, int alpha) {
         return (color & 0x00FFFFFF) | ((alpha & 0xFF) << 24);
@@ -240,7 +255,8 @@ public final class Ui {
         Window w = d.getWindow();
         if (w != null) {
             GradientDrawable bg = new GradientDrawable();
-            bg.setColor(SHEET);
+            bg.setColor(sheetBg(a));
+            if (amoled(a)) bg.setStroke(Math.max(1, dp(a, 1)), DIVIDER);   // a black sheet still shows its edge
             float r = dp(a, RADIUS_DP);
             bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
             w.setBackgroundDrawable(bg);

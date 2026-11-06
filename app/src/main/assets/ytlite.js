@@ -59,7 +59,7 @@
     subsOnlyVideos: false,  // subscriptions feed: videos only (63)
     refreshCount: true,     // "N new videos" after a refresh (64)
     hideSearchExtras: true, // search: no "related searches" / "people also watched" (70)
-    amoled: false,          // pure black dark theme (91)
+    amoled: true,           // pure black dark theme (91); on by default since v1.15
     compact: false,         // compact list layout on home (108)
     cardStyle: false,       // uniform corners, 2-line titles, clearer badges (106/107/111)
     dimThumbs: false,       // slightly darker thumbnails in dark mode (110)
@@ -202,8 +202,13 @@
     captionSeg: '.ytp-caption-segment',
     accentFill: ['.ytp-play-progress', '.ytp-swatch-background-color', '.ytm-progress-bar-played', '.YtProgressBarLineProgressBarPlayed',
       '.ytProgressBarLineProgressBarPlayed', '.ytp-scrubber-button'],
-    amoledBg: ['body', 'ytm-app', 'ytm-mobile-topbar-renderer', '.mobile-topbar-header', 'ytm-pivot-bar-renderer', '#header-bar',
-      'ytm-browse', 'ytm-watch', 'ytm-single-column-watch-next-results-renderer', 'ytm-engagement-panel'],
+    // pure black (91/v1.15): containers that paint the page colour themselves (top bar, bottom bar, pages,
+    // panels, chip bars); everything else gets black through the colour variables (amoledScan)
+    amoledBg: ['body', 'ytm-app', 'ytm-mobile-topbar-renderer', '.mobile-topbar-header', '.mobile-topbar-header-background',
+      '.mobile-topbar-header[data-mode]', 'ytm-pivot-bar-renderer', '#header-bar', 'ytm-browse', 'ytm-watch', 'ytm-search',
+      'ytm-single-column-watch-next-results-renderer', 'ytm-engagement-panel', 'ytm-feed-filter-chip-bar-renderer',
+      'ytm-chip-cloud-renderer', 'ytm-c4-tabbed-header-renderer', 'ytm-page-header-renderer', 'ytm-slim-video-metadata-section-renderer',
+      'ytm-comment-section-renderer', 'ytm-engagement-panel-section-list-renderer'],
     menuBtn: ['ytm-media-item .media-item-menu button', 'ytm-video-with-context-renderer ytm-menu-renderer button',
       'ytm-compact-video-renderer ytm-menu-renderer button'],
     searchExtras: ['ytm-horizontal-card-list-renderer', '[data-ytl-searchx]'],
@@ -324,11 +329,15 @@
     out.push(':root{--ytl-accent:#2f6bff;--ytl-accent-text:#6b95ff;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
     out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick);--ytl-accent-text:var(--ytl-accent-pick)}');
     rule(RULES.accentFill.map(function (x) { return 'html[data-ytl-accent] ' + x; }), 'background:var(--ytl-accent)!important;background-color:var(--ytl-accent)!important');
-    // pure black (91)
-    out.push('html[data-ytl-amoled][dark]{--yt-spec-base-background:#000!important;--yt-spec-brand-background-solid:#000!important;' +
-      '--yt-spec-brand-background-primary:#000!important;--yt-spec-general-background-a:#000!important;--yt-spec-general-background-b:#000!important;' +
-      '--yt-spec-raised-background:#121212!important;--yt-spec-menu-background:#121212!important;background:#000!important}');
-    rule(RULES.amoledBg.map(function (x) { return 'html[data-ytl-amoled][dark] ' + x; }), 'background-color:#000!important');
+    // pure black (91/v1.15). data-ytl-dark is set by this script (YouTube's own html[dark] is not always
+    // there); m.youtube's variable names are hashed per build, so the ones holding dark surface colours are
+    // found at run time (amoledScan) and these named ones only cover older / other modules
+    out.push('html[data-ytl-amoled][data-ytl-dark]{--yt-spec-base-background:#000!important;--yt-spec-brand-background-solid:#000!important;' +
+      '--yt-spec-brand-background-primary:#000!important;--yt-spec-brand-background-secondary:#000!important;' +
+      '--yt-spec-general-background-a:#000!important;--yt-spec-general-background-b:#000!important;--yt-spec-general-background-c:#000!important;' +
+      '--yt-spec-raised-background:#000!important;--yt-spec-menu-background:#000!important;' +
+      'background:#000!important;background-color:#000!important}');
+    rule(RULES.amoledBg.map(function (x) { return 'html[data-ytl-amoled][data-ytl-dark] ' + x; }), 'background-color:#000!important');
     // compact list (108): small thumbnail left, text right
     out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item{display:flex!important;flex-direction:row!important;align-items:flex-start;padding:6px 12px!important;margin:0!important}');
     out.push('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item>.media-item-thumbnail-container,' +
@@ -1219,6 +1228,7 @@
     if (document.documentElement) markWatched();
     autonavFor = '';
     if (started) {   // the helpers below are defined further down; first run is at start-up
+      if (cfg.amoled && document.documentElement && !document.documentElement.hasAttribute('data-ytl-dark') && !themeKnown && darkHint()) setDark(true);
       reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
     }
@@ -2523,9 +2533,116 @@
     if (!m || (m[4] !== undefined && +m[4] < 0.5)) return null;
     return (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) < 128;
   }
+  /* Dark or light before anything is painted (v1.15): YouTube's PREF cookie (f6 bit 0x400 dark,
+   * 0x80000 light), else the system setting; the app asks for the dark theme on first run. Only a
+   * hint so pure black is there from the first frame; reportTheme decides from the page itself. */
+  function darkHint() {
+    try {
+      var m = /(?:^|;\s*)PREF=([^;]*)/.exec(document.cookie || '');
+      var f = m && /(?:^|&)f6=([0-9a-fA-F]+)/.exec(decodeURIComponent(m[1]));
+      if (f) {
+        var v = parseInt(f[1], 16);
+        if (v & 0x80000) return false;
+        if (v & 0x400) return true;
+      }
+      if (window.matchMedia) return !window.matchMedia('(prefers-color-scheme: light)').matches;
+    } catch (e) {}
+    return true;
+  }
+  function setDark(on) {
+    var h = document.documentElement;
+    if (!h) return;
+    if (on) { if (!h.hasAttribute('data-ytl-dark')) h.setAttribute('data-ytl-dark', '1'); }
+    else if (h.hasAttribute('data-ytl-dark')) h.removeAttribute('data-ytl-dark');
+  }
+  /* ---------- pure black (91, rebuilt in v1.15) ----------
+   * m.youtube paints its surfaces through colour variables whose names are hashed per build (e.g.
+   * --t3e41d7b17b187f69:#0f0f0f), and a few bars with fixed colours. Each stylesheet is read once (only
+   * :root / html rules for variables, every rule's background-color for the fixed ones); whatever holds a
+   * dark surface colour is set to #000 under html[data-ytl-amoled][data-ytl-dark]. Idle time, once per
+   * sheet, a few ms; nothing runs with AMOLED off. */
+  var AMOLED_DARK = { '#000': 1, '#030303': 1, '#0f0f0f': 1, '#121212': 1, '#181818': 1, '#1f1f1f': 1, '#212121': 1, '#222': 1, '#222222': 1, '#272727': 1, '#282828': 1 };
+  var amoledVarSeen = {}, amoledVars = [], amoledCand = [], amoledCandSeen = {}, amoledSelSeen = {}, amoledSels = [], amoledSheetCount = -1;
+  function hex2(n) { n = (+n).toString(16); return n.length < 2 ? '0' + n : n; }
+  function normColor(v) {
+    v = String(v || '').trim().toLowerCase();
+    var m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*(1|1\.0+))?\s*\)$/.exec(v);
+    if (m) return '#' + hex2(m[1]) + hex2(m[2]) + hex2(m[3]);
+    return v;
+  }
+  function isDarkSurface(v) { var c = normColor(v); return c !== '#000' && c !== '#000000' && !!AMOLED_DARK[c]; }
+  var ROOT_SEL_RE = /^(?::root|html)(?:[:.\[][^\s,>+~]*)?$/i;
+  function scanRule(r, depth) {
+    if (r.cssRules && depth < 2 && !r.selectorText) {   // @media / @supports: one level down
+      for (var i = 0; i < r.cssRules.length; i++) scanRule(r.cssRules[i], depth + 1);
+      return;
+    }
+    var sel = r.selectorText, st = r.style;
+    if (!sel || !st) return;
+    if (ROOT_SEL_RE.test(sel)) {
+      // a candidate only: the same name may be dark text in a light block; the computed value decides
+      for (var j = 0; j < st.length; j++) {
+        var n = st[j];
+        if (n.charCodeAt(0) !== 45 || n.charCodeAt(1) !== 45 || amoledCandSeen[n]) continue;
+        if (isDarkSurface(st.getPropertyValue(n))) { amoledCandSeen[n] = 1; amoledCand.push(n); }
+      }
+      return;
+    }
+    if (amoledSels.length < 300 && !amoledSelSeen[sel] && isDarkSurface(st.getPropertyValue('background-color')) && sel.indexOf('ytl') < 0) {
+      amoledSelSeen[sel] = 1;
+      amoledSels.push(sel);
+    }
+  }
+  var amoledScan = guard('amoled-scan', function () {
+    if (!cfg.amoled || !document.styleSheets) return;
+    var ss = document.styleSheets;
+    if (ss.length === amoledSheetCount) return;
+    var before = amoledVars.length + amoledSels.length, unread = false;
+    for (var i = 0; i < ss.length; i++) {
+      var sh = ss[i], rules = null;
+      if (sh.__ytlScanned) continue;
+      var own = sh.ownerNode && sh.ownerNode.id;
+      if (own && own.indexOf('ytl-') === 0) { sh.__ytlScanned = true; continue; }
+      try { rules = sh.cssRules; } catch (e) { sh.__ytlScanned = true; continue; }   // another origin: nothing to read
+      if (!rules) { unread = true; continue; }                                         // still loading: next pass
+      sh.__ytlScanned = true;
+      for (var k = 0; k < rules.length; k++) scanRule(rules[k], 0);
+    }
+    amoledSheetCount = unread ? -1 : ss.length;
+    // the value that is really in effect on <html> (before our override reaches that name)
+    if (amoledCand.length) {
+      var cs = getComputedStyle(document.documentElement), rest = [];
+      for (var c = 0; c < amoledCand.length; c++) {
+        var name = amoledCand[c];
+        if (amoledVarSeen[name]) continue;
+        var val = cs.getPropertyValue(name);
+        if (!val || isDarkSurface(val)) { amoledVarSeen[name] = 1; amoledVars.push(name); } else rest.push(name);
+      }
+      amoledCand = rest;
+    }
+    if (amoledVars.length + amoledSels.length !== before) writeAmoledCss();
+  });
+  function writeAmoledCss() {
+    var P = 'html[data-ytl-amoled][data-ytl-dark]';
+    var out = [];
+    if (amoledVars.length) out.push(P + '{' + amoledVars.map(function (n) { return n + ':#000!important'; }).join(';') + '}');
+    // one rule per selector: one that this engine can't parse only drops itself
+    for (var i = 0; i < amoledSels.length; i++) {
+      var parts = amoledSels[i].split(',').map(function (x) { x = x.trim(); return /^(?::root|html)\b/i.test(x) ? '' : P + ' ' + x; })
+        .filter(function (x) { return x; });
+      if (parts.length) out.push(parts.join(',') + '{background-color:#000!important}');
+    }
+    var el = document.getElementById('ytl-css-amoled');
+    if (!el) {
+      el = document.createElement('style');
+      el.id = 'ytl-css-amoled';
+      (document.head || document.documentElement).appendChild(el);
+    }
+    el.textContent = out.join('\n');
+  }
   /* light / dark (257): YouTube marks dark mode with html[dark]; an attribute observer reports
    * changes, and getComputedStyle is only read when the attribute says nothing (no timer polling) */
-  var themeKnown = false, themeMo = null;
+  var themeKnown = false, themeMo = null, darkFromPage = false;
   function watchThemeAttr() {
     if (themeMo || !window.MutationObserver || !document.documentElement) return;
     themeMo = new MutationObserver(function () {
@@ -2540,12 +2657,24 @@
     var now = Date.now();
     if (!force && now - lastThemeCheck < 1500) return;
     lastThemeCheck = now;
-    var dark = null;
-    if (document.documentElement && document.documentElement.hasAttribute('dark')) dark = true;
-    if (dark === null && document.body) dark = rgbDark(getComputedStyle(document.body).backgroundColor);
-    if (dark === null && document.documentElement) dark = rgbDark(getComputedStyle(document.documentElement).backgroundColor);
+    var h = document.documentElement, dark = null;
+    if (h && h.hasAttribute('dark')) dark = true;
+    // while our pure black paints the backgrounds they say nothing about the theme: the text colour does
+    var forced = !!(h && h.hasAttribute('data-ytl-amoled') && h.hasAttribute('data-ytl-dark'));
+    if (dark === null && !forced && document.body) dark = rgbDark(getComputedStyle(document.body).backgroundColor);
+    if (dark === null && !forced && h) dark = rgbDark(getComputedStyle(h).backgroundColor);
+    if (dark === null && h) {
+      // plain black is the browser default before YouTube's CSS is in: no answer yet (its light text is #0f0f0f)
+      var col = getComputedStyle(h).color || '';
+      var tx = /^rgba?\(0,\s*0,\s*0(?:,\s*1)?\)$/.test(col) ? null : rgbDark(col);
+      if (tx !== null) dark = !tx;
+    }
+    if (dark === null && forced && darkFromPage) dark = true;   // decided before; only our black hides it now
     if (dark === null) return;   // unknown: keep the app's dark default
     themeKnown = true;
+    darkFromPage = true;
+    setDark(dark);
+    if (dark && cfg.amoled) amoledScan();
     var t = dark ? (cfg.amoled ? '#000000' : '#0f0f0f') : '#ffffff';
     if (t !== lastTheme) { lastTheme = t; call('pageTheme', t); }
   });
@@ -2706,6 +2835,7 @@
     else if (document.getElementById('ytl-chips')) ensureChips();
     searchFocus();
     reportTheme(false);
+    if (cfg.amoled) amoledScan();   // new stylesheets only; a count check when nothing changed
     checkLogin();
     loginHint();
     try { checkObserverRoot(); } catch (e) { report('observer-root', e); }
@@ -2847,8 +2977,15 @@
     // batch 6 (v1.8.0)
     wordBlocked: wordBlocked, textRe: textRe, checkEmptyFeed: checkEmptyFeed, leakScan: leakScan, quietBatch: quietBatch,
     quietSkipped: function () { return quietSkipped; }, chipList: chipList, remote: function () { return remote; },
-    filtersPaused: function () { return filtersPaused; }, refresh: refresh
+    filtersPaused: function () { return filtersPaused; }, refresh: refresh,
+    // v1.15
+    amoledScan: amoledScan, amoledVars: function () { return amoledVars.slice(); }, amoledSels: function () { return amoledSels.slice(); },
+    darkHint: darkHint, normColor: normColor
   };
+
+  // first frame (v1.15): the stylesheet and the page attributes go in at document start, so hidden parts
+  // never flash and pure black is there before YouTube paints (the page check corrects a wrong guess)
+  try { if (cfg.amoled && darkHint()) setDark(true); addCss(); applyPerfAttr(); } catch (e) { report('early-css', e); }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });
   else startObserver();

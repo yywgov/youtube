@@ -59,7 +59,7 @@
     subsOnlyVideos: false,  // subscriptions feed: videos only (63)
     refreshCount: true,     // "N new videos" after a refresh (64)
     hideSearchExtras: true, // search: no "related searches" / "people also watched" (70)
-    amoled: false,          // pure black dark theme (91)
+    amoled: true,           // pure black dark theme (91); on by default since v1.15
     compact: false,         // compact list layout on home (108)
     cardStyle: false,       // uniform corners, 2-line titles, clearer badges (106/107/111)
     dimThumbs: false,       // slightly darker thumbnails in dark mode (110)

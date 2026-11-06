@@ -135,6 +135,7 @@
     else if (document.getElementById('ytl-chips')) ensureChips();
     searchFocus();
     reportTheme(false);
+    if (cfg.amoled) amoledScan();   // new stylesheets only; a count check when nothing changed
     checkLogin();
     loginHint();
     try { checkObserverRoot(); } catch (e) { report('observer-root', e); }

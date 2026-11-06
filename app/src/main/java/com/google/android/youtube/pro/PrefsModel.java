@@ -56,10 +56,11 @@ public final class PrefsModel {
 
     // ---------- defaults ----------
 
+    /** Defaults; pure black (AMOLED) is on by default since v1.15 (it was off before). */
     public static boolean defBool(String key) {
         switch (key) {
             case Prefs.NORMALIZE: case Prefs.REMEMBER_RATE: case Prefs.SLEEP_CALM: case Prefs.NOTIF_SEEK:
-            case Prefs.HIDE_LIVE: case Prefs.HIDE_SHELVES: case Prefs.SUBS_ONLY_VIDEOS: case Prefs.UPDATE_MIRROR: case Prefs.AMOLED:
+            case Prefs.HIDE_LIVE: case Prefs.HIDE_SHELVES: case Prefs.SUBS_ONLY_VIDEOS: case Prefs.UPDATE_MIRROR:
             case Prefs.COMPACT: case Prefs.CARD_STYLE: case Prefs.DIM_THUMBS:
             case Prefs.WIFI_SAVER: case Prefs.SKIP_WATCHED_NEXT: case Prefs.FONT_LARGE: case Prefs.ORIENT_REMEMBER:
             case Prefs.HIDE_WATCHED_RELATED: case Prefs.HIDE_SEARCH_MIX: case Prefs.LIGHT_REFRESH:

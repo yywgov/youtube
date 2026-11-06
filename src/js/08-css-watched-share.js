@@ -48,6 +48,7 @@
     if (document.documentElement) markWatched();
     autonavFor = '';
     if (started) {   // the helpers below are defined further down; first run is at start-up
+      if (cfg.amoled && document.documentElement && !document.documentElement.hasAttribute('data-ytl-dark') && !themeKnown && darkHint()) setDark(true);
       reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
     }

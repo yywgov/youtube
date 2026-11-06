@@ -4,7 +4,7 @@
 	android:id="@+id/swipe"
 	android:layout_width="match_parent"
 	android:layout_height="match_parent"
-	android:background="#0F0F0F"
+	android:background="#000000"
 	android:fitsSystemWindows="true">
 	<com.google.android.youtube.pro.webview.YTProWebView
 		android:id="@+id/web"

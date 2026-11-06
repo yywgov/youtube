@@ -170,7 +170,7 @@ test('back to a list returns to the saved scroll position', async () => {
 });
 
 test('system bar colour follows the page background', async () => {
-  const env = await load({ path: '/', body: '<ytm-app></ytm-app>' });
+  const env = await load({ path: '/', body: '<ytm-app></ytm-app>', cfg: { amoled: false } });
   env.w.document.body.style.backgroundColor = 'rgb(255, 255, 255)';
   env.w.ytl._.reportTheme(true);
   env.w.document.body.style.backgroundColor = 'rgb(15, 15, 15)';
@@ -192,7 +192,8 @@ test('look switches set their html attributes; bad accent ignored', async () => 
   const css = w.document.getElementById('ytl-css').textContent;
   assert.ok(css.includes('html[data-ytl-compact] ytm-rich-item-renderer ytm-media-item{'));
   const def = await load({ path: '/' });
-  for (const a of ['data-ytl-amoled', 'data-ytl-compact', 'data-ytl-cards', 'data-ytl-dimthumb', 'data-ytl-accent']) assert.ok(!def.w.document.documentElement.hasAttribute(a), 'default off: ' + a);
+  for (const a of ['data-ytl-compact', 'data-ytl-cards', 'data-ytl-dimthumb', 'data-ytl-accent']) assert.ok(!def.w.document.documentElement.hasAttribute(a), 'default off: ' + a);
+  assert.ok(def.w.document.documentElement.hasAttribute('data-ytl-amoled'), 'pure black is on by default since v1.15');
 });
 
 test('battery saver caps at 480p; no sleep mode any more', async () => {

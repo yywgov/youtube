@@ -47,8 +47,15 @@
     // batch 6 (v1.8.0)
     wordBlocked: wordBlocked, textRe: textRe, checkEmptyFeed: checkEmptyFeed, leakScan: leakScan, quietBatch: quietBatch,
     quietSkipped: function () { return quietSkipped; }, chipList: chipList, remote: function () { return remote; },
-    filtersPaused: function () { return filtersPaused; }, refresh: refresh
+    filtersPaused: function () { return filtersPaused; }, refresh: refresh,
+    // v1.15
+    amoledScan: amoledScan, amoledVars: function () { return amoledVars.slice(); }, amoledSels: function () { return amoledSels.slice(); },
+    darkHint: darkHint, normColor: normColor
   };
+
+  // first frame (v1.15): the stylesheet and the page attributes go in at document start, so hidden parts
+  // never flash and pure black is there before YouTube paints (the page check corrects a wrong guess)
+  try { if (cfg.amoled && darkHint()) setDark(true); addCss(); applyPerfAttr(); } catch (e) { report('early-css', e); }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startObserver, { once: true });
   else startObserver();

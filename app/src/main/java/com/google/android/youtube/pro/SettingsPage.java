@@ -271,7 +271,7 @@ public class SettingsPage {
             in.setHint("例如：字幕、续播、屏蔽、画质");
             in.setHintTextColor(Ui.HINT);
             in.setTextColor(Ui.TEXT);
-            in.setBackground(Ui.round(Ui.SURFACE, dp(Ui.RADIUS_DP)));
+            in.setBackground(Ui.round(Ui.surface(a), dp(Ui.RADIUS_DP)));
             in.setPadding(dp(16), dp(12), dp(16), dp(12));
             in.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -542,7 +542,7 @@ public class SettingsPage {
     private void lookPage() {
         page("外观与交互", box -> {
             LinearLayout c = card(box, "主题与手感");
-            c.addView(toggle("纯黑主题（AMOLED）", "深色模式下背景纯黑，更省电、夜里不刺眼", Prefs.AMOLED));
+            c.addView(toggle("纯黑主题（AMOLED）", "深色模式下网页和 App 的背景都是纯黑，更省电、夜里不刺眼（默认开）", Prefs.AMOLED));
             // accent (463): only offered while a colour other than the brand blue is still set
             if (!accentIsDefault()) c.addView(accentRow());
             c.addView(fontRow());   // two font switches became one choice (455)
@@ -719,7 +719,7 @@ public class SettingsPage {
         if (win != null) return;
         final Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_NoActionBar);
         stack = new FrameLayout(a);
-        stack.setBackgroundColor(Ui.BG);
+        stack.setBackgroundColor(Ui.bg(a));
         stack.setFitsSystemWindows(true);
         if (android.os.Build.VERSION.SDK_INT >= 29) stack.setForceDarkAllowed(false);   // already dark (392)
         d.setContentView(stack);
@@ -728,8 +728,8 @@ public class SettingsPage {
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             w.setBackgroundDrawableResource(android.R.color.transparent);
             w.setWindowAnimations(android.R.style.Animation_Activity);
-            w.setStatusBarColor(Ui.BG);
-            w.setNavigationBarColor(Ui.BG);
+            w.setStatusBarColor(Ui.bg(a));
+            w.setNavigationBarColor(Ui.bg(a));
         }
         // back goes one page up, the last page closes the window
         if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -752,7 +752,7 @@ public class SettingsPage {
         ensureWindow();
         LinearLayout root = new LinearLayout(a);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Ui.BG);
+        root.setBackgroundColor(Ui.bg(a));
         root.setClickable(true);   // a page under the top one never gets its touches
 
         LinearLayout bar = new LinearLayout(a);
@@ -830,7 +830,7 @@ public class SettingsPage {
         if (title != null) parent.addView(Ui.title(a, title));
         LinearLayout c = new LinearLayout(a);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackground(Ui.round(Ui.SURFACE, dp(Ui.RADIUS_DP)));
+        c.setBackground(Ui.round(Ui.surface(a), dp(Ui.RADIUS_DP)));
         c.setClipToOutline(true);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMargins(dp(16), dp(title == null ? 12 : 2), dp(16), dp(4));

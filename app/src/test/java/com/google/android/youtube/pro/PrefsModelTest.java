@@ -89,7 +89,7 @@ public class PrefsModelTest {
 
     @Test public void booleanDefaultsUnchanged() {
         String[] off = {Prefs.NORMALIZE, Prefs.REMEMBER_RATE, Prefs.SLEEP_CALM, Prefs.NOTIF_SEEK, Prefs.HIDE_LIVE, Prefs.HIDE_SHELVES,
-                Prefs.SUBS_ONLY_VIDEOS, Prefs.UPDATE_MIRROR, Prefs.AMOLED, Prefs.COMPACT, Prefs.CARD_STYLE, Prefs.DIM_THUMBS,
+                Prefs.SUBS_ONLY_VIDEOS, Prefs.UPDATE_MIRROR, Prefs.COMPACT, Prefs.CARD_STYLE, Prefs.DIM_THUMBS,
                 // batch 5: everything that could change playback / Wi-Fi behaviour starts off
                 Prefs.WIFI_SAVER, Prefs.SKIP_WATCHED_NEXT, Prefs.FONT_LARGE, Prefs.ORIENT_REMEMBER,
                 // batch 6: new behaviour is opt-in

@@ -53,7 +53,7 @@ test('"still watching" fallback never presses a "cancel" button', async () => {
 
 /* 257: theme from html[dark] */
 test('page theme comes from html[dark]; no getComputedStyle polling once it is known', async () => {
-  const env = await load({ path: '/', body: '<ytm-app></ytm-app>' });
+  const env = await load({ path: '/', body: '<ytm-app></ytm-app>', cfg: { amoled: false } });
   const { w, calls } = env;
   let gcs = 0;
   const orig = w.getComputedStyle;

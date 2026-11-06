@@ -133,9 +133,6 @@
       adLabel: ['full', ['赞助', '贊助', '广告', '廣告', '赞助商广告', '贊助商廣告', 'sponsored', 'ad', 'ads']],
       feedback: ['full', ['help', 'help ?(?:&|and) ?feedback', 'send feedback', 'feedback', 'give feedback', 'report', 'report history', 'report (?:video|playlist|channel|comment|ad|this ad)', 'why this ad\\??', '帮助', '帮助和反馈', '帮助与反馈', '帮助及反馈', '发送反馈', '提供反馈', '反馈', '意见反馈', '举报', '举报记录', '举报视频', '举报播放列表', '举报频道', '說明', '說明與意見回饋', '提供意見', '傳送意見回饋', '提供意見回饋', '意見回饋', '檢舉', '檢舉記錄', '檢舉影片']]
     },
-    // one-tap sleep mode (340): comments only; related videos stay for the same-channel rule
-    sleepHide: ['ytm-comment-section-renderer', 'ytm-comments-entry-point-header-renderer',
-      'ytm-item-section-renderer[section-identifier="comments-entry-point"]', 'ytm-item-section-renderer[data-content-type="comments"]'],
     // search quick filters (125/328): YouTube's own sp values; rules.json "chips" can replace them
     chips: [['全部', ''], ['最新', 'CAI%3D'], ['只看视频', 'EgIQAQ%3D%3D'], ['本周', 'EgIIAw%3D%3D'], ['4–20 分钟', 'EgIYAw%3D%3D'], ['20 分钟以上', 'EgIYAg%3D%3D']]
   };
@@ -222,10 +219,6 @@
     out.push('#ytl-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}#ytl-chips::-webkit-scrollbar{display:none}' +
       '#ytl-chips a{flex:0 0 auto;padding:6px 12px;border-radius:8px;background:rgba(128,128,128,.18);color:inherit;font:500 13px/18px system-ui,sans-serif;text-decoration:none;white-space:nowrap}' +
       '#ytl-chips a[aria-current]{background:var(--ytl-accent);color:#fff}');
-    // sleep badge (154): a tap adds time, a long press opens the timer choices (309); 40px touch target
-    out.push('#ytl-badge{position:absolute;top:4px;left:4px;z-index:70;min-height:40px;display:flex;align-items:center;' +
-      'padding:0 4px;background:none;border:0;margin:0;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent}' +
-      '#ytl-badge span{background:rgba(0,0,0,.6);font:500 12px/16px system-ui,sans-serif;padding:3px 8px;border-radius:10px;white-space:nowrap}');
     out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
@@ -238,10 +231,8 @@
     // long press feedback (368): a light wash on the card while the finger is held
     out.push('[data-ytl-press]{background-color:rgba(128,128,128,.16)!important;border-radius:12px;transition:background-color .12s}');
     out.push('html[data-ytl-lowmotion] [data-ytl-press]{transition:none}');
-    // moon button only with a video or a timer (363)
+    // tools button only with a video (363)
     out.push('#ytl-tools[data-ytl-off]{display:none!important}');
-    // one-tap sleep mode (340): no comments under the player (related videos stay: the same-channel rule reads them)
-    rule(RULES.sleepHide.map(function (x) { return 'html[data-ytl-sleepmode][data-ytl-page="watch"] ' + x; }), 'display:none!important');
     // empty feed note (326)
     out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
       'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +

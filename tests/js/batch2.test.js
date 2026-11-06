@@ -36,35 +36,7 @@ test('no module errors on load (home and watch), defaults keep old behaviour', a
 });
 
 /* 13: fade length */
-test('end-of-video fade follows the fade length setting', async () => {
-  const env = await setupWatch({ cfg: { stopAtEnd: true, fadeSec: 10 } });
-  const st = fakeMedia(env.v, { duration: 100, currentTime: 80, volume: 1 });
-  fire(env.w, env.v, 'timeupdate');
-  assert.equal(st.volume, 1, 'no fade 20 s before the end');
-  st.currentTime = 95;
-  fire(env.w, env.v, 'timeupdate');
-  assert.ok(Math.abs(st.volume - (4 / 9) * (4 / 9)) < 0.01, 'fading (squared curve, 298): ' + st.volume);
-  st.currentTime = 99.2;
-  fire(env.w, env.v, 'timeupdate');
-  assert.ok(env.calls.some((c) => c[0] === 'sleepFired'));
-});
-
 /* 16: after N videos */
-test('"after N videos": each finished video is reported once; last one stops at its end', async () => {
-  const env = await setupWatch({ cfg: { countMode: true } });
-  const { w, v, calls } = env;
-  fakeMedia(v, { duration: 300, currentTime: 300 });
-  fire(w, v, 'loadedmetadata');
-  fire(w, v, 'ended');
-  fire(w, v, 'ended');
-  assert.equal(calls.filter((c) => c[0] === 'videoEnded').length, 1);
-  w.ytl.stopAtEndNext();
-  assert.equal(w.ytl._.stopAtEnd(), false, 'not for the video that just ended');
-  w.history.pushState({}, '', '/watch?v=zyxwvutsrqp');
-  fire(w, v, 'loadedmetadata');
-  assert.equal(w.ytl._.stopAtEnd(), true, 'armed for the next video');
-});
-
 /* 152: loop */
 test('single-video loop jumps back before the end', async () => {
   const env = await setupWatch();
@@ -180,26 +152,11 @@ test('end wall and caption style follow the settings', async () => {
 });
 
 /* 154: badge */
-test('sleep badge appears on the player and goes away', async () => {
-  const env = await setupWatch();
-  const { w, p } = env;
-  w.ytl.badge('睡眠 · 25 分');
-  const b = w.document.getElementById('ytl-badge');
-  assert.ok(b && b.parentNode === p && b.textContent === '睡眠 · 25 分');
-  w.ytl.badge('');
-  assert.equal(w.document.getElementById('ytl-badge'), null);
-  const off = await setupWatch({ cfg: { sleepBadge: false, badge: '睡眠 · 5 分' } });
-  off.w.ytl._.domPass();
-  assert.equal(off.w.document.getElementById('ytl-badge'), null);
-  const reload = await setupWatch({ cfg: { badge: '睡眠 · 5 分' } });
-  assert.ok(reload.w.document.getElementById('ytl-badge'), 'restored after a page reload');
-});
-
 /* 21/22: what plays next */
 const RELATED = '<ytm-video-with-context-renderer id=r1><a href="/watch?v=other111111">x</a><span class="YtmBadgeAndBylineRendererItemByline">Other · 1M views</span></ytm-video-with-context-renderer>' +
   '<ytm-video-with-context-renderer id=r2><a href="/watch?v=same2222222">y</a><span class="YtmBadgeAndBylineRendererItemByline">My Channel · 3K views</span></ytm-video-with-context-renderer>';
 
-test('autoplay toggle: on by default, off with a "same channel" rule or the calm rule while sleeping', async () => {
+test('autoplay toggle: on by default, off with a "same channel" rule', async () => {
   const env = await setupWatch();
   const tg = env.w.document.querySelector('.ytm-autonav-toggle-button-container');
   let clicks = 0;
@@ -208,12 +165,12 @@ test('autoplay toggle: on by default, off with a "same channel" rule or the calm
   fire(env.w, env.v, 'loadedmetadata');
   env.w.ytl._.domPass();
   assert.equal(tg.getAttribute('aria-pressed'), 'true');
-  env.w.ytl.cfg({ sleepCalm: true });
-  assert.equal(env.w.ytl._.ruleMode(), 'rec', 'calm rule only while a timer runs');
-  env.w.ytl.sleepState(true);
+  env.w.ytl.cfg({ sleepCalm: true });   // removed in v1.15: an old stored value changes nothing
+  assert.equal(env.w.ytl._.ruleMode(), 'rec');
+  env.w.ytl.cfg({ nextSource: 'channel' });
   assert.equal(env.w.ytl._.ruleMode(), 'channel');
   assert.equal(tg.getAttribute('aria-pressed'), 'false');
-  env.w.ytl.sleepState(false);
+  env.w.ytl.cfg({ nextSource: 'rec' });
   assert.equal(tg.getAttribute('aria-pressed'), 'true');
   assert.equal(clicks, 3);
 });

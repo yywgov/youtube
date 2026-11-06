@@ -341,23 +341,7 @@ public final class PrefsModel {
         for (String k : allKeys()) if (!keep.contains(k)) s.remove(k);
     }
 
-    // ---------- merged rows (228 / 229 / 237) ----------
-
-    /** Sleep default row: 0 = "same as the last timer started" (sleepRemember), else the fixed mode. */
-    public static final int SLEEP_CHOICE_LAST = 0;
-
-    public static int sleepChoice(boolean remember, int sleepDefault) {
-        return remember ? SLEEP_CHOICE_LAST : sleepDefault;
-    }
-
-    public static void writeSleepChoice(Store s, int choice) {
-        if (choice == SLEEP_CHOICE_LAST) {
-            s.put(Prefs.SLEEP_REMEMBER, true);
-        } else {
-            s.put(Prefs.SLEEP_DEFAULT, choice);
-            s.put(Prefs.SLEEP_REMEMBER, false);
-        }
-    }
+    // ---------- merged rows (229 / 237) ----------
 
     /** Watched row: 0 = don't hide (seenMin kept for later), else hide at 50 / 80 / 95 %. */
     public static int watchedChoice(boolean hideWatched, int seenMin) {
@@ -390,16 +374,6 @@ public final class PrefsModel {
         return out;
     }
 
-    /** Night window label (307), e.g. "22:00–5:00". */
-    public static String nightLabel(int start, int end) {
-        return start + ":00–" + end + ":00";
-    }
-
-    /** Timer details row summary (474). */
-    public static String sleepDetailLabel(int fade, int step, boolean hold, boolean badge, boolean black) {
-        return "淡出 " + fade + " 秒 · +" + step + " 分钟" + (hold ? " · 暂停时定时也暂停" : "") + (badge ? " · 角标" : "") + (black ? " · 一键睡眠黑屏" : "");
-    }
-
     /** List style row summary (476). */
     public static String listStyleLabel(boolean compact, boolean cards, boolean dim) {
         if (!compact && !cards && !dim) return "默认";
@@ -417,7 +391,7 @@ public final class PrefsModel {
 
     /** Notification buttons, as the row summary shows them (237). */
     public static String notifLayout(boolean seek, boolean watchLater) {
-        return (seek ? "快退 10 秒 · 播放 · 快进 30 秒" : "上一个 · 播放 · 下一个") + " · 睡眠" + (watchLater ? " · 稍后观看" : "");
+        return (seek ? "快退 10 秒 · 播放 · 快进 30 秒" : "上一个 · 播放 · 下一个") + (watchLater ? " · 稍后观看" : "");
     }
 
     // ---------- merged rows, round 2 (455 / 459) ----------

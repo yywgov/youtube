@@ -9,7 +9,6 @@ import com.google.android.youtube.pro.Diag;
 import com.google.android.youtube.pro.MainActivity;
 import com.google.android.youtube.pro.PlaybackService;
 import com.google.android.youtube.pro.Prefs;
-import com.google.android.youtube.pro.SleepTimer;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -57,15 +56,9 @@ public class WebAppInterface {
 
     @JavascriptInterface
     public String getConfig() {
-        // settings + the state a freshly (re)loaded page must pick up again:
-        // "sleep at end of video" and whether the app is in the background / screen off
+        // settings + the state a freshly (re)loaded page must pick up again: app in the background / screen off
         try {
             JSONObject o = new JSONObject(Prefs.jsConfig(app));
-            o.put("stopAtEnd", SleepTimer.stopsAtEndNow());
-            o.put("countMode", SleepTimer.countRunning());
-            o.put("sleeping", SleepTimer.active());
-            o.put("badge", SleepTimer.badge());
-            o.put("sleepMode", MainActivity.sleepModeOn() && SleepTimer.active());
             o.put("bg", !MainActivity.isVisible());
             MainActivity.onPageReady();   // queued commands for this page run now (247)
             o.put("adKeys", new JSONArray(WatchPageFilter.adKeysJson()));   // one list with the native filter (279)
@@ -102,23 +95,6 @@ public class WebAppInterface {
     @JavascriptInterface
     public void mediaLive(final boolean live) {
         main.post(() -> PlaybackService.setLive(live));
-    }
-
-    /** Sleep badge on the player tapped (309): one more step for a minutes timer, else the timer choices. */
-    @JavascriptInterface
-    public void sleepBadgeTap() {
-        if (!allowed("sleepBadgeTap")) return;
-        onUi(a -> {
-            if (SleepTimer.timed()) SleepTimer.extend(a);
-            else a.openSleepPicker();
-        });
-    }
-
-    /** Sleep badge long-pressed (309): the timer choices, with "off". */
-    @JavascriptInterface
-    public void sleepBadgeLong() {
-        if (!allowed("sleepBadgeLong")) return;
-        onUi(MainActivity::openSleepPicker);
     }
 
     @JavascriptInterface
@@ -169,17 +145,6 @@ public class WebAppInterface {
         onUi(MainActivity::hardReload);
     }
 
-    @JavascriptInterface
-    public void sleepFired() {
-        main.post(SleepTimer::onEndOfVideoFired);
-    }
-
-    /** "After N videos" sleep mode: a video played to its end (16). */
-    @JavascriptInterface
-    public void videoEnded(final String videoId) {
-        main.post(SleepTimer::onVideoEnded);
-    }
-
     /** Metered network (mobile data): default quality "Wi-Fi best, mobile 720p" (29). */
     @JavascriptInterface
     public boolean isMetered() {
@@ -214,7 +179,7 @@ public class WebAppInterface {
                 .apply();
     }
 
-    /** Native playback tools sheet (sleep, black screen, touch lock, speed, loop...). */
+    /** Native playback tools sheet (speed, loop, -10 / +30 s, black screen, touch lock). */
     @JavascriptInterface
     public void openTools() {
         if (!allowed("openTools")) return;

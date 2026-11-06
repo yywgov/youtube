@@ -13,35 +13,6 @@ import java.util.Map;
 /** v1.7.0 (batch 5): plain-Java logic behind the new behaviour. */
 public class Batch5Test {
 
-    /** 307: the night window wraps past midnight; the early hours belong to the evening before. */
-    @Test public void nightWindow() {
-        assertTrue(Logic.inNight(22, 22, 5));
-        assertTrue(Logic.inNight(23, 22, 5));
-        assertTrue(Logic.inNight(0, 22, 5));
-        assertTrue(Logic.inNight(4, 22, 5));
-        assertFalse(Logic.inNight(5, 22, 5));
-        assertFalse(Logic.inNight(12, 22, 5));
-        assertFalse(Logic.inNight(21, 22, 5));
-        assertTrue(Logic.inNight(1, 0, 6));      // not wrapping
-        assertFalse(Logic.inNight(6, 0, 6));
-        assertFalse(Logic.inNight(3, 4, 4));     // empty window
-        assertTrue(Logic.nightBelongsToYesterday(2, 22, 5));
-        assertFalse(Logic.nightBelongsToYesterday(23, 22, 5));
-        assertFalse(Logic.nightBelongsToYesterday(2, 0, 6));
-        assertEquals("22:00–5:00", PrefsModel.nightLabel(22, 5));
-    }
-
-    /** 277: only while playing, no timer, guard on, after the full 3 h. */
-    @Test public void inactivityGuard() {
-        long h3 = 3 * 3600_000L, t0 = 1_000L;
-        assertTrue(Logic.idleDue(true, true, false, t0, t0 + h3, h3));
-        assertFalse(Logic.idleDue(true, true, false, t0, t0 + h3 - 1, h3));
-        assertFalse(Logic.idleDue(false, true, false, t0, t0 + h3, h3));   // switched off
-        assertFalse(Logic.idleDue(true, false, false, t0, t0 + h3, h3));   // paused
-        assertFalse(Logic.idleDue(true, true, true, t0, t0 + h3, h3));     // a timer runs already
-        assertFalse(Logic.idleDue(true, true, false, 0, t0 + h3, h3));     // no input recorded yet
-    }
-
     /** 410: the SponsorBlock lookup sends 4 hex digits of sha256(videoId), never the id. */
     @Test public void sponsorBlockPrefix() {
         String p = Logic.sbPrefix("dQw4w9WgXcQ");

@@ -390,14 +390,6 @@ test('maxres thumbnails swapped for hqdefault', async () => {
 });
 
 /* ---------- existing behaviour still intact ---------- */
-test('sleep timer "end of video" still fires', async () => {
-  const env = await setupWatch({ cfg: { stopAtEnd: true } });
-  const { w, v, calls } = env;
-  fakeMedia(v, { duration: 100, currentTime: 99.5 });
-  fire(w, v, 'timeupdate');
-  assert.ok(calls.some((c) => c[0] === 'sleepFired'));
-});
-
 test('memory trim keeps the current video length', async () => {
   const env = await setupWatch();
   env.w.JSON.parse(JSON.stringify(playerResponse()));

@@ -8,7 +8,6 @@
   /** Preferred foreground quality name for the player, or 'auto'. */
   var QORDER = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'highres'];
   function prefQuality() {
-    if (sleepMode) return 'tiny';                       // one-tap sleep mode (97)
     var q = cfg.quality || 'auto';
     q = q === 'wifiMax' ? (metered() ? 'hd720' : 'highres') : (QMAP[q] || 'auto');
     // battery saver (147): at most 480p
@@ -47,7 +46,7 @@
   }
   /* the phone moved to another network (314): "Wi-Fi best, mobile 720p" is decided again */
   var netChanged = guard('net-change', function () {
-    if (cfg.quality !== 'wifiMax' || !isWatch() || bg || sleepMode) return;
+    if (cfg.quality !== 'wifiMax' || !isWatch() || bg) return;
     qualityFor = '';
     applyQuality();
   });

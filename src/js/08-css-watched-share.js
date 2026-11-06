@@ -34,7 +34,6 @@
     setAttr('data-ytl-lowmotion', cfg.lowMotion ? '1' : '');
     setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
     setAttr('data-ytl-nomix', cfg.hideSearchMix ? '1' : '');            // (333)
-    setAttr('data-ytl-sleepmode', sleepMode ? '1' : '');                // (340)
     var gear = document.getElementById('ytl-gear');
     if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';
@@ -49,7 +48,6 @@
     if (document.documentElement) markWatched();
     autonavFor = '';
     if (started) {   // the helpers below are defined further down; first run is at start-up
-      updateBadge();
       reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
     }

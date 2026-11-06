@@ -19,43 +19,7 @@ async function setupWatch(opts) {
   return env;
 }
 
-/* 298: fade curve */
-test('sleep fade is (left / fade)²: audible from the start, no cliff at the end', async () => {
-  const { w } = await load({ path: '/' });
-  const f = w.ytl._.fadeVolume;
-  assert.equal(f(60, 60), 1);
-  assert.equal(f(90, 60), 1);
-  assert.equal(f(0, 60), 0);
-  assert.ok(Math.abs(f(30, 60) - 0.25) < 1e-9, 'half way already at a quarter');
-  assert.ok(f(54, 60) < 0.85, 'first 10 % of the fade is clearly quieter');
-  let prev = 1;
-  for (let s = 59; s >= 0; s--) { const x = f(s, 60); assert.ok(x <= prev); prev = x; }
-});
-
-/* 312: loop + "after N videos" */
-test('single-video loop: every repeat counts for an "after N videos" timer, last one then stops', async () => {
-  const env = await setupWatch({ cfg: { countMode: true } });
-  const { w, v, calls } = env;
-  const st = fakeMedia(v, { duration: 100, currentTime: 10 });
-  fire(w, v, 'loadedmetadata');
-  w.ytl.loop(true);
-  st.currentTime = 99.7;
-  fire(w, v, 'timeupdate');
-  assert.equal(st.currentTime, 0, 'looped');
-  const ended = calls.filter((c) => c[0] === 'videoEnded');
-  assert.equal(ended.length, 1);
-  assert.ok(/#1$/.test(ended[0][1]), 'each round has its own id: ' + ended[0][1]);
-  // Java: last one reached -> stopAtEndNext; inside a loop the repeat now playing is the last
-  w.ytl.countMode(false);
-  w.ytl.stopAtEndNext();
-  assert.equal(w.ytl._.stopAtEnd(), true);
-  st.currentTime = 99.7;
-  fire(w, v, 'timeupdate');
-  assert.notEqual(st.currentTime, 0, 'no more looping once the timer wants to stop');
-  assert.ok(calls.some((c) => c[0] === 'sleepFired'), 'paused at the end');
-});
-
-test('without a count timer a loop round is not reported', async () => {
+test('single-video loop starts over and reports nothing to Java', async () => {
   const plain = await setupWatch();
   const st2 = fakeMedia(plain.v, { duration: 100, currentTime: 99.8 });
   fire(plain.w, plain.v, 'loadedmetadata');

@@ -5,18 +5,6 @@ public final class Logic {
     private Logic() {}
 
     /**
-     * Fade-out volume for the sleep timer (298): (left / fade)², so the drop is audible from the
-     * start of the fade and the last seconds don't fall off a cliff. 1 before the fade, 0 at the end.
-     */
-    public static double fadeVolume(double left, double fade) {
-        if (!(fade > 0)) return left > 0 ? 1 : 0;
-        double x = left / fade;
-        if (x >= 1) return 1;
-        if (x <= 0) return 0;
-        return x * x;
-    }
-
-    /**
      * Semantic-ish comparison: numeric dotted core, then a pre-release suffix
      * ("1.1.0-dev.12") sorts before the plain release ("1.1.0"). Leading v ignored.
      */
@@ -79,25 +67,6 @@ public final class Logic {
         if (!m.find()) return false;
         String h = m.group(1).toLowerCase(java.util.Locale.ROOT);
         return h.equals("youtube.com") || h.endsWith(".youtube.com");
-    }
-
-    /** Night window (307): hours [start, end) on a 24 h clock, wrapping past midnight (22–5). */
-    public static boolean inNight(int hour, int start, int end) {
-        if (start == end) return false;
-        return start < end ? hour >= start && hour < end : hour >= start || hour < end;
-    }
-
-    /** The night a time belongs to (307): before the window's end it is still the previous evening's. */
-    public static boolean nightBelongsToYesterday(int hour, int start, int end) {
-        return start > end && hour < end;
-    }
-
-    /**
-     * Inactivity guard (277): playing, no sleep timer, the guard on, and no touch / key / media
-     * button for {@code limitMs}.
-     */
-    public static boolean idleDue(boolean enabled, boolean playing, boolean timerActive, long lastInputMs, long nowMs, long limitMs) {
-        return enabled && playing && !timerActive && lastInputMs > 0 && nowMs - lastInputMs >= limitMs;
     }
 
     /** SponsorBlock privacy lookup (410): first 4 hex digits of sha256(videoId). */
@@ -166,28 +135,6 @@ public final class Logic {
             if (k.startsWith(p) || p.startsWith(k)) return false;
         }
         return true;
-    }
-
-    /** Result line of the smoothness self test (268). */
-    public static String smoothSummary(long frames, long janky, long longestMs, float hz) {
-        if (frames <= 0) return "没有记录到帧";
-        double pct = janky * 100.0 / frames;
-        return String.format(java.util.Locale.ROOT, "%d 帧（屏幕 %.0f Hz），掉帧 %d 次（%.1f%%），最长一帧 %d ms", frames, hz, janky, pct, longestMs);
-    }
-
-    /** Sleep badge for a minutes timer (308): minutes, and in the last minute seconds in steps of 5. */
-    public static String sleepBadge(long leftMs) {
-        if (leftMs < 60_000L) {
-            long s = Math.max(5L, ((Math.max(0L, leftMs) + 4_999L) / 5_000L) * 5L);
-            return "睡眠 · " + Math.min(60L, s) + " 秒";
-        }
-        return "睡眠 · " + ((leftMs + 59_999L) / 60_000L) + " 分";
-    }
-
-    /** One night of the sleep log (276), e.g. "播放 3 小时 10 分，耗电 9%". */
-    public static String nightSummary(long minutes, int drop) {
-        String t = minutes >= 60 ? (minutes / 60) + " 小时 " + (minutes % 60) + " 分" : minutes + " 分钟";
-        return "播放 " + t + "，耗电 " + Math.max(0, drop) + "%";
     }
 
     /** Refresh-rate samples while scrolling (391): mostly below the panel's best = held back. */

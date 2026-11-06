@@ -41,16 +41,13 @@
   var cfg = {
     sponsorBlock: true, hideWatched: true, perfCss: true,
     // batch 2 (v1.3.0) – every one has a safe default that keeps the old behaviour
-    fadeSec: 60,            // sleep fade length (13)
     nextSource: 'rec',      // what plays next: rec | channel | playlist (22)
-    sleepCalm: false,       // while a sleep timer runs: same channel / playlist only (21)
     resumeLocal: true,      // signed out: remember where each video was left (28)
     quality: 'auto',        // auto | wifiMax | 1080 | 720 | 480 (29)
     rememberRate: false, rate: 1,   // (30)
     captions: 'yt',         // yt | off | zh | zhHans | zhHant | en (31/341)
     origAudio: true,        // prefer the original audio track over auto-dubs (32)
     noEndWall: true,        // no recommendation wall when a video ends (36)
-    sleepBadge: true,       // sleep time left in the player corner (154)
     subSize: 'default', subBg: 'default',  // caption style (155)
     // batch 3 (v1.4.0) – lists, look, interaction; defaults keep the old behaviour
     seenMin: 80,            // "watched" threshold for hiding on home (62)
@@ -83,17 +80,15 @@
     hideWatchedRelated: false, // related videos under the player also hide watched ones (327)
     hideSearchMix: false,   // search results: no auto-generated mixes (333)
     lightRefresh: false,    // refresh keeps the service worker / static caches (316, experimental)
-    listEndNext: false,     // a playlist played to its end goes on with a recommendation (313)
-    sleepStrict: false      // sleeping with the same-channel rule: stop when there is none (315)
-    // removed in v1.10 (personal-use trim, 454): landscape (387)
+    listEndNext: false      // a playlist played to its end goes on with a recommendation (313)
+    // removed in v1.10 (personal-use trim, 454): landscape (387); in v1.15 the whole sleep timer,
+    // the background low quality, backups and "prefer the original audio" as a switch (always on)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
   var bg = false;            // app in background / screen off (told by Java)
-  var userPaused = false;    // pause requested by user / timer / noisy
+  var userPaused = false;    // pause requested by the user / headphones unplugged
   var lastInput = 0;         // last touch time
-  var stopAtEnd = false;     // sleep timer "end of current video"
-  var savedVolume = -1;
   var segments = [];         // SponsorBlock [[start,end,category],...]
   var segSkipped = {};       // segment index -> true once undone (never skip it again for this video)
   var segFor = '';
@@ -105,17 +100,9 @@
   var autonavFor = '';
   var adMuted = false;
   var adRate = 0;
-  var sleeping = false;       // any sleep timer running (21)
-  var countMode = false;     // sleep timer "after N videos": report each finished video (16)
-  var badgeText = '';        // sleep time left shown on the player (154)
-  // state Java still holds when this document is (re)loaded: sleep timer mode, background
-  if (cfg.stopAtEnd) stopAtEnd = true;
+  // state Java still holds when this document is (re)loaded: app in the background / screen off
   if (cfg.bg) bg = true;
-  if (cfg.sleeping) sleeping = true;
-  if (cfg.countMode) countMode = true;
-  if (cfg.badge) badgeText = String(cfg.badge);
-  delete cfg.stopAtEnd; delete cfg.bg; delete cfg.sleeping; delete cfg.countMode; delete cfg.badge;
-  var sleepMode = !!cfg.sleepMode; delete cfg.sleepMode;   // one-tap sleep mode (97)
+  delete cfg.bg;
   // ad keys shared with the native watch-page filter (279): assets/adkeys.json, handed over by getConfig
   var extraAdKeys = Array.isArray(cfg.adKeys) ? cfg.adKeys.filter(function (k) { return typeof k === 'string' && /^[A-Za-z][A-Za-z0-9]{2,40}$/.test(k); }) : [];
   delete cfg.adKeys;

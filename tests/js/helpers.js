@@ -27,15 +27,14 @@ async function load(opts) {
     log: rec('log'), logAd: rec('logAd'), toast: rec('toast'), setAtTop: rec('setAtTop'),
     openSettings: rec('openSettings'), mediaState: rec('mediaState'), mediaMeta: rec('mediaMeta'),
     fetchSegments: rec('fetchSegments'), setPortrait: rec('setPortrait'), hardReload: rec('hardReload'),
-    sleepFired: rec('sleepFired'), saveRate: rec('saveRate'), savePos: rec('savePos'), videoEnded: rec('videoEnded'),
+    saveRate: rec('saveRate'), savePos: rec('savePos'),
     openTools: rec('openTools'), isMetered: () => !!opts.metered,
     cardMenu: rec('cardMenu'), showKeyboard: rec('showKeyboard'), pageTheme: rec('pageTheme'),
     getRemoteRules: () => (opts.remote ? JSON.stringify(opts.remote) : ''),
     confirmRefresh: rec('confirmRefresh'), loginChanged: rec('loginChanged'), isOnline: () => opts.online !== false,
     netStalled: rec('netStalled'), selfCheckFailed: rec('selfCheckFailed'),
     // batch 6
-    mediaLive: rec('mediaLive'), loginState: rec('loginState'), loginHint: rec('loginHint'), toastFail: rec('toastFail'),
-    sleepBadgeTap: rec('sleepBadgeTap'), sleepBadgeLong: rec('sleepBadgeLong')
+    mediaLive: rec('mediaLive'), loginState: rec('loginState'), loginHint: rec('loginHint'), toastFail: rec('toastFail')
   };
   w.HTMLMediaElement.prototype.pause = function () {};
   w.HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };

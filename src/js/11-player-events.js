@@ -9,22 +9,13 @@
   var unmutedFor = '';
   var lateNavFor = '';
 
-  var pendingStop = false;    // sleep "after N videos": stop at the end of the next video (16)
   var bgFallbacks = 0;
-  var endedFor = '';
-  var curProgress = 0;        // share of the current video played, for "after N videos" (301)
-  var countedOnChange = 0;
   function onVideoChange() {
     var id = videoId();
     if (!id || id === curId) return;
     var had = !!curId;
-    // "after N videos" (301): moving on by hand, a SponsorBlock jump to the end or YouTube switching
-    // early still counts the previous video when more than 90 % of it was played
-    if (had && countMode && endedFor !== curId && curProgress >= 0.9) { endedFor = curId; countedOnChange = Date.now(); call('videoEnded', curId); }
-    curProgress = 0;
     curId = id;
     if (had) loopOne = false;
-    if (pendingStop) { pendingStop = false; stopAtEnd = true; }
     lastMetaKey = '';
     stalled = false;
     netTries = 0;
@@ -130,16 +121,14 @@
     }
     if (adNow()) return;
     // single-video loop (152): start over instead of moving on
-    if (loopOne && !stopAtEnd && !userPaused) {
+    if (loopOne && !userPaused) {
       v.currentTime = 0;
       play();
-      loopWrapped();
       return;
     }
-    if (countMode && endedFor !== id) { endedFor = id; call('videoEnded', id); }
-    if (stopAtEnd || userPaused) return;
+    if (userPaused) return;
     // "Continue watching?" can come up at the end instead of the next video (446)
-    setTimeout(function () { if (!userPaused && !stopAtEnd) dismissStillWatching(true); }, 1200);
+    setTimeout(function () { if (!userPaused) dismissStillWatching(true); }, 1200);
     clearTimeout(endTimer);
     var mode = ruleMode();
     // recommended, but the autoplay target was already watched (311): pick the first unwatched one
@@ -175,22 +164,10 @@
     sbTick(v, now);
     loopTick(v);
     posTick(v, now, false);
-    if (isFinite(v.duration) && v.duration > 0 && !adNow()) curProgress = Math.max(curProgress, (v.currentTime || 0) / v.duration);
     // 20 s before the end (445): the related list is there by now, so the autoplay switch is decided
     // again (with the screen off the DOM pass that does this is not running)
     if (lateNavFor !== curId && isFinite(v.duration) && v.duration > 40 && v.duration - v.currentTime <= 20 && !adNow()) {
       lateNavFor = curId; autonavFor = ''; forceAutonav();
-    }
-    // sleep timer: end of current video (fade over the last N s, then pause)
-    if (stopAtEnd && isFinite(v.duration) && v.duration > 0) {
-      var left = v.duration - v.currentTime;
-      var F = Math.max(5, Math.min(120, Number(cfg.fadeSec) || 60));
-      if (left <= F) setVolume(fadeVolume(left - 1, F - 1));
-      if (left <= 1.2) {
-        stopAtEnd = false;
-        sleepPause();
-        call('sleepFired');
-      }
     }
   });
 

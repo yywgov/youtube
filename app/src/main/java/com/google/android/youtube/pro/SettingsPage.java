@@ -45,11 +45,11 @@ public class SettingsPage {
         page(a.getString(R.string.app_name) + " 设置", box -> {
             statusCard(box);
             LinearLayout q = card(box);
-            q.addView(row(SEARCH_TITLE, "输入关键字，直接跳到那一项（如：字幕、定时、屏蔽）", v -> searchPage()));   // (442)
+            q.addView(row(SEARCH_TITLE, "输入关键字，直接跳到那一项（如：字幕、续播、屏蔽）", v -> searchPage()));   // (442)
             LinearLayout c = card(box);
             // a line icon per group (359), same family as the app icon
             c.addView(nav(R.drawable.ic_set_play, "播放", "画质、声音与速度、续播提示、字幕、SponsorBlock", this::playPage));
-            c.addView(nav(R.drawable.ic_moon_white, "后台与睡眠", "保活、睡眠定时、接下来播放、通知栏与耳机", this::sleepPage));
+            c.addView(nav(R.drawable.ic_set_bg, "后台播放", "接下来播放、通知栏与耳机", this::bgPage));
             c.addView(nav(R.drawable.ic_set_home, "首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
             c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、字号、轻震、列表样式、滑动流畅度", this::lookPage));
             c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "更新、备份与恢复、关于与诊断", this::dataPage));
@@ -191,19 +191,12 @@ public class SettingsPage {
                 .show();
     }
 
-    // ===================== 2. 后台与睡眠 =====================
+    // ===================== 2. 后台播放 =====================
 
-    private void sleepPage() {
-        page("后台与睡眠", box -> {
-            LinearLayout k = card(box, "后台保活（息屏续播必需）");
-            k.addView(dyn("保活状态", this::keepAliveLabel, v -> keepAliveSheet()));
-            LinearLayout c = card(box, "睡眠定时");
-            c.addView(dyn("默认时长", this::sleepDefaultLabel, v -> pickSleepDefault()));
-            // fade, extend step, pause-holds-timer, corner badge and one-tap black screen share one row (474)
-            c.addView(dyn("定时细节", this::sleepDetailLabel, v -> pickSleepDetails()));
-            // night window + night prompt in one row (456)
-            c.addView(dyn("夜间打开时提示开睡眠定时", this::nightPromptLabel, v -> pickNightPrompt()));
-            c.addView(toggle("无操作保护", "连续 3 小时没碰手机、没按耳机键又没开定时，自动开 30 分钟睡眠定时", Prefs.IDLE_GUARD));
+    /* The sleep timer and everything around it (timer details, night prompt, inactivity guard, one-tap
+     * sleep mode) were removed in v1.15; their keys keep their stored values and are never read. */
+    private void bgPage() {
+        page("后台播放", box -> {
             LinearLayout n = card(box, "续播");
             n.addView(dyn("接下来播放", this::nextLabel, v -> pickNext()));
             LinearLayout h = card(box, "通知栏与耳机");
@@ -211,48 +204,6 @@ public class SettingsPage {
             h.addView(dyn("通知栏按钮与耳机", () -> PrefsModel.notifLayout(Prefs.on(a, Prefs.NOTIF_SEEK), Prefs.on(a, Prefs.NOTIF_WL))
                     + (Prefs.on(a, Prefs.HEADSET_MULTI) ? " · 耳机多击" : " · 耳机多击已关"), v -> pickNotif()));
         });
-    }
-
-    private String sleepDetailLabel() {
-        return PrefsModel.sleepDetailLabel(Prefs.get(a).getInt(Prefs.SLEEP_FADE, 60), Prefs.get(a).getInt(Prefs.EXTEND_STEP, 15),
-                Prefs.on(a, Prefs.SLEEP_HOLD), Prefs.on(a, Prefs.SLEEP_BADGE), Prefs.on(a, Prefs.SLEEP_MODE_BLACK));
-    }
-
-    private static final int[] FADE_VALUES = {10, 30, 60};
-    private static final int[] STEP_VALUES = {10, 15, 30};
-
-    private static int indexOf(int[] v, int x, int def) {
-        for (int i = 0; i < v.length; i++) if (v[i] == x) return i;
-        return def;
-    }
-
-    /** Timer details (474): five rows that were always changed once and left alone, in one sheet. Keys unchanged. */
-    private void pickSleepDetails() {
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
-        box.addView(Ui.title(a, "淡出时长（到点前音量逐渐变小）"));
-        final android.widget.RadioGroup g1 = radios(box, new String[]{"10 秒", "30 秒", "60 秒"}, indexOf(FADE_VALUES, Prefs.get(a).getInt(Prefs.SLEEP_FADE, 60), 2));
-        box.addView(Ui.title(a, "延长按钮（通知栏、锁屏、角标上的「+N 分钟」）"));
-        final android.widget.RadioGroup g2 = radios(box, new String[]{"+10 分钟", "+15 分钟", "+30 分钟"}, indexOf(STEP_VALUES, Prefs.get(a).getInt(Prefs.EXTEND_STEP, 15), 1));
-        final android.widget.CheckBox hold = check(box, "暂停时定时也暂停（继续播放后接着倒数）", Prefs.on(a, Prefs.SLEEP_HOLD));
-        final android.widget.CheckBox badge = check(box, "播放器左上角显示剩余时间（点一下延长，长按改时长）", Prefs.on(a, Prefs.SLEEP_BADGE));
-        final android.widget.CheckBox black = check(box, "一键睡眠模式 10 秒后黑屏（双击恢复）", Prefs.on(a, Prefs.SLEEP_MODE_BLACK));
-        ScrollView sv = new ScrollView(a);
-        sv.addView(box);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("定时细节")
-                .setView(sv)
-                .setPositiveButton("确定", (d, w) -> {
-                    Prefs.put(a, Prefs.SLEEP_FADE, FADE_VALUES[Math.max(0, checkedIndex(g1))]);
-                    Prefs.put(a, Prefs.EXTEND_STEP, STEP_VALUES[Math.max(0, checkedIndex(g2))]);
-                    Prefs.put(a, Prefs.SLEEP_HOLD, hold.isChecked());
-                    Prefs.put(a, Prefs.SLEEP_BADGE, badge.isChecked());
-                    Prefs.put(a, Prefs.SLEEP_MODE_BLACK, black.isChecked());
-                    applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
     }
 
     private android.widget.CheckBox check(LinearLayout parent, String text, boolean on) {
@@ -340,7 +291,7 @@ public class SettingsPage {
         page(SEARCH_TITLE, box -> {
             final EditText in = new EditText(a);
             in.setSingleLine(true);
-            in.setHint("例如：字幕、定时、屏蔽、画质");
+            in.setHint("例如：字幕、续播、屏蔽、画质");
             in.setHintTextColor(Ui.HINT);
             in.setTextColor(Ui.TEXT);
             in.setBackground(Ui.round(Ui.SURFACE, dp(Ui.RADIUS_DP)));
@@ -420,60 +371,6 @@ public class SettingsPage {
         d[0].show();
     }
 
-    /** Merged default length (228): "same as the last one started" (sleepRemember) or a fixed mode. */
-    private String sleepDefaultLabel() {
-        int def = Prefs.sleepDefault(a);
-        if (PrefsModel.sleepChoice(Prefs.sleepRemember(a), def) == PrefsModel.SLEEP_CHOICE_LAST) {
-            return "沿用上次开启的（当前 " + SleepTimer.optionLabel(def) + "）· 通知栏按钮和一键睡眠模式用";
-        }
-        return SleepTimer.optionLabel(def) + " · 通知栏按钮和一键睡眠模式用";
-    }
-
-    private void pickSleepDefault() {
-        final int[] opts = SleepTimer.OPTIONS;
-        String[] labels = new String[opts.length + 1];
-        labels[0] = "沿用上次开启的";
-        for (int i = 0; i < opts.length; i++) labels[i + 1] = SleepTimer.optionLabel(opts[i]);
-        int cur = PrefsModel.sleepChoice(Prefs.sleepRemember(a), Prefs.sleepDefault(a));
-        int sel = cur == PrefsModel.SLEEP_CHOICE_LAST ? 0 : -1;
-        for (int i = 0; i < opts.length; i++) if (opts[i] == cur) sel = i + 1;
-        radio("默认时长", labels, sel, which -> {
-            Prefs.PrefStore s = new Prefs.PrefStore(Prefs.get(a));
-            PrefsModel.writeSleepChoice(s, which == 0 ? PrefsModel.SLEEP_CHOICE_LAST : opts[which - 1]);
-            s.apply();
-            applied();
-        });
-    }
-
-    private String nightPromptLabel() {
-        String w = PrefsModel.nightLabel(Prefs.num(a, Prefs.NIGHT_START), Prefs.num(a, Prefs.NIGHT_END));
-        return Prefs.on(a, Prefs.NIGHT_PROMPT) ? "开 · " + w + " · 每晚最多一次" : "关";
-    }
-
-    /** One sheet (456): off / on with the current window / on and change the window. */
-    private void pickNightPrompt() {
-        String w = PrefsModel.nightLabel(Prefs.num(a, Prefs.NIGHT_START), Prefs.num(a, Prefs.NIGHT_END));
-        radio("夜间打开时提示", new String[]{"不提示", "提示（" + w + "）", "提示，并修改时段"}, Prefs.on(a, Prefs.NIGHT_PROMPT) ? 1 : 0, which -> {
-            Prefs.put(a, Prefs.NIGHT_PROMPT, which > 0);
-            applied();
-            if (which == 2) pickNight();
-        });
-    }
-
-    /** Night window (307): start and end hour, one sheet each. */
-    private void pickNight() {
-        final String[] hours = new String[24];
-        for (int i = 0; i < 24; i++) hours[i] = i + ":00";
-        radio("夜间从几点开始", hours, Prefs.num(a, Prefs.NIGHT_START), start -> {
-            radio("到几点结束", hours, Prefs.num(a, Prefs.NIGHT_END), end -> {
-                if (start == end) { toastShort("开始和结束不能相同"); return; }
-                Prefs.put(a, Prefs.NIGHT_START, start);
-                Prefs.put(a, Prefs.NIGHT_END, end);
-                applied();
-            });
-        });
-    }
-
     private static final String[] NEXT_VALUES = {"rec", "channel", "playlist"};
     private static final String[] NEXT_LABELS = {"YouTube 推荐", "优先同频道", "只在播放列表内"};
 
@@ -481,16 +378,14 @@ public class SettingsPage {
         return "平时：" + pick(NEXT_VALUES, NEXT_LABELS, Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))
                 + (Prefs.on(a, Prefs.SKIP_WATCHED_NEXT) && "rec".equals(Prefs.str(a, Prefs.NEXT_SOURCE, "rec")) ? "（跳过看过的）" : "")
                 + (Prefs.on(a, Prefs.LIST_END_NEXT) ? " · 列表播完接推荐" : "")
-                + " · 睡眠时：" + (Prefs.on(a, Prefs.SLEEP_CALM) ? (Prefs.on(a, Prefs.SLEEP_STRICT) ? "只同频道（没有就停）" : "同频道/列表") : "跟随平时")
-                + " · 一键睡眠模式总是同频道";
+                + " · 屏蔽的频道和本地隐藏的视频不会被自动播放";
     }
 
-    /** Next video (231): "usual" -> nextSource, "while a sleep timer runs" -> sleepCalm. */
+    /** Next video (231): nextSource + its two options; sleepCalm / sleepStrict went with the sleep timer (v1.15). */
     private void pickNext() {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(4), dp(20), 0);
-        box.addView(Ui.title(a, "平时"));
         final android.widget.RadioGroup g1 = radios(box, NEXT_LABELS, Math.max(0, java.util.Arrays.asList(NEXT_VALUES).indexOf(Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))));
         // (311) off by default: recommended autoplay skips a target already watched
         final android.widget.CheckBox skip = new android.widget.CheckBox(a);
@@ -500,15 +395,11 @@ public class SettingsPage {
         box.addView(skip);
         // (313) off by default: a playlist played to its end goes on with a recommendation
         final android.widget.CheckBox listEnd = new android.widget.CheckBox(a);
-        listEnd.setText("播放列表播完后接 YouTube 推荐（睡眠定时中总是停止）");
+        listEnd.setText("播放列表播完后接 YouTube 推荐");
         listEnd.setTextColor(Ui.TEXT);
         listEnd.setChecked(Prefs.on(a, Prefs.LIST_END_NEXT));
         box.addView(listEnd);
-        box.addView(Ui.title(a, "睡眠定时中"));
-        // (315) third option: same channel only, the timer ends when there is none
-        final android.widget.RadioGroup g2 = radios(box, new String[]{"跟随平时", "优先同频道 / 列表（找不到时照常推荐）", "只同频道 / 列表（找不到就停止并结束定时）"},
-                Prefs.on(a, Prefs.SLEEP_CALM) ? (Prefs.on(a, Prefs.SLEEP_STRICT) ? 2 : 1) : 0);
-        TextView note = Ui.text(a, "默认用 YouTube 自动播放；其他选项会关掉它由本 App 选。一键睡眠模式总是同频道。", 13, Ui.TEXT_2);
+        TextView note = Ui.text(a, "默认用 YouTube 自动播放；其他选项会关掉它由本 App 选。", 13, Ui.TEXT_2);
         note.setPadding(0, dp(8), 0, 0);
         box.addView(note);
         ScrollView sv = new ScrollView(a);
@@ -518,9 +409,6 @@ public class SettingsPage {
                 .setView(sv)
                 .setPositiveButton("确定", (d, w) -> {
                     Prefs.put(a, Prefs.NEXT_SOURCE, NEXT_VALUES[Math.max(0, checkedIndex(g1))]);
-                    int sl = checkedIndex(g2);
-                    Prefs.put(a, Prefs.SLEEP_CALM, sl >= 1);
-                    Prefs.put(a, Prefs.SLEEP_STRICT, sl == 2);
                     Prefs.put(a, Prefs.SKIP_WATCHED_NEXT, skip.isChecked());
                     Prefs.put(a, Prefs.LIST_END_NEXT, listEnd.isChecked());
                     applied();
@@ -536,11 +424,11 @@ public class SettingsPage {
         box.setPadding(dp(20), dp(4), dp(20), 0);
         box.addView(Ui.title(a, "左右两个键"));
         final android.widget.RadioGroup g1 = radios(box, new String[]{"上一个 / 下一个", "快退 10 秒 / 快进 30 秒"}, Prefs.on(a, Prefs.NOTIF_SEEK) ? 1 : 0);
-        box.addView(Ui.title(a, "第五个键"));
+        box.addView(Ui.title(a, "第四个键"));
         final android.widget.RadioGroup g2 = radios(box, new String[]{"稍后观看（需登录）", "不显示"}, Prefs.on(a, Prefs.NOTIF_WL) ? 0 : 1);
         box.addView(Ui.title(a, "耳机"));
         final android.widget.CheckBox multi = check(box, "耳机按键多击：一下暂停/播放，两下下一个，三下上一个", Prefs.on(a, Prefs.HEADSET_MULTI));
-        TextView note = Ui.text(a, "睡眠定时中第五键让位给「+" + SleepTimer.extendMin(a) + " 分钟」；暂停时第五键是「关闭」；未登录时不显示「稍后观看」。Android 13+ 的锁屏/下拉媒体卡片同样生效。", 13, Ui.TEXT_2);
+        TextView note = Ui.text(a, "暂停时第四个键是「关闭」；未登录时不显示「稍后观看」。Android 13+ 的锁屏/下拉媒体卡片同样生效。", 13, Ui.TEXT_2);
         note.setPadding(0, dp(8), 0, 0);
         box.addView(note);
         ScrollView sv = new ScrollView(a);
@@ -850,10 +738,6 @@ public class SettingsPage {
             } else {
                 c.addView(row("屏幕刷新率", a.refreshRateLabel(), null));
             }
-            c.addView(dyn("睡眠定时耗电", () -> {
-                String n = NightLog.last(a);
-                return n.isEmpty() ? "开睡眠定时睡一晚后显示（充电中或不到 10 分钟的不记）" : n;
-            }, null));
             LinearLayout r = card(box, "问题与日志");
             r.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
             r.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));

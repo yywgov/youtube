@@ -1,4 +1,4 @@
-  /* ---------- 3. commands from Java (notification / headset / timer) ---------- */
+  /* ---------- 3. commands from Java (notification / headset / media keys) ---------- */
   function play() {
     userPaused = false;
     if (handlers.play) { try { handlers.play(); return; } catch (e) {} }
@@ -26,46 +26,6 @@
     var t = Number(ms) / 1000;
     if (handlers.seekto) { try { handlers.seekto({ seekTime: t, action: 'seekto' }); return; } catch (e) {} }
     var v = video(); if (v) v.currentTime = t;
-  }
-  function setVolume(x) {
-    var v = video(); if (!v) return;
-    if (savedVolume < 0) savedVolume = v.volume || 1;
-    v.volume = Math.max(0, Math.min(1, x)) * savedVolume;
-  }
-  function restoreVolume() {
-    fadeStop();
-    var v = video();
-    if (v && savedVolume >= 0) v.volume = savedVolume;
-    savedVolume = -1;
-  }
-  /* Sleep fade driven here (299): Java says once "the fade ends in leftMs, it lasts fadeMs" and the
-   * page steps the volume every 250 ms on that curve (setTimeout: rAF does not run with the screen
-   * off). Java sends it again every few seconds, which also covers a reload in the middle. */
-  var fade = { timer: 0, end: 0, len: 0 };
-  function fadeStop() { clearTimeout(fade.timer); fade.timer = 0; fade.end = 0; }
-  function fadeStep() {
-    fade.timer = 0;
-    if (!fade.end) return;
-    var left = fade.end - Date.now();
-    setVolume(fadeVolume(Math.max(0, left), fade.len));
-    if (left > 0) fade.timer = setTimeout(guard('fade', fadeStep), 250);
-  }
-  function fadeStart(leftMs, fadeMs) {
-    leftMs = Number(leftMs); fadeMs = Number(fadeMs);
-    if (!(fadeMs > 0) || !isFinite(leftMs)) return;
-    fade.end = Date.now() + Math.max(0, leftMs);
-    fade.len = fadeMs;
-    clearTimeout(fade.timer);
-    fadeStep();
-  }
-  function sleepPause() { fadeStop(); pause(); setTimeout(restoreVolume, 400); }
-  /** Sleep fade (298): (left / fade)², same curve as the Java timer (Logic.fadeVolume). */
-  function fadeVolume(left, fade) {
-    if (!(fade > 0)) return left > 0 ? 1 : 0;
-    var x = left / fade;
-    if (x >= 1) return 1;
-    if (x <= 0) return 0;
-    return x * x;
   }
 
   /* ---------- 3b. playback tools: seek by, fine speed, single-video loop (26/151/152) ---------- */
@@ -102,16 +62,10 @@
     };
   }
   function looping() { return loopOne; }
-  /** A loop came round (312): with an "after N videos" timer every repeat counts as one video. */
-  var loopRound = 0;
-  function loopWrapped() {
-    loopRound++;
-    if (countMode) call('videoEnded', curId + '#' + loopRound);
-  }
   /** Loop check on every timeupdate; jumps back before the end so YouTube never moves on. */
   function loopTick(v) {
-    if (adNow() || stopAtEnd) return;
+    if (adNow()) return;
     var t = v.currentTime || 0, rate = v.playbackRate || 1;
-    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) { v.currentTime = 0; loopWrapped(); }
+    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) v.currentTime = 0;
   }
 

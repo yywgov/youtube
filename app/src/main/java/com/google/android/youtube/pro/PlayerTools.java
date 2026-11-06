@@ -14,9 +14,10 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 /**
- * Native bottom sheet with the playback tools (moon button next to the settings gear):
- * sleep timer, black screen (157), touch lock (131), fine speed (151), single-video loop (152), -10 / +30 s.
- * A-B loop, playlist shuffle and the orientation lock were removed in v1.10 (450/451/452).
+ * Native bottom sheet with the playback tools (button next to the settings gear):
+ * -10 / +30 s, fine speed (151), single-video loop (152), black screen (157), touch lock (131).
+ * A-B loop, playlist shuffle and the orientation lock were removed in v1.10 (450/451/452), the sleep
+ * timer and everything around it in v1.15.
  */
 public final class PlayerTools {
     private final MainActivity a;
@@ -58,38 +59,6 @@ public final class PlayerTools {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, 0, 0, dp(4));
 
-        box.addView(header("睡眠"));
-        String sleep = SleepTimer.active() ? "睡眠定时：" + SleepTimer.optionLabel(SleepTimer.mode()) : "睡眠定时…";
-        box.addView(row(sleep, SleepTimer.active() ? SleepTimer.status() + " · 点此改时长或关闭" : "到点淡出后暂停", v -> {
-            dismiss();
-            pickSleep(a, "睡眠定时", m -> SleepTimer.start(a, m));
-        }));
-        // one-tap choices (443): the usual length, 30 / 60 min, end of this video; the current one is checked
-        LinearLayout quick = new LinearLayout(a);
-        quick.setOrientation(LinearLayout.HORIZONTAL);
-        quick.setPadding(dp(12), 0, dp(12), dp(4));
-        java.util.List<Integer> picks = new java.util.ArrayList<>();
-        int def = Prefs.sleepDefault(a);
-        for (int m : new int[]{def, 30, 60, SleepTimer.END_OF_VIDEO}) if (m != SleepTimer.OFF && !picks.contains(m) && picks.size() < 4) picks.add(m);
-        for (final int m : picks) {
-            String label = m == SleepTimer.END_OF_VIDEO ? "本视频后" : SleepTimer.isCount(m) ? "播完 " + SleepTimer.countOf(m) + " 个" : m + " 分";
-            boolean cur = SleepTimer.active() && SleepTimer.mode() == m;
-            Button chip = Ui.chip(a, label, v -> {
-                if (!(SleepTimer.active() && SleepTimer.mode() == m)) SleepTimer.start(a, m);
-                refresh();
-            });
-            Ui.markChip(chip, cur);
-            chip.setContentDescription("睡眠定时 " + label + (cur ? "，当前" : ""));
-            quick.addView(chip, Ui.chipWeight(a));
-        }
-        box.addView(quick);
-        if (!SleepTimer.active()) {
-            box.addView(row("一键睡眠模式", "定时 " + SleepTimer.optionLabel(Prefs.sleepDefault(a)) + " + 最低画质 + 只续播同频道 + 调暗屏幕",
-                    v -> { dismiss(); a.startSleepMode(); }));
-        }
-        box.addView(row("黑屏播放", "屏幕全黑不锁屏，OLED 几乎不耗电；双击恢复", v -> { dismiss(); a.startBlackScreen(); }));
-        box.addView(row("触控锁", "睡前看视频防误触；长按屏幕 1.5 秒解锁", v -> { dismiss(); a.startTouchLock(); }));
-
         boolean watch = st.optBoolean("watch", false);
         if (watch) {
             box.addView(header("播放"));
@@ -104,11 +73,14 @@ public final class PlayerTools {
             box.addView(row("播放速度：" + fmtRate(rate), "0.25–2 倍，每档 0.05", v -> { dismiss(); pickSpeed(rate); }));
 
             boolean loop = st.optBoolean("loop", false);
-            box.addView(row(loop ? "单曲循环：开 ✓" : "单曲循环：关", "睡前循环听同一个视频", v -> {
+            box.addView(row(loop ? "单曲循环：开 ✓" : "单曲循环：关", "反复播放当前视频", v -> {
                 MainActivity.js("ytl.loop(" + !loop + ")");
                 refresh();
             }));
         }
+        box.addView(header("屏幕"));
+        box.addView(row("黑屏播放", "屏幕全黑不锁屏，OLED 几乎不耗电；双击恢复", v -> { dismiss(); a.startBlackScreen(); }));
+        box.addView(row("触控锁", "防误触；长按屏幕 1.5 秒解锁", v -> { dismiss(); a.startTouchLock(); }));
         return box;
     }
 
@@ -140,32 +112,6 @@ public final class PlayerTools {
     }
 
     // ===================== sub dialogs =====================
-
-    public interface IntPick { void pick(int value); }
-
-    /** Sleep timer options (shared with the settings screen). */
-    public static void pickSleep(MainActivity a, String title, IntPick cb) {
-        // native bottom sheet (165)
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        TextView head = Ui.text(a, title, 18, Ui.TEXT);
-        head.setPadding(Ui.dp(a, 20), Ui.dp(a, 4), Ui.dp(a, 20), Ui.dp(a, 8));
-        box.addView(head);
-        final Dialog[] d = new Dialog[1];
-        int def = Prefs.sleepDefault(a);
-        // running timer (304): what is left, and switching it off, right here
-        boolean running = SleepTimer.active() && "睡眠定时".equals(title);
-        if (running) {
-            box.addView(Ui.sheetRow(a, R.drawable.ic_close_white, "关闭睡眠定时", SleepTimer.status(), v -> { d[0].dismiss(); SleepTimer.cancel(a); }));
-        }
-        for (final int m : SleepTimer.OPTIONS) {
-            boolean cur = running && SleepTimer.mode() == m;
-            String sub = cur ? "正在使用" + (m == def ? " · 默认" : "") : m == def ? "默认" : null;
-            box.addView(Ui.sheetRow(a, cur ? R.drawable.ic_check : 0, SleepTimer.optionLabel(m), sub, v -> { d[0].dismiss(); cb.pick(m); }));
-        }
-        d[0] = Ui.sheet(a, box);
-        d[0].show();
-    }
 
     /**
      * Speed (334): a bottom sheet like the others, common speeds as chips, the fine slider underneath.

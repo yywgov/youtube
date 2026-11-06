@@ -33,19 +33,17 @@
     segments: function () { return segments; },
     prefQuality: prefQuality, ruleMode: ruleMode, wantAutonav: wantAutonav, sameChannelLink: sameChannelLink,
     origAudio: function () { return origAudio; }, posStore: posStore, toolState: toolState,
-    stopAtEnd: function () { return stopAtEnd; },
     parseDur: parseDur, ageDays: ageDays, cardInfo: cardInfo, filterCards: filterCards, remoteSelectors: remoteSelectors,
     scrollMem: function () { return scrollMem; }, restoreScroll: restoreScroll, watchLater: watchLater, reportTheme: reportTheme,
     // batch 4 (v1.6.0)
-    fadeVolume: fadeVolume, dismissStillWatching: dismissStillWatching, checkLogin: checkLogin,
+    dismissStillWatching: dismissStillWatching, checkLogin: checkLogin,
     playingNow: playingNow, chanById: function () { return chanById; }, cfg: function () { return cfg; },
     // batch 5 (v1.7.0)
     adKeys: function () { return AD_KEYS.slice(); }, adKeysBuiltin: AD_KEYS_BUILTIN, adLabelHit: adLabelHit,
     blockEntry: blockEntry, filterReason: filterReason, newCount: newCount, homeHistory: homeHistory,
     pickCaption: pickCaption, gearLabel: gearLabel, upNextWatched: upNextWatched, firstUnwatchedLink: firstUnwatchedLink,
     fullPending: function () { return fullNeeded; }, dirtyCount: function () { return dirtyItems.length; },
-    curProgress: function () { return curProgress; }, adContext: adContext, sendMeta: function () { sendMeta(); },
-    fadeState: function () { return { end: fade.end, len: fade.len, running: !!fade.timer }; },
+    adContext: adContext, sendMeta: function () { sendMeta(); },
     // batch 6 (v1.8.0)
     wordBlocked: wordBlocked, textRe: textRe, checkEmptyFeed: checkEmptyFeed, leakScan: leakScan, quietBatch: quietBatch,
     quietSkipped: function () { return quietSkipped; }, chipList: chipList, remote: function () { return remote; },

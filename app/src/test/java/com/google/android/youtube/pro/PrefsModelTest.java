@@ -147,27 +147,6 @@ public class PrefsModelTest {
         assertEquals(PrefsModel.exportMap(v151Store()), PrefsModel.exportMap(s));
     }
 
-    /** 228: every old (sleepRemember, sleepDefault) pair reads to a choice that writes back the same meaning. */
-    @Test public void sleepDefaultMappingAllOldValues() {
-        int[] modes = {15, 30, 45, 60, 90, -1, -102, -103, -105};
-        for (boolean remember : new boolean[]{true, false}) {
-            for (int m : modes) {
-                int choice = PrefsModel.sleepChoice(remember, m);
-                assertEquals(remember ? PrefsModel.SLEEP_CHOICE_LAST : m, choice);
-                PrefsModel.MapStore s = new PrefsModel.MapStore();
-                s.put(Prefs.SLEEP_REMEMBER, remember);
-                s.put(Prefs.SLEEP_DEFAULT, m);
-                PrefsModel.writeSleepChoice(s, choice);
-                assertEquals(remember, s.get(Prefs.SLEEP_REMEMBER));
-                assertEquals(m, s.get(Prefs.SLEEP_DEFAULT));
-            }
-        }
-        PrefsModel.MapStore s = new PrefsModel.MapStore();
-        PrefsModel.writeSleepChoice(s, 45);
-        assertEquals(false, s.get(Prefs.SLEEP_REMEMBER));
-        assertEquals(45, s.get(Prefs.SLEEP_DEFAULT));
-    }
-
     /** 229: "don't hide" keeps seenMin; every old pair round-trips. */
     @Test public void watchedMappingAllOldValues() {
         for (boolean hide : new boolean[]{true, false}) {
@@ -185,8 +164,8 @@ public class PrefsModelTest {
     }
 
     @Test public void notificationLayoutSummary() {
-        assertEquals("上一个 · 播放 · 下一个 · 睡眠 · 稍后观看", PrefsModel.notifLayout(false, true));
-        assertEquals("快退 10 秒 · 播放 · 快进 30 秒 · 睡眠", PrefsModel.notifLayout(true, false));
+        assertEquals("上一个 · 播放 · 下一个 · 稍后观看", PrefsModel.notifLayout(false, true));
+        assertEquals("快退 10 秒 · 播放 · 快进 30 秒", PrefsModel.notifLayout(true, false));
     }
 
     @Test public void booleanDefaultsUnchanged() {

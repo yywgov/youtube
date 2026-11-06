@@ -84,7 +84,7 @@ public class MainActivity extends Activity {
     private Object errNetCallback;
     private long lastTrim = 0;
 
-    // batch 2: snack bar (night sleep prompt 18, resume 27), black screen (157), touch lock (131),
+    // batch 2: snack bar, black screen (157), touch lock (131),
     // orientation lock (132), double back to exit (118)
     private FrameLayout overlayRoot;
     private LinearLayout snack;
@@ -99,11 +99,8 @@ public class MainActivity extends Activity {
     private boolean coldStart = false;
 
     // batch 3
-    private static boolean sleepModeOn = false;     // one-tap sleep mode (97)
-    private float sleepModeSavedBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
     private String pageTheme = "#0f0f0f";
     private android.content.BroadcastReceiver powerReceiver;
-    public static final String ACTION_SLEEP_MODE = "com.yywgov.ytlite.SLEEP_MODE";
 
     // ===================== static helpers =====================
 
@@ -133,7 +130,6 @@ public class MainActivity extends Activity {
         Runnable r = () -> {
             MainActivity a = current.get();
             if (a == null || a.web == null) return;
-            a.unfreezeWeb();   // any command wakes a page paused after the sleep timer (273)
             a.web.evaluateJavascript("(function(){if(!window.ytl)return 0;try{" + code + "}catch(e){try{ytl.report&&ytl.report("
                     + org.json.JSONObject.quote(code.length() > 40 ? code.substring(0, 40) : code) + ",e)}catch(x){}}return 1})()", res -> {
                 if (!"0".equals(res)) return;
@@ -161,34 +157,6 @@ public class MainActivity extends Activity {
             // after the script's start-up has run
             MAIN.postDelayed(() -> { for (String c : run) js(c); }, 300);
         });
-    }
-
-    // ---- after the sleep timer stopped playback and nothing happened for 5 min (273) ----
-    private boolean webFrozen = false;
-
-    public static void freezeWeb() {
-        MainActivity a = current.get();
-        if (a == null || a.web == null || a.webFrozen || visible) return;
-        try {
-            a.web.onPause();
-            a.web.pauseTimers();
-            a.webFrozen = true;
-            Diag.log("sleep", "page timers paused 5 min after the timer ended");
-        } catch (Throwable t) {
-            Diag.log("sleep", "freeze failed: " + t);
-        }
-    }
-
-    void unfreezeWeb() {
-        if (!webFrozen || web == null) return;
-        webFrozen = false;
-        try {
-            web.resumeTimers();
-            web.onResume();
-            Diag.log("sleep", "page timers resumed");
-        } catch (Throwable t) {
-            Diag.log("sleep", "resume failed: " + t);
-        }
     }
 
     // ===================== lifecycle =====================
@@ -230,8 +198,6 @@ public class MainActivity extends Activity {
             Diag.log("renderer", "restored " + (isPlayerUrl(startUrl) ? "video" : "page"));
         }
         web.loadUrl(startUrl);
-        SleepTimer.restore(this);   // a timer the system killed with the process comes back (244)
-        if (ACTION_SLEEP_MODE.equals(getIntent().getAction())) MAIN.postDelayed(this::startSleepMode, 1500);
         registerPowerSave();
         MAIN.postDelayed(this::askPermissionsOnce, 1500);
         // the rest waits for the first page (261): one after another, a second apart
@@ -263,12 +229,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        unfreezeWeb();
         requestHighRefreshRate();
         Updater.onResume(this);
         PlaybackService.retryForeground();   // a refused foreground start gets another try now (291)
-        MAIN.removeCallbacks(nightPromptRun);
-        MAIN.postDelayed(nightPromptRun, coldStart ? 7000 : 2500);
     }
 
     @Override
@@ -310,7 +273,6 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (ACTION_SLEEP_MODE.equals(intent.getAction())) { startSleepMode(); return; }
         if (intent.getBooleanExtra(PlaybackService.EXTRA_RESUME, false)) {
             String resume = lastVideoUrl();
             if (resume != null && web != null) { web.loadUrl(resume); return; }
@@ -330,8 +292,6 @@ public class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         visible = true;
-        unfreezeWeb();
-        PlaybackService.noteInput();
         js("ytl.bg(false)");
         PlaybackService.refresh();   // Wi-Fi lock choice follows the screen (271)
     }
@@ -354,11 +314,10 @@ public class MainActivity extends Activity {
         if (current.get() == this) {
             if (isFinishing()) {
                 // the user left the app (double back / finish): everything stops as before
-                SleepTimer.cancel(null);
                 PlaybackService.stop(this);
             } else {
-                // destroyed by the system (243): don't cancel the timer or kill the service; the
-                // notification turns into "tap to continue" (the WebView itself is gone)
+                // destroyed by the system (243): don't kill the service; the notification turns into
+                // "tap to continue" (the WebView itself is gone)
                 Diag.log("lifecycle", "activity destroyed by the system, playing=" + PlaybackService.isPlaying()
                         + " config=" + isChangingConfigurations());
                 if (PlaybackService.isPlaying() && !isChangingConfigurations()) PlaybackService.onActivityGone();
@@ -366,7 +325,6 @@ public class MainActivity extends Activity {
             current = new WeakReference<>(null);
         }
         MAIN.removeCallbacks(blackWatch);
-        MAIN.removeCallbacks(nightPromptRun);
         MAIN.removeCallbacks(hideSnackRun);
         if (powerReceiver != null) { try { unregisterReceiver(powerReceiver); } catch (Exception ignored) {} powerReceiver = null; }
         unregisterErrNet();
@@ -764,43 +722,6 @@ public class MainActivity extends Activity {
         if (swipe != null) swipe.setColorSchemeColors(Ui.accent(this));
     }
 
-    // ---- smoothness self test (268): 10 s of scripted scrolling, frames counted by the Choreographer ----
-    private boolean smoothRunning = false;
-
-    public void runSmoothTest() {
-        if (smoothRunning || web == null) return;
-        evalJs("window.ytl&&ytl.selfScroll?ytl.selfScroll(10000):false", r -> {
-            if (!"true".equals(r)) { say("请在首页、订阅或搜索结果列表上运行"); return; }
-            smoothRunning = true;
-            say("流畅度自测中，10 秒内请不要触摸屏幕");
-            final float hz = Math.max(30f, getWindowManager().getDefaultDisplay().getRefreshRate());
-            final long budget = (long) (1e9 / hz);
-            final long[] st = {0, 0, 0, 0};   // last frame ns, frames, janky, longest ns
-            final long endAt = System.nanoTime() + 10_000_000_000L;
-            android.view.Choreographer.getInstance().postFrameCallback(new android.view.Choreographer.FrameCallback() {
-                @Override public void doFrame(long t) {
-                    if (st[0] > 0) {
-                        long d = t - st[0];
-                        st[1]++;
-                        if (d > budget * 3 / 2) st[2]++;
-                        if (d > st[3]) st[3] = d;
-                    }
-                    st[0] = t;
-                    if (t < endAt && !isFinishing()) android.view.Choreographer.getInstance().postFrameCallback(this);
-                    else {
-                        smoothRunning = false;
-                        String msg = Logic.smoothSummary(st[1], st[2], st[3] / 1_000_000L, hz);
-                        Diag.log("smooth", msg + " · perfCss=" + Prefs.on(MainActivity.this, Prefs.PERF_CSS)
-                                + " preRaster=" + Prefs.on(MainActivity.this, Prefs.PRE_RASTER));
-                        if (!isFinishing()) new android.app.AlertDialog.Builder(MainActivity.this, android.R.style.Theme_Material_Dialog_Alert)
-                                .setTitle("流畅度自测结果").setMessage(msg + "\n\n已写入诊断日志，可在「复制问题报告」里一起发给我。")
-                                .setPositiveButton("好", null).show();
-                    }
-                }
-            });
-        });
-    }
-
     /** Offscreen pre-raster (267, experimental): smoother first scroll, more memory; off by default. */
     private void applyPreRaster() {
         try { if (web != null) web.getSettings().setOffscreenPreRaster(Prefs.on(this, Prefs.PRE_RASTER)); } catch (Throwable ignored) {}
@@ -933,9 +854,7 @@ public class MainActivity extends Activity {
         d[0].show();
     }
 
-    // ===================== one-tap sleep mode (97) =====================
-
-    public static boolean sleepModeOn() { return sleepModeOn; }
+    // ===================== signed in / messages =====================
 
     // ---- signed in? (346) as the page reports it; unknown counts as signed in ----
     private static volatile boolean signedIn = true;
@@ -974,57 +893,6 @@ public class MainActivity extends Activity {
     public void say(String text) {
         if (canSay()) showSnack(text, null, null, 2600);
         else Toast.makeText(getApplicationContext(), text, Toast.LENGTH_SHORT).show();
-    }
-
-    /** Timer (default length) + lowest quality + same channel only + dim screen; ends with the timer. */
-    public void startSleepMode() {
-        int m = Prefs.sleepDefault(this);
-        sleepModeOn = true;
-        if (!SleepTimer.active()) SleepTimer.start(this, m);
-        js("ytl.sleepMode(true)");
-        try {
-            WindowManager.LayoutParams lp = getWindow().getAttributes();
-            if (lp.screenBrightness != 0.08f) sleepModeSavedBrightness = lp.screenBrightness;
-            lp.screenBrightness = 0.08f;
-            getWindow().setAttributes(lp);
-        } catch (Throwable ignored) {}
-        haptic();
-        // optional black screen 10 s later (306), only if still in sleep mode and on screen
-        MAIN.removeCallbacks(sleepModeBlackRun);
-        if (Prefs.on(this, Prefs.SLEEP_MODE_BLACK)) {
-            say("10 秒后进入黑屏，双击屏幕恢复");
-            MAIN.postDelayed(sleepModeBlackRun, 10_000L);
-        }
-    }
-
-    private final Runnable sleepModeBlackRun = () -> {
-        if (sleepModeOn && visible && !isFinishing() && blackView == null) startBlackScreen();
-    };
-
-    /** Sleep timer choices (309): from the badge on the player. */
-    public void openSleepPicker() {
-        if (isFinishing()) return;
-        PlayerTools.pickSleep(this, "睡眠定时", m -> SleepTimer.start(this, m));
-    }
-
-    private void stopSleepMode() {
-        MAIN.removeCallbacks(sleepModeBlackRun);
-        if (!sleepModeOn) return;
-        sleepModeOn = false;
-        js("ytl.sleepMode(false)");
-        try {
-            WindowManager.LayoutParams lp = getWindow().getAttributes();
-            lp.screenBrightness = sleepModeSavedBrightness;
-            getWindow().setAttributes(lp);
-        } catch (Throwable ignored) {}
-    }
-
-    /** Sleep timer started / stopped / fired. */
-    public static void onSleepState(final boolean active) {
-        MAIN.post(() -> {
-            MainActivity a = current.get();
-            if (a != null && !active) a.stopSleepMode();
-        });
     }
 
     // ===================== battery saver (147), autostart (99), what's new (138), about (140) =====================
@@ -1141,7 +1009,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    // ===================== snack bar: night sleep prompt (18), continue after a kill (27) =====================
+    // ===================== snack bar =====================
 
     // plain messages wait behind a bar that offers an action (356), at most a few
     private final java.util.ArrayDeque<String> snackQueue = new java.util.ArrayDeque<>();
@@ -1190,28 +1058,6 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private final Runnable nightPromptRun = this::maybeNightPrompt;
-
-    /** Night window from settings (307, default 22:00-05:00), timer off, once per night: offer the usual sleep timer (18). */
-    private void maybeNightPrompt() {
-        try {
-            if (isFinishing() || !visible || SleepTimer.active() || snackShowing() || blackView != null || lockView != null) return;
-            if (!Prefs.on(this, Prefs.NIGHT_PROMPT)) return;
-            java.util.Calendar cal = java.util.Calendar.getInstance();
-            int h = cal.get(java.util.Calendar.HOUR_OF_DAY);
-            int ns = Prefs.num(this, Prefs.NIGHT_START), ne = Prefs.num(this, Prefs.NIGHT_END);
-            if (!Logic.inNight(h, ns, ne)) return;
-            if (Logic.nightBelongsToYesterday(h, ns, ne)) cal.add(java.util.Calendar.DAY_OF_MONTH, -1);
-            String night = cal.get(java.util.Calendar.YEAR) + "-" + cal.get(java.util.Calendar.DAY_OF_YEAR);
-            if (night.equals(Prefs.str(this, Prefs.NIGHT_SHOWN, ""))) return;
-            Prefs.put(this, Prefs.NIGHT_SHOWN, night);
-            final int m = Prefs.sleepDefault(this);
-            showSnack("夜深了，要开睡眠定时吗？", SleepTimer.optionLabel(m), () -> SleepTimer.start(this, m), 8000);
-        } catch (Throwable t) {
-            Diag.log("night", String.valueOf(t));
-        }
-    }
-
     /** Cold start from the launcher: offer the video that was playing when the app was last closed (27). */
     private void offerResume() {
         try {
@@ -1242,7 +1088,7 @@ public class MainActivity extends Activity {
         return (FrameLayout) getWindow().getDecorView();
     }
 
-    // black screen without a sleep timer (274): leave after 5 min paused or 2 h, so the screen can sleep
+    // black screen (274): leave after 5 min paused or 2 h, so the screen can sleep
     private static final long BLACK_PAUSED_MS = 5 * 60_000L;
     private static final long BLACK_MAX_MS = 2 * 3600_000L;
     private long blackSince = 0, blackPausedSince = 0, lastBlackTap = 0;
@@ -1251,10 +1097,8 @@ public class MainActivity extends Activity {
         @Override public void run() {
             if (blackView == null) return;
             long now = android.os.SystemClock.elapsedRealtime();
-            if (SleepTimer.active()) {
-                blackPausedSince = 0;
-            } else if (now - blackSince > BLACK_MAX_MS) {
-                Diag.log("black", "no timer: left after 2 h");
+            if (now - blackSince > BLACK_MAX_MS) {
+                Diag.log("black", "left after 2 h");
                 stopBlackScreen();
                 return;
             } else if (PlaybackService.isPlaying()) {
@@ -1262,7 +1106,7 @@ public class MainActivity extends Activity {
             } else if (blackPausedSince == 0) {
                 blackPausedSince = now;
             } else if (now - blackPausedSince > BLACK_PAUSED_MS) {
-                Diag.log("black", "no timer: left after 5 min paused");
+                Diag.log("black", "left after 5 min paused");
                 stopBlackScreen();
                 return;
             }
@@ -1310,9 +1154,6 @@ public class MainActivity extends Activity {
             blackPausedSince = 0;
             MAIN.removeCallbacks(blackWatch);
             MAIN.postDelayed(blackWatch, 60_000L);
-            if (!SleepTimer.active()) {
-                Toast.makeText(this, "建议同时开睡眠定时；没开时暂停 5 分钟或播放 2 小时后自动退出黑屏", Toast.LENGTH_LONG).show();
-            }
             // screen readers (375): say what happened, and "restore" is one action away
             v.setContentDescription("黑屏播放中");
             Ui.a11yAction(v, "恢复", this::stopBlackScreen);
@@ -1334,14 +1175,6 @@ public class MainActivity extends Activity {
         keepScreenOn("black", false);
         blackView = null;
         blackHint = null;
-    }
-
-    /** Sleep timer finished: leave black screen so the display can time out normally. */
-    public static void onSleepEnded() {
-        MAIN.post(() -> {
-            MainActivity a = current.get();
-            if (a != null) a.stopBlackScreen();
-        });
     }
 
     public void startTouchLock() {
@@ -1687,7 +1520,6 @@ public class MainActivity extends Activity {
         int act = ev.getActionMasked();
         if (act == MotionEvent.ACTION_DOWN) {
             touchStartedAtTop = canPullToRefresh();
-            PlaybackService.noteInput();   // (277)
             MAIN.removeCallbacks(frameIdle);
             setWebFrameRate(true);         // (275)
             showFullscreenTools();         // (336)
@@ -1700,13 +1532,7 @@ public class MainActivity extends Activity {
         return super.dispatchTouchEvent(ev);
     }
 
-    @Override
-    public boolean dispatchKeyEvent(android.view.KeyEvent ev) {
-        PlaybackService.noteInput();   // (277)
-        return super.dispatchKeyEvent(ev);
-    }
-
-    // ---- moon button over fullscreen video (336): shows on a tap, fades after 3 s, never takes the player's touches ----
+    // ---- tools button over fullscreen video (336): shows on a tap, fades after 3 s, never takes the player's touches ----
     private android.widget.ImageButton fsTools;
     private final Runnable hideFsTools = () -> {
         if (fsTools != null) fsTools.animate().alpha(0f).setDuration(Ui.anim(this, 300)).withEndAction(() -> {
@@ -1726,9 +1552,9 @@ public class MainActivity extends Activity {
         setWebFrameRate(true);
         try {
             android.widget.ImageButton b = new android.widget.ImageButton(this);
-            b.setImageResource(R.drawable.ic_moon_white);
+            b.setImageResource(R.drawable.ic_tune_white);
             b.setBackground(Ui.round(Ui.OVERLAY_PILL, dp(20)));
-            b.setContentDescription("播放工具与睡眠定时");
+            b.setContentDescription("播放工具");
             b.setOnClickListener(v -> { MAIN.removeCallbacks(hideFsTools); openTools(); });
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(40), dp(40), android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
             lp.topMargin = dp(12);

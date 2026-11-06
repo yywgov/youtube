@@ -88,6 +88,9 @@ public final class Prefs {
     public static final String HAPTIC = "haptic";                    // (120)
     public static final String POWER_SAVE_AUTO = "powerSaveAuto";    // (147)
     public static final String NOTIF_WL = "notifWatchLater";         // (100)
+    // The sleep timer and its settings (sleepDefault, sleepFade, sleepRemember, sleepBadge, nightPrompt, sleepCalm,
+    // idleGuard, nightStart/End, extendMin, sleepPauseHold, sleepModeBlack, sleepStrict) were removed in v1.15:
+    // the constants stay so old values are known keys, nothing reads them any more.
     // ---- batch 5 (v1.7.0): new keys only, every older key keeps its name / type / meaning ----
     public static final String WIFI_SAVER = "wifiSaver";             // screen off: no high-perf Wi-Fi lock (271), off by default
     public static final String IDLE_GUARD = "idleGuard";             // 3 h without input: 30 min timer (277)
@@ -178,13 +181,7 @@ public final class Prefs {
         return b.toString();
     }
 
-    public static int sleepDefault(Context c) { return get(c).getInt(SLEEP_DEFAULT, 30); }
     public static int num(Context c, String key) { return get(c).getInt(key, PrefsModel.defInt(key)); }
-    public static int sleepFade(Context c) {
-        int v = get(c).getInt(SLEEP_FADE, 60);
-        return v == 10 || v == 30 || v == 60 ? v : 60;
-    }
-    public static boolean sleepRemember(Context c) { return get(c).getBoolean(SLEEP_REMEMBER, true); }
     public static boolean bool(Context c, String key, boolean def) { return get(c).getBoolean(key, def); }
     public static String str(Context c, String key, String def) {
         String v = get(c).getString(key, def);
@@ -412,9 +409,7 @@ public final class Prefs {
             o.put("sponsorBlock", sponsorBlock(c));
             o.put("hideWatched", hideWatched(c));
             o.put("perfCss", perfCss(c));
-            o.put("fadeSec", sleepFade(c));
             o.put("nextSource", str(c, NEXT_SOURCE, "rec"));
-            o.put("sleepCalm", on(c, SLEEP_CALM));
             o.put("resumeLocal", on(c, RESUME_LOCAL));
             o.put("quality", str(c, QUALITY, "auto"));
             o.put("rememberRate", on(c, REMEMBER_RATE));
@@ -424,7 +419,6 @@ public final class Prefs {
             o.put("captions", str(c, CAPTIONS, "yt"));
             o.put("origAudio", on(c, ORIG_AUDIO));
             o.put("noEndWall", on(c, NO_END_WALL));
-            o.put("sleepBadge", on(c, SLEEP_BADGE));
             o.put("subSize", str(c, SUB_SIZE, "default"));
             o.put("subBg", str(c, SUB_BG, "default"));
             o.put("seenMin", get(c).getInt(SEEN_MIN, 80));
@@ -458,7 +452,6 @@ public final class Prefs {
             o.put("hideSearchMix", on(c, HIDE_SEARCH_MIX));
             o.put("lightRefresh", on(c, LIGHT_REFRESH));
             o.put("listEndNext", on(c, LIST_END_NEXT));
-            o.put("sleepStrict", on(c, SLEEP_STRICT));
             // landscape layout (387) removed in v1.10 (454); landscapeLayout stays a known key for old backups
             return o.toString();
         } catch (Exception e) {

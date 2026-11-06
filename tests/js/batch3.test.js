@@ -195,14 +195,10 @@ test('look switches set their html attributes; bad accent ignored', async () => 
   for (const a of ['data-ytl-amoled', 'data-ytl-compact', 'data-ytl-cards', 'data-ytl-dimthumb', 'data-ytl-accent']) assert.ok(!def.w.document.documentElement.hasAttribute(a), 'default off: ' + a);
 });
 
-test('sleep mode forces the lowest quality and the calm rule; battery saver caps at 480p', async () => {
+test('battery saver caps at 480p; no sleep mode any more', async () => {
   const env = await load({ path: '/watch?v=abcdefghijk', cfg: { quality: '1080' } });
   assert.equal(env.w.ytl._.prefQuality(), 'hd1080');
-  env.w.ytl.sleepMode(true);
-  assert.equal(env.w.ytl._.prefQuality(), 'tiny');
-  env.w.ytl.sleepState(true);
-  assert.equal(env.w.ytl._.ruleMode(), 'channel');
-  env.w.ytl.sleepMode(false);
+  assert.equal(typeof env.w.ytl.sleepMode, 'undefined');
   assert.equal(env.w.ytl._.ruleMode(), 'rec');
   env.w.ytl.cfg({ powerSave: true });
   assert.equal(env.w.ytl._.prefQuality(), 'large');

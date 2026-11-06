@@ -33,29 +33,30 @@
     b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openSettings'); }, true);
     logo.parentNode.insertBefore(b, logo.nextSibling);
   });
-  // moon button: native playback tools sheet (sleep, black screen, touch lock, speed, loop)
+  // tools button: native playback tools sheet (speed, loop, -10 / +30 s, black screen, touch lock)
   var ensureTools = guard('tools', function () {
     if (document.getElementById('ytl-tools')) return;
     var gear = document.getElementById('ytl-gear');
     if (!gear || !gear.parentNode || !B || typeof B.openTools !== 'function') return;
     var b = document.createElement('button');
     b.id = 'ytl-tools';
-    b.setAttribute('aria-label', '播放工具与睡眠定时');
+    b.setAttribute('aria-label', '播放工具');
     var NS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
     var path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', 'M9.27 4.49A9 9 0 1019.51 14.73 7.75 7.75 0 019.27 4.49z');
+    // "tune" sliders (v1.15: the moon went with the sleep timer)
+    path.setAttribute('d', 'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z');
     svg.appendChild(path);
     b.appendChild(svg);
     b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openTools'); }, true);
     gear.parentNode.insertBefore(b, gear.nextSibling);
   });
-  /** The moon button shows with a loaded video (also in the mini player) or a running timer (363). */
+  /** The tools button shows with a loaded video, also in the mini player (363). */
   function updateToolsBtn() {
     var b = document.getElementById('ytl-tools');
     if (!b) return;
-    var want = !!(curId || isWatch() || sleeping || badgeText);
+    var want = !!(curId || isWatch());
     if (want === !b.hasAttribute('data-ytl-off')) return;
     if (want) b.removeAttribute('data-ytl-off'); else b.setAttribute('data-ytl-off', '');
   }
@@ -121,7 +122,6 @@
     ensureGear();
     ensureTools();
     updateToolsBtn();
-    if (pt === 'watch' || badgeText) updateBadge();
     if (pt === 'watch') {
       forceAutonav();
       try { checkPlayerError(); } catch (e) { report('player-error', e); }

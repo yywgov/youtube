@@ -35,7 +35,7 @@ import java.net.URL;
 
 /**
  * Foreground media service: media session (lock screen, Bluetooth, headset),
- * notification with sleep timer, wake + wifi locks while playing,
+ * media notification, wake + wifi locks while playing (what keeps playback going with the screen off),
  * "becoming noisy" (headphones unplugged) and network-return handling.
  *
  * All state changes arrive on the main thread from {@link com.google.android.youtube.pro.webview.WebAppInterface}.
@@ -49,22 +49,13 @@ public class PlaybackService extends Service {
     public static final String ACTION_PAUSE = "ytl.PAUSE";
     public static final String ACTION_NEXT = "ytl.NEXT";
     public static final String ACTION_PREV = "ytl.PREV";
-    public static final String ACTION_SLEEP = "ytl.SLEEP";
     public static final String ACTION_REW = "ytl.REW";
     public static final String ACTION_FWD = "ytl.FWD";
-    public static final String ACTION_EXTEND = "ytl.EXTEND";
     public static final String ACTION_WL = "ytl.WATCH_LATER";
     public static final String ACTION_CLOSE = "ytl.CLOSE";       // paused: stop and remove the notification (290)
     public static final String ACTION_DISMISS = "ytl.DISMISS";   // notification swiped away (290)
     /** Content intent extra: open the app and continue the last video (243). */
     public static final String EXTRA_RESUME = "ytl.resume";
-    /** After the timer stopped playback the session stays 10 minutes (302): one headset press plays on. */
-    private static final long SLEEP_DONE_STOP_MS = 10 * 60_000L;
-    /** Timer ended and nothing happened for 5 minutes: the page's timers are paused too (273). */
-    private static final long SLEEP_DONE_FREEZE_MS = 5 * 60_000L;
-    /** Inactivity guard (277): this long without any input while playing, no timer: 30 min timer. */
-    static final long IDLE_GUARD_MS = 3 * 3600_000L;
-    private static final int IDLE_GUARD_TIMER_MIN = 30;
     private static final long MULTI_CLICK_MS = 450L;
 
     private static final long IDLE_STOP_MS = 30 * 60_000L;
@@ -90,8 +81,6 @@ public class PlaybackService extends Service {
     static boolean live = false;
     /** Last 8 notification pictures (297): switching back and forth or looping does not download again. */
     private static final android.util.LruCache<String, Bitmap> ART_CACHE = new android.util.LruCache<>(8);
-    /** The sleep timer paused playback: drop foreground + locks and stop soon (17). */
-    private static boolean sleepDone = false;
     private static long lastVolHint = 0;
     /** The activity (and with it the WebView) was destroyed by the system while playing (243). */
     private static boolean interrupted = false;
@@ -99,8 +88,6 @@ public class PlaybackService extends Service {
     private static long lastDeniedLog = 0;
     /** The page reported a network stall / gave up retrying (250): said in the notification. */
     private static boolean netNote = false;
-    /** Last touch / key / media button / notification action (277), elapsedRealtime. */
-    private static long lastInputAt = SystemClock.elapsedRealtime();
     /** Buffering events with the screen off (271): evidence for the Wi-Fi lock choice. */
     private static int bgBuffering = 0;
 
@@ -138,11 +125,7 @@ public class PlaybackService extends Service {
         if ("playing".equals(s)) st = PlaybackState.STATE_PLAYING;
         else if ("buffering".equals(s)) st = PlaybackState.STATE_BUFFERING;
         else st = PlaybackState.STATE_PAUSED;
-        if (st == PlaybackState.STATE_PLAYING && state != PlaybackState.STATE_PLAYING) {
-            sleepDone = false;
-            volumeHint(c);
-        }
-        boolean wasPlaying = isPlaying();
+        if (st == PlaybackState.STATE_PLAYING && state != PlaybackState.STATE_PLAYING) volumeHint(c);
         if (st != PlaybackState.STATE_BUFFERING) longBuffer = false;
         if (st == PlaybackState.STATE_PLAYING) { interrupted = false; netNote = false; }
         if (st == PlaybackState.STATE_BUFFERING && state == PlaybackState.STATE_PLAYING && !MainActivity.isVisible()) bgBuffering++;
@@ -150,7 +133,6 @@ public class PlaybackService extends Service {
         positionMs = pos;
         rate = r > 0 ? r : 1f;
         positionAt = SystemClock.elapsedRealtime();
-        if (wasPlaying != isPlaying()) SleepTimer.onPlayback(c, isPlaying());   // pause holds the timer (305)
         if (instance != null) instance.update();
         else if (st == PlaybackState.STATE_PLAYING) ensureRunning(c);
     }
@@ -176,8 +158,6 @@ public class PlaybackService extends Service {
 
     public static boolean netNote() { return netNote; }
 
-    /** Any touch, key or media command (277). */
-    public static void noteInput() { lastInputAt = SystemClock.elapsedRealtime(); }
 
     /** Playback position now, extrapolated while playing (242). */
     public static long positionNowMs() {
@@ -193,7 +173,6 @@ public class PlaybackService extends Service {
      * the activity, 296) it can't be carried out: the notification becomes "tap to continue".
      */
     static void cmd(Context c, String js) {
-        noteInput();
         if (!MainActivity.hasPage()) {
             Diag.log("cmd", "no page for " + js);
             onActivityGone();
@@ -206,7 +185,7 @@ public class PlaybackService extends Service {
     /**
      * The system destroyed the activity while something was playing (243): the WebView is gone, so
      * playback stopped. Keep a paused, dismissible "tap to continue" notification instead of
-     * stopping everything; the sleep timer state is kept (and persisted, 244).
+     * stopping everything.
      */
     public static void onActivityGone() {
         if (state == PlaybackState.STATE_NONE && instance == null) return;
@@ -230,25 +209,9 @@ public class PlaybackService extends Service {
 
     // the local watch-time statistics (159) were removed (478): no write to preferences on every pause any more
 
-    /** Sleep timer ended (paused): release everything that keeps the phone awake (17). */
     public static boolean isPlaying() {
         return state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
     }
-
-    public static void onSleepEnded() {
-        sleepDone = true;
-        MainActivity.onSleepEnded();
-        if (instance != null) {
-            instance.update();
-            MAIN.removeCallbacks(instance.freezeRun);
-            MAIN.postDelayed(instance.freezeRun, SLEEP_DONE_FREEZE_MS);
-        }
-    }
-
-    /** 5 minutes after the timer stopped playback with nothing happening (273): pause the page's timers. */
-    private final Runnable freezeRun = () -> {
-        if (sleepDone && !isPlaying() && !MainActivity.isVisible()) MainActivity.freezeWeb();
-    };
 
     /** Playing with the media volume at 0: say so once in a while (150), only when the app is on screen. */
     private static void volumeHint(Context c) {
@@ -270,16 +233,13 @@ public class PlaybackService extends Service {
     }
 
     public static void handleAction(Context c, String action) {
-        noteInput();
         switch (action) {
             case ACTION_PLAY: cmd(c, "ytl.play()"); break;
             case ACTION_PAUSE: cmd(c, "ytl.pause()"); break;
             case ACTION_NEXT: cmd(c, "ytl.next()"); break;
             case ACTION_PREV: cmd(c, "ytl.prev()"); break;
-            case ACTION_SLEEP: SleepTimer.cycle(c); break;
             case ACTION_REW: cmd(c, "ytl.seekBy(-10)"); break;
             case ACTION_FWD: cmd(c, "ytl.seekBy(30)"); break;
-            case ACTION_EXTEND: SleepTimer.extend(c); break;
             case ACTION_WL: cmd(c, "ytl.watchLater()"); break;
             case ACTION_CLOSE:
                 if (MainActivity.hasPage()) MainActivity.js("ytl.pause()");
@@ -359,28 +319,7 @@ public class PlaybackService extends Service {
         registerNoisy();
         registerNetwork();
         goForeground(buildNotification());
-        MAIN.removeCallbacks(idleGuardRun);
-        MAIN.postDelayed(idleGuardRun, IDLE_CHECK_MS);
     }
-
-    // ---- inactivity guard (277): checked every 10 minutes while the service runs ----
-    private static final long IDLE_CHECK_MS = 10 * 60_000L;
-    private final Runnable idleGuardRun = new Runnable() {
-        @Override public void run() {
-            try {
-                long now = SystemClock.elapsedRealtime();
-                if (Logic.idleDue(Prefs.on(PlaybackService.this, Prefs.IDLE_GUARD), state == PlaybackState.STATE_PLAYING,
-                        SleepTimer.active(), lastInputAt, now, IDLE_GUARD_MS)) {
-                    Diag.log("idle", "no input for 3 h while playing: 30 min sleep timer");
-                    SleepTimer.startAuto(PlaybackService.this, IDLE_GUARD_TIMER_MIN, "3 小时没有操作，已自动开 30 分钟睡眠定时");
-                    lastInputAt = now;   // once; the timer (and its fade) takes it from here
-                }
-            } catch (Throwable t) {
-                Diag.log("idle", String.valueOf(t));
-            }
-            MAIN.postDelayed(this, IDLE_CHECK_MS);
-        }
-    };
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -402,8 +341,6 @@ public class PlaybackService extends Service {
         MAIN.removeCallbacks(idleDetach);
         MAIN.removeCallbacks(longBufferRun);
         MAIN.removeCallbacks(clickDone);
-        MAIN.removeCallbacks(idleGuardRun);
-        MAIN.removeCallbacks(freezeRun);
         if (bgBuffering > 0) Diag.log("net", "buffering with the screen off this session: " + bgBuffering);
         bgBuffering = 0;
         releaseLocks();
@@ -454,10 +391,7 @@ public class PlaybackService extends Service {
             @Override public void onRewind() { cmd(PlaybackService.this, "ytl.seekBy(-10)"); }
             @Override public void onFastForward() { cmd(PlaybackService.this, "ytl.seekBy(30)"); }
             @Override public void onCustomAction(String action, android.os.Bundle extras) {
-                noteInput();
-                if (ACTION_SLEEP.equals(action)) SleepTimer.cycle(PlaybackService.this);
-                else if (ACTION_EXTEND.equals(action)) SleepTimer.extend(PlaybackService.this);
-                else if (ACTION_REW.equals(action)) cmd(PlaybackService.this, "ytl.seekBy(-10)");
+                if (ACTION_REW.equals(action)) cmd(PlaybackService.this, "ytl.seekBy(-10)");
                 else if (ACTION_FWD.equals(action)) cmd(PlaybackService.this, "ytl.seekBy(30)");
                 else if (ACTION_WL.equals(action)) cmd(PlaybackService.this, "ytl.watchLater()");
             }
@@ -593,13 +527,11 @@ public class PlaybackService extends Service {
         }
 
         boolean seekButtons = Prefs.on(this, Prefs.NOTIF_SEEK);
-        boolean wl = Prefs.on(this, Prefs.NOTIF_WL) && !SleepTimer.timed() && MainActivity.signedIn();   // (346)
-        String sleepLabel = SleepTimer.buttonLabel();
-        String stateKey = state + "|" + positionMs + "|" + rate + "|" + positionAt + "|" + sleepLabel + "|" + SleepTimer.timed()
-                + "|" + seekButtons + "|" + wl + "|" + live + "|" + SleepTimer.extendMin(this);
+        boolean wl = Prefs.on(this, Prefs.NOTIF_WL) && MainActivity.signedIn();   // (346)
+        String stateKey = state + "|" + positionMs + "|" + rate + "|" + positionAt + "|" + seekButtons + "|" + wl + "|" + live;
         if (!stateKey.equals(lastStateKey)) {
             lastStateKey = stateKey;
-            session.setPlaybackState(buildState(seekButtons, wl, sleepLabel));
+            session.setPlaybackState(buildState(seekButtons, wl));
         }
 
         // long buffering (272): after 10 minutes stop holding the CPU / Wi-Fi awake
@@ -622,20 +554,19 @@ public class PlaybackService extends Service {
             else notifyIfChanged();
         } else {
             releaseLocks();
-            // dismissible while paused in the app, once the sleep timer has stopped playback,
-            // and when the system took the activity away (243)
-            if (foreground && (MainActivity.isVisible() || sleepDone || interrupted)) stopFg(false);
+            // dismissible while paused in the app and when the system took the activity away (243)
+            if (foreground && (MainActivity.isVisible() || interrupted)) stopFg(false);
             notifyIfChanged();
             MAIN.removeCallbacks(idleStop);
-            MAIN.postDelayed(idleStop, sleepDone ? SLEEP_DONE_STOP_MS : IDLE_STOP_MS);
+            MAIN.postDelayed(idleStop, IDLE_STOP_MS);
             MAIN.removeCallbacks(idleDetach);
             if (foreground) MAIN.postDelayed(idleDetach, IDLE_DETACH_MS);
         }
     }
 
     private String notifKey() {
-        return title + "|" + artist + "|" + isPlaying() + "|" + SleepTimer.buttonLabel() + "|" + SleepTimer.timed() + "|"
-                + Prefs.on(this, Prefs.NOTIF_SEEK) + "|" + Prefs.on(this, Prefs.NOTIF_WL) + "|" + MainActivity.signedIn() + "|" + SleepTimer.extendMin(this)
+        return title + "|" + artist + "|" + isPlaying() + "|"
+                + Prefs.on(this, Prefs.NOTIF_SEEK) + "|" + Prefs.on(this, Prefs.NOTIF_WL) + "|" + MainActivity.signedIn()
                 + "|" + (art != null && artUrl.equals(artLoadedFor) ? artLoadedFor : "")
                 + "|" + interrupted + "|" + longBuffer + "|" + netNote + "|" + foreground;
     }
@@ -658,7 +589,7 @@ public class PlaybackService extends Service {
      * left out so their slots take the custom rewind / forward actions, and "watch later" becomes
      * a custom action too. Older systems keep the notification buttons as before.
      */
-    private PlaybackState buildState(boolean seekButtons, boolean wl, String sleepLabel) {
+    private PlaybackState buildState(boolean seekButtons, boolean wl) {
         boolean cards = Build.VERSION.SDK_INT >= 33;
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE
                 | PlaybackState.ACTION_STOP | PlaybackState.ACTION_REWIND | PlaybackState.ACTION_FAST_FORWARD;
@@ -672,11 +603,7 @@ public class PlaybackService extends Service {
             pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_REW, getString(R.string.n_rew), R.drawable.ic_replay_10_white).build());
             pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_FWD, getString(R.string.n_fwd), R.drawable.ic_forward_30_white).build());
         }
-        pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_SLEEP, sleepLabel, R.drawable.ic_timer_white).build());
-        if (SleepTimer.timed()) {
-            pb.addCustomAction(new PlaybackState.CustomAction.Builder(
-                    ACTION_EXTEND, getString(R.string.n_extend, SleepTimer.extendMin(this)), R.drawable.ic_add_time_white).build());
-        } else if (cards && wl) {
+        if (cards && wl) {
             pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_WL, getString(R.string.n_wl), R.drawable.ic_watch_later_white).build());
         }
         return pb.build();
@@ -744,7 +671,6 @@ public class PlaybackService extends Service {
 
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (interrupted) open.putExtra(EXTRA_RESUME, true);
-        String sleep = SleepTimer.status();
         String text = interrupted ? getString(R.string.n_interrupted) : (longBuffer || netNote) ? getString(R.string.n_net) : artist;
 
         b.setSmallIcon(R.drawable.ic_stat_yiwei)
@@ -766,24 +692,17 @@ public class PlaybackService extends Service {
                         : new Notification.Action.Builder(R.drawable.ic_play_arrow_white, getString(R.string.n_play), action(ACTION_PLAY, 3)).build())
                 .addAction(seekButtons
                         ? new Notification.Action.Builder(R.drawable.ic_forward_30_white, getString(R.string.n_fwd), action(ACTION_FWD, 7)).build()
-                        : new Notification.Action.Builder(R.drawable.ic_skip_next_white, getString(R.string.n_next), action(ACTION_NEXT, 4)).build())
-                .addAction(new Notification.Action.Builder(R.drawable.ic_timer_white,
-                        SleepTimer.buttonLabel(), action(ACTION_SLEEP, 5)).build());
-        if (!playing && !SleepTimer.timed()) {
-            // paused: the fifth button closes playback and the notification (290)
+                        : new Notification.Action.Builder(R.drawable.ic_skip_next_white, getString(R.string.n_next), action(ACTION_NEXT, 4)).build());
+        if (!playing) {
+            // paused: the fourth button closes playback and the notification (290)
             b.addAction(new Notification.Action.Builder(R.drawable.ic_close_white, getString(R.string.n_close), action(ACTION_CLOSE, 14)).build());
-        } else if (SleepTimer.timed()) {
-            // half asleep: one more quarter hour without turning the screen on (14)
-            b.addAction(new Notification.Action.Builder(R.drawable.ic_add_time_white,
-                    getString(R.string.n_extend, SleepTimer.extendMin(this)), action(ACTION_EXTEND, 8)).build());
         } else if (Prefs.on(this, Prefs.NOTIF_WL) && MainActivity.signedIn()) {
-            // heard something good: save it for later (100); MediaStyle allows five actions; signed in only (346)
+            // heard something good: save it for later (100); signed in only (346)
             b.addAction(new Notification.Action.Builder(R.drawable.ic_watch_later_white, getString(R.string.n_wl), action(ACTION_WL, 9)).build());
         }
         b.setStyle(new Notification.MediaStyle()
                         .setMediaSession(session.getSessionToken())
                         .setShowActionsInCompactView(0, 1, 2));
-        if (sleep != null) b.setSubText(sleep);
         if (art != null && artUrl.equals(artLoadedFor)) b.setLargeIcon(art);
         if (Build.VERSION.SDK_INT >= 31) b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
         return b.build();

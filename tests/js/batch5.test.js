@@ -148,54 +148,7 @@ test('sponsored label hides a card (exact short text); a normal title containing
 });
 
 /* ---------- 299: fade driven by the page ---------- */
-test('sleep fade: one message from Java, the page steps the volume on the squared curve', async () => {
-  const env = await setupWatch();
-  const { w, v } = env;
-  const st = fakeMedia(v, { duration: 300, volume: 1 });
-  w.ytl.fadeStart(400, 1000);   // 0.4 s left of a 1 s fade
-  assert.ok(Math.abs(st.volume - 0.16) < 0.03, 'starts at (0.4)^2: ' + st.volume);
-  assert.equal(w.ytl._.fadeState().running, true);
-  await sleep(600);
-  assert.ok(st.volume < 0.02, 'reached silence: ' + st.volume);
-  w.ytl.restoreVolume();
-  assert.equal(st.volume, 1, 'volume back');
-  assert.equal(w.ytl._.fadeState().running, false);
-});
-
 /* ---------- 301: "after N videos" counts early switches ---------- */
-test('"after N videos": moving on after 90 % counts, moving on at 50 % does not', async () => {
-  const env = await setupWatch({ cfg: { countMode: true } });
-  const { w, v, p, calls } = env;
-  const st = fakeMedia(v, { duration: 100, currentTime: 92 });
-  fire(w, v, 'loadedmetadata');
-  fire(w, v, 'timeupdate');
-  p.getVideoData = () => ({ video_id: 'nextvideo11' });
-  w.history.pushState({}, '', '/watch?v=nextvideo11');
-  st.currentTime = 50;
-  fire(w, v, 'loadedmetadata');
-  fire(w, v, 'timeupdate');
-  w.history.pushState({}, '', '/watch?v=third333333');
-  fire(w, v, 'loadedmetadata');
-  const ended = calls.filter((c) => c[0] === 'videoEnded').map((c) => c[1]);
-  assert.deepEqual(ended, [VID]);
-});
-
-test('"after N videos": when an early switch used up the count, the video that just started is the last one', async () => {
-  const env = await setupWatch({ cfg: { countMode: true } });
-  const { w, v, p } = env;
-  const st = fakeMedia(v, { duration: 100, currentTime: 95 });
-  fire(w, v, 'loadedmetadata');
-  fire(w, v, 'timeupdate');
-  p.getVideoData = () => ({ video_id: 'nextvideo11' });
-  w.history.pushState({}, '', '/watch?v=nextvideo11');
-  st.currentTime = 1;
-  fire(w, v, 'loadedmetadata');
-  // Java: that was the second-to-last one -> countMode(false); stopAtEndNext()
-  w.ytl.countMode(false);
-  w.ytl.stopAtEndNext();
-  assert.equal(w.ytl._.stopAtEnd(), true, 'stops at the end of this video, not the one after');
-});
-
 /* ---------- 249: autoplay set on every video change (observer is off with the screen off) ---------- */
 test('video change with the screen off sets YouTube autoplay without a DOM pass', async () => {
   const env = await setupWatch({ cfg: { nextSource: 'channel', bg: true } });

@@ -1,7 +1,5 @@
 <resources>
 	<string name="app_name" translatable="false">一维视频</string>
-	<string name="sc_sleep_short">睡眠模式</string>
-	<string name="sc_sleep_long">一键睡眠模式</string>
 	<string name="sc_subs_short">订阅</string>
 	<string name="sc_subs_long">打开订阅</string>
 	<string name="sc_later_short">稍后观看</string>
@@ -29,7 +27,6 @@
 	<string name="n_play">播放</string>
 	<string name="n_close">关闭</string>
 	<string name="n_wl">稍后观看</string>
-	<string name="n_extend">+%1$d 分钟</string>
 	<string name="n_interrupted">播放被系统中断 · 点此继续</string>
 	<string name="n_net">网络中断，恢复后自动继续</string>
 </resources>

@@ -1,9 +1,9 @@
   /* ---------- 10e. what plays next (21/22) ----------
-   * Default: YouTube's own autoplay (unchanged). With "same channel" / "playlist" (or the calm rule
-   * while a sleep timer runs) YouTube's autoplay is switched off and the next video is picked here. */
+   * Default: YouTube's own autoplay (unchanged). With "same channel" / "playlist" YouTube's autoplay
+   * is switched off and the next video is picked here. */
   function ruleMode() {
     if (cfg.nextSource === 'playlist') return 'playlist';
-    if (cfg.nextSource === 'channel' || ((cfg.sleepCalm || sleepMode) && sleeping)) return 'channel';
+    if (cfg.nextSource === 'channel') return 'channel';
     return 'rec';
   }
   function wantAutonav() {
@@ -84,8 +84,8 @@
         var idx = p && p.getPlaylistIndex ? p.getPlaylistIndex() : -1;
         if (pl && pl.length && idx >= 0 && idx < pl.length - 1) { log('next', 'playlist'); p.nextVideo(); return; }
         if (pl && pl.length && idx >= pl.length - 1) {
-          // list finished (313): stop as before, or go on with a recommendation; never while a timer runs
-          var rec = cfg.listEndNext && !sleeping ? (firstUnwatchedLink(id) || recLink()) : null;
+          // list finished (313): stop as before, or go on with a recommendation
+          var rec = cfg.listEndNext ? (firstUnwatchedLink(id) || recLink()) : null;
           if (rec) { log('next', 'playlist end: recommended'); rec.click(); return; }
           log('next', 'playlist end: stop');
           return;
@@ -97,13 +97,6 @@
     if (mode === 'channel') {
       var a = sameChannelLink(id);
       if (a) { log('next', 'same channel'); a.click(); return; }
-      // sleeping, "same channel or stop" (315): no unknown video after falling asleep
-      if (sleeping && cfg.sleepStrict) {
-        log('next', 'no same-channel video: sleep timer ends here');
-        sleepPause();
-        call('sleepFired');
-        return;
-      }
       log('next', 'no same-channel video, recommended');
     }
     if (mode === 'unseen') {

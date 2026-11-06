@@ -114,38 +114,3 @@
     posSave(st);
   }
 
-  /* ---------- 10d. sleep time left on the player (154) ---------- */
-  var updateBadge = guard('badge', function () {
-    var el = document.getElementById('ytl-badge');
-    var p = player();
-    if (!cfg.sleepBadge || !badgeText || !p || !isWatch()) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
-    if (!el || el.parentNode !== p) {
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-      // tap = more time, long press = the timer choices (309); its own events never reach the player
-      el = document.createElement('button');
-      el.id = 'ytl-badge';
-      el.type = 'button';
-      el.appendChild(document.createElement('span'));
-      var held = 0, longDone = false;
-      var stop = function (ev) { ev.stopPropagation(); };
-      el.addEventListener('touchstart', function (ev) {
-        stop(ev); longDone = false; clearTimeout(held);
-        held = setTimeout(function () { longDone = true; call('sleepBadgeLong'); }, 600);
-      }, { passive: true });
-      el.addEventListener('touchend', function (ev) { stop(ev); clearTimeout(held); }, { passive: true });
-      el.addEventListener('touchmove', function () { clearTimeout(held); }, { passive: true });
-      el.addEventListener('contextmenu', function (ev) { ev.preventDefault(); stop(ev); });
-      el.addEventListener('click', guard('badge-tap', function (ev) {
-        ev.preventDefault(); ev.stopPropagation();
-        if (longDone) { longDone = false; return; }
-        call('sleepBadgeTap');
-      }), true);
-      p.appendChild(el);
-    }
-    var span = el.firstChild;
-    if (span.textContent !== badgeText) {
-      span.textContent = badgeText;
-      el.setAttribute('aria-label', badgeText + '，点按延长，长按选择时长');
-    }
-  });
-

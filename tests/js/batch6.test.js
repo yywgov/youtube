@@ -143,7 +143,7 @@ test('list images get decoding=async; an explicit value is left alone', async ()
 });
 
 /* ---------- 363: moon button only with a video or a timer ---------- */
-test('moon button: hidden on home with nothing loaded, back with a timer; always on the watch page', async () => {
+test('tools button: hidden on home with nothing loaded; always on the watch page', async () => {
   const head = '<ytm-mobile-topbar-renderer><ytm-home-logo></ytm-home-logo></ytm-mobile-topbar-renderer>';
   const env = await load({ path: '/', body: '<ytm-app>' + head + '</ytm-app>', before: (w) => { w.YTL_openTools = 1; } });
   env.w.YTL.openTools = () => {};
@@ -151,8 +151,7 @@ test('moon button: hidden on home with nothing loaded, back with a timer; always
   const b = env.w.document.getElementById('ytl-tools');
   assert.ok(b, 'button exists');
   assert.ok(b.hasAttribute('data-ytl-off'), 'hidden without a video');
-  env.w.ytl.sleepState(true);
-  assert.equal(b.hasAttribute('data-ytl-off'), false, 'a running timer shows it');
+  assert.equal(b.getAttribute('aria-label'), '播放工具');
   const w2 = await load({ path: WATCH, body: '<ytm-app>' + head + '</ytm-app>' });
   w2.w.ytl._.domPass(true);
   assert.equal(w2.w.document.getElementById('ytl-tools').hasAttribute('data-ytl-off'), false);
@@ -200,22 +199,7 @@ test('metadata says when the video is a live stream', async () => {
   assert.deepEqual(vod.calls.filter((c) => c[0] === 'mediaLive').pop(), ['mediaLive', false]);
 });
 
-/* ---------- 309: the sleep badge can be tapped ---------- */
-test('sleep badge: a tap asks Java for more time and never reaches the player', async () => {
-  const env = await setupWatch({ cfg: { sleepBadge: true, badge: '睡眠 · 20 分' } });
-  const { w, p } = env;
-  w.ytl._.domPass(true);
-  const b = w.document.getElementById('ytl-badge');
-  assert.ok(b && b.tagName === 'BUTTON');
-  assert.equal(b.textContent, '睡眠 · 20 分');
-  let playerClicks = 0;
-  p.addEventListener('click', () => playerClicks++);
-  b.click();
-  assert.ok(env.calls.some((c) => c[0] === 'sleepBadgeTap'));
-  assert.equal(playerClicks, 0);
-});
-
-/* ---------- 313 / 315: end of a playlist, strict sleep rule ---------- */
+/* ---------- 313: end of a playlist ---------- */
 const REL = '<ytm-video-with-context-renderer id=r1><a href="/watch?v=other111111">a</a><span class="byline">Someone</span></ytm-video-with-context-renderer>';
 function fakeList(p, len, idx) {
   p.getPlaylist = () => new Array(len).fill('x');
@@ -223,8 +207,8 @@ function fakeList(p, len, idx) {
   p.nextVideo = () => { p.__next = true; };
   p.getVideoData = () => ({ author: 'Me', video_id: VID });
 }
-test('playlist finished: stops by default, goes on with a recommendation when chosen (never while sleeping)', async () => {
-  for (const [cfg, sleeping, want] of [[{}, false, ''], [{ listEndNext: true }, false, '/watch?v=other111111'], [{ listEndNext: true }, true, '']]) {
+test('playlist finished: stops by default, goes on with a recommendation when chosen', async () => {
+  for (const [cfg, sleeping, want] of [[{}, false, ''], [{ listEndNext: true }, false, '/watch?v=other111111']]) {
     const env = await load({ path: WATCH + '&list=PLx', body: PLAYER_HTML + REL, cfg: Object.assign({ nextSource: 'playlist', sleeping }, cfg) });
     const { w } = env;
     const v = w.document.querySelector('video');
@@ -239,30 +223,6 @@ test('playlist finished: stops by default, goes on with a recommendation when ch
     assert.equal(clicked, want, JSON.stringify(cfg) + ' sleeping=' + sleeping);
   }
 });
-test('sleeping, "same channel or stop": no same-channel video ends the timer instead of a stranger', async () => {
-  const env = await setupWatch({ body: PLAYER_HTML + REL, cfg: { sleepCalm: true, sleepStrict: true, sleeping: true } });
-  const { w, v } = env;
-  w.document.getElementById('movie_player').getVideoData = () => ({ author: 'Me', video_id: VID });
-  let clicked = '';
-  w.document.querySelectorAll('a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); clicked = a.getAttribute('href'); }));
-  const st = fakeMedia(v, { duration: 100, currentTime: 99.9 });
-  fire(w, v, 'loadedmetadata');
-  st.ended = true;
-  fire(w, v, 'ended');
-  await sleep(800);
-  assert.equal(clicked, '');
-  assert.ok(env.calls.some((c) => c[0] === 'sleepFired'));
-  // not strict: the recommendation as before
-  const soft = await setupWatch({ body: PLAYER_HTML + REL, cfg: { sleepCalm: true, sleeping: true } });
-  soft.w.document.getElementById('movie_player').getVideoData = () => ({ author: 'Me', video_id: VID });
-  const st2 = fakeMedia(soft.v, { duration: 100, currentTime: 99.9 });
-  fire(soft.w, soft.v, 'loadedmetadata');
-  st2.ended = true;
-  fire(soft.w, soft.v, 'ended');
-  await sleep(800);
-  assert.equal(soft.calls.filter((c) => c[0] === 'sleepFired').length, 0);
-});
-
 /* ---------- 345 / 346 / 347: accounts ---------- */
 function ytcfg(w, o) { w.ytcfg = { get: (k) => o[k] }; }
 test('another account on home refreshes the feed once; the same account does nothing', async () => {

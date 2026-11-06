@@ -3,7 +3,8 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- settings group "后台播放" (v1.15): headphones -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M9.27,4.49A9,9 0,1 0,19.51 14.73,7.75 7.75,0 0,1 9.27,4.49z" />
+        android:pathData="M12,3a9,9 0,0 0,-9 9v7c0,1.1 0.9,2 2,2h4v-8H5v-1c0,-3.87 3.13,-7 7,-7s7,3.13 7,7v1h-4v8h4c1.1,0 2,-0.9 2,-2v-7a9,9 0,0 0,-9 -9z" />
 </vector>

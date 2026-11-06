@@ -41,16 +41,13 @@
   var cfg = {
     sponsorBlock: true, hideWatched: true, perfCss: true,
     // batch 2 (v1.3.0) – every one has a safe default that keeps the old behaviour
-    fadeSec: 60,            // sleep fade length (13)
     nextSource: 'rec',      // what plays next: rec | channel | playlist (22)
-    sleepCalm: false,       // while a sleep timer runs: same channel / playlist only (21)
     resumeLocal: true,      // signed out: remember where each video was left (28)
     quality: 'auto',        // auto | wifiMax | 1080 | 720 | 480 (29)
     rememberRate: false, rate: 1,   // (30)
     captions: 'yt',         // yt | off | zh | zhHans | zhHant | en (31/341)
     origAudio: true,        // prefer the original audio track over auto-dubs (32)
     noEndWall: true,        // no recommendation wall when a video ends (36)
-    sleepBadge: true,       // sleep time left in the player corner (154)
     subSize: 'default', subBg: 'default',  // caption style (155)
     // batch 3 (v1.4.0) – lists, look, interaction; defaults keep the old behaviour
     seenMin: 80,            // "watched" threshold for hiding on home (62)
@@ -83,17 +80,15 @@
     hideWatchedRelated: false, // related videos under the player also hide watched ones (327)
     hideSearchMix: false,   // search results: no auto-generated mixes (333)
     lightRefresh: false,    // refresh keeps the service worker / static caches (316, experimental)
-    listEndNext: false,     // a playlist played to its end goes on with a recommendation (313)
-    sleepStrict: false      // sleeping with the same-channel rule: stop when there is none (315)
-    // removed in v1.10 (personal-use trim, 454): landscape (387)
+    listEndNext: false      // a playlist played to its end goes on with a recommendation (313)
+    // removed in v1.10 (personal-use trim, 454): landscape (387); in v1.15 the whole sleep timer,
+    // the background low quality, backups and "prefer the original audio" as a switch (always on)
   };
   try { if (B) cfg = Object.assign(cfg, JSON.parse(B.getConfig())); } catch (e) {}
 
   var bg = false;            // app in background / screen off (told by Java)
-  var userPaused = false;    // pause requested by user / timer / noisy
+  var userPaused = false;    // pause requested by the user / headphones unplugged
   var lastInput = 0;         // last touch time
-  var stopAtEnd = false;     // sleep timer "end of current video"
-  var savedVolume = -1;
   var segments = [];         // SponsorBlock [[start,end,category],...]
   var segSkipped = {};       // segment index -> true once undone (never skip it again for this video)
   var segFor = '';
@@ -105,17 +100,9 @@
   var autonavFor = '';
   var adMuted = false;
   var adRate = 0;
-  var sleeping = false;       // any sleep timer running (21)
-  var countMode = false;     // sleep timer "after N videos": report each finished video (16)
-  var badgeText = '';        // sleep time left shown on the player (154)
-  // state Java still holds when this document is (re)loaded: sleep timer mode, background
-  if (cfg.stopAtEnd) stopAtEnd = true;
+  // state Java still holds when this document is (re)loaded: app in the background / screen off
   if (cfg.bg) bg = true;
-  if (cfg.sleeping) sleeping = true;
-  if (cfg.countMode) countMode = true;
-  if (cfg.badge) badgeText = String(cfg.badge);
-  delete cfg.stopAtEnd; delete cfg.bg; delete cfg.sleeping; delete cfg.countMode; delete cfg.badge;
-  var sleepMode = !!cfg.sleepMode; delete cfg.sleepMode;   // one-tap sleep mode (97)
+  delete cfg.bg;
   // ad keys shared with the native watch-page filter (279): assets/adkeys.json, handed over by getConfig
   var extraAdKeys = Array.isArray(cfg.adKeys) ? cfg.adKeys.filter(function (k) { return typeof k === 'string' && /^[A-Za-z][A-Za-z0-9]{2,40}$/.test(k); }) : [];
   delete cfg.adKeys;
@@ -291,9 +278,6 @@
       adLabel: ['full', ['赞助', '贊助', '广告', '廣告', '赞助商广告', '贊助商廣告', 'sponsored', 'ad', 'ads']],
       feedback: ['full', ['help', 'help ?(?:&|and) ?feedback', 'send feedback', 'feedback', 'give feedback', 'report', 'report history', 'report (?:video|playlist|channel|comment|ad|this ad)', 'why this ad\\??', '帮助', '帮助和反馈', '帮助与反馈', '帮助及反馈', '发送反馈', '提供反馈', '反馈', '意见反馈', '举报', '举报记录', '举报视频', '举报播放列表', '举报频道', '說明', '說明與意見回饋', '提供意見', '傳送意見回饋', '提供意見回饋', '意見回饋', '檢舉', '檢舉記錄', '檢舉影片']]
     },
-    // one-tap sleep mode (340): comments only; related videos stay for the same-channel rule
-    sleepHide: ['ytm-comment-section-renderer', 'ytm-comments-entry-point-header-renderer',
-      'ytm-item-section-renderer[section-identifier="comments-entry-point"]', 'ytm-item-section-renderer[data-content-type="comments"]'],
     // search quick filters (125/328): YouTube's own sp values; rules.json "chips" can replace them
     chips: [['全部', ''], ['最新', 'CAI%3D'], ['只看视频', 'EgIQAQ%3D%3D'], ['本周', 'EgIIAw%3D%3D'], ['4–20 分钟', 'EgIYAw%3D%3D'], ['20 分钟以上', 'EgIYAg%3D%3D']]
   };
@@ -380,10 +364,6 @@
     out.push('#ytl-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}#ytl-chips::-webkit-scrollbar{display:none}' +
       '#ytl-chips a{flex:0 0 auto;padding:6px 12px;border-radius:8px;background:rgba(128,128,128,.18);color:inherit;font:500 13px/18px system-ui,sans-serif;text-decoration:none;white-space:nowrap}' +
       '#ytl-chips a[aria-current]{background:var(--ytl-accent);color:#fff}');
-    // sleep badge (154): a tap adds time, a long press opens the timer choices (309); 40px touch target
-    out.push('#ytl-badge{position:absolute;top:4px;left:4px;z-index:70;min-height:40px;display:flex;align-items:center;' +
-      'padding:0 4px;background:none;border:0;margin:0;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent}' +
-      '#ytl-badge span{background:rgba(0,0,0,.6);font:500 12px/16px system-ui,sans-serif;padding:3px 8px;border-radius:10px;white-space:nowrap}');
     out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
     out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
@@ -396,10 +376,8 @@
     // long press feedback (368): a light wash on the card while the finger is held
     out.push('[data-ytl-press]{background-color:rgba(128,128,128,.16)!important;border-radius:12px;transition:background-color .12s}');
     out.push('html[data-ytl-lowmotion] [data-ytl-press]{transition:none}');
-    // moon button only with a video or a timer (363)
+    // tools button only with a video (363)
     out.push('#ytl-tools[data-ytl-off]{display:none!important}');
-    // one-tap sleep mode (340): no comments under the player (related videos stay: the same-channel rule reads them)
-    rule(RULES.sleepHide.map(function (x) { return 'html[data-ytl-sleepmode][data-ytl-page="watch"] ' + x; }), 'display:none!important');
     // empty feed note (326)
     out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
       'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +
@@ -530,7 +508,7 @@
     call('mediaMeta', title, artist, art, dur, id);
   });
 
-  /* ---------- 3. commands from Java (notification / headset / timer) ---------- */
+  /* ---------- 3. commands from Java (notification / headset / media keys) ---------- */
   function play() {
     userPaused = false;
     if (handlers.play) { try { handlers.play(); return; } catch (e) {} }
@@ -558,46 +536,6 @@
     var t = Number(ms) / 1000;
     if (handlers.seekto) { try { handlers.seekto({ seekTime: t, action: 'seekto' }); return; } catch (e) {} }
     var v = video(); if (v) v.currentTime = t;
-  }
-  function setVolume(x) {
-    var v = video(); if (!v) return;
-    if (savedVolume < 0) savedVolume = v.volume || 1;
-    v.volume = Math.max(0, Math.min(1, x)) * savedVolume;
-  }
-  function restoreVolume() {
-    fadeStop();
-    var v = video();
-    if (v && savedVolume >= 0) v.volume = savedVolume;
-    savedVolume = -1;
-  }
-  /* Sleep fade driven here (299): Java says once "the fade ends in leftMs, it lasts fadeMs" and the
-   * page steps the volume every 250 ms on that curve (setTimeout: rAF does not run with the screen
-   * off). Java sends it again every few seconds, which also covers a reload in the middle. */
-  var fade = { timer: 0, end: 0, len: 0 };
-  function fadeStop() { clearTimeout(fade.timer); fade.timer = 0; fade.end = 0; }
-  function fadeStep() {
-    fade.timer = 0;
-    if (!fade.end) return;
-    var left = fade.end - Date.now();
-    setVolume(fadeVolume(Math.max(0, left), fade.len));
-    if (left > 0) fade.timer = setTimeout(guard('fade', fadeStep), 250);
-  }
-  function fadeStart(leftMs, fadeMs) {
-    leftMs = Number(leftMs); fadeMs = Number(fadeMs);
-    if (!(fadeMs > 0) || !isFinite(leftMs)) return;
-    fade.end = Date.now() + Math.max(0, leftMs);
-    fade.len = fadeMs;
-    clearTimeout(fade.timer);
-    fadeStep();
-  }
-  function sleepPause() { fadeStop(); pause(); setTimeout(restoreVolume, 400); }
-  /** Sleep fade (298): (left / fade)², same curve as the Java timer (Logic.fadeVolume). */
-  function fadeVolume(left, fade) {
-    if (!(fade > 0)) return left > 0 ? 1 : 0;
-    var x = left / fade;
-    if (x >= 1) return 1;
-    if (x <= 0) return 0;
-    return x * x;
   }
 
   /* ---------- 3b. playback tools: seek by, fine speed, single-video loop (26/151/152) ---------- */
@@ -634,17 +572,11 @@
     };
   }
   function looping() { return loopOne; }
-  /** A loop came round (312): with an "after N videos" timer every repeat counts as one video. */
-  var loopRound = 0;
-  function loopWrapped() {
-    loopRound++;
-    if (countMode) call('videoEnded', curId + '#' + loopRound);
-  }
   /** Loop check on every timeupdate; jumps back before the end so YouTube never moves on. */
   function loopTick(v) {
-    if (adNow() || stopAtEnd) return;
+    if (adNow()) return;
     var t = v.currentTime || 0, rate = v.playbackRate || 1;
-    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) { v.currentTime = 0; loopWrapped(); }
+    if (loopOne && isFinite(v.duration) && v.duration > 3 && v.duration - t <= 0.6 * rate) v.currentTime = 0;
   }
 
   /* ---------- 4. quality: the preferred default, set once per video (29) ----------
@@ -657,7 +589,6 @@
   /** Preferred foreground quality name for the player, or 'auto'. */
   var QORDER = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'highres'];
   function prefQuality() {
-    if (sleepMode) return 'tiny';                       // one-tap sleep mode (97)
     var q = cfg.quality || 'auto';
     q = q === 'wifiMax' ? (metered() ? 'hd720' : 'highres') : (QMAP[q] || 'auto');
     // battery saver (147): at most 480p
@@ -696,7 +627,7 @@
   }
   /* the phone moved to another network (314): "Wi-Fi best, mobile 720p" is decided again */
   var netChanged = guard('net-change', function () {
-    if (cfg.quality !== 'wifiMax' || !isWatch() || bg || sleepMode) return;
+    if (cfg.quality !== 'wifiMax' || !isWatch() || bg) return;
     qualityFor = '';
     applyQuality();
   });
@@ -828,14 +759,8 @@
 
   window.ytl = {
     play: play, pause: pause, next: next, prev: prev, seek: seek,
-    setVolume: setVolume, restoreVolume: restoreVolume, sleepPause: sleepPause,
-    fadeStart: function (l, f) { fadeStart(l, f); },
     // a native command threw inside the page (247): goes to the diagnostics log instead of nowhere
     report: function (name, e) { report('java:' + String(name || '').slice(0, 40), e); },
-    stopAtEnd: function (b) { stopAtEnd = !!b; if (!b) { pendingStop = false; restoreVolume(); } },
-    // "after N videos" reached its last one (16). Looping (312): the repeat now playing is that one.
-    // Counted on an early switch (301): the video that just started is the last one.
-    stopAtEndNext: function () { if (looping() || Date.now() - countedOnChange < 5000) stopAtEnd = true; else pendingStop = true; },
     bg: function (b) { setBg(!!b); },
     cfg: function (o) { cfg = Object.assign(cfg, o || {}); applyCfg(); },
     onSegments: function (id, arr) {
@@ -877,19 +802,6 @@
       if (started) filterCards();
       return added;
     }),
-    /* smoothness self test (268): scroll the list up and down for a while; Java counts the frames */
-    selfScroll: function (ms) {
-      if (!listPage(pageType())) return false;
-      var end = Date.now() + Math.min(15000, ms || 10000), dir = 1;
-      (function f() {
-        if (Date.now() > end) return;
-        var y = window.scrollY || 0;
-        window.scrollBy(0, dir * 24);
-        if ((window.scrollY || 0) === y) dir = -dir;
-        requestAnimationFrame(f);
-      })();
-      return true;
-    },
     /* fresh verified rules from Java (288): applied at once instead of on the next page load */
     remote: guard('remote-apply', function (json) {
       var r;
@@ -910,22 +822,12 @@
     setRate: function (r) { setRate(r); },
     loop: function (b) { setLoop(b); },
     state: function () { return JSON.stringify(toolState()); },
-    sleepState: function (b) { sleeping = !!b; autonavFor = ''; if (started && isWatch()) forceAutonav(); if (started) updateToolsBtn(); },
-    countMode: function (b) { countMode = !!b; },
-    badge: function (t) { badgeText = t ? String(t) : ''; updateBadge(); },
     // batch 3
     watchLater: function (id) { watchLater(id ? String(id) : ''); },
     hideVideo: function (id) { hideVideo(String(id || '')); },
     openCardMenu: function () { openCardMenu(); },
     hiddenCount: function () { return hiddenIds().length; },   // settings: "N hidden videos" (235)
-    unhideAll: function () { hiddenList = []; try { localStorage.removeItem(HIDDEN_KEY); } catch (e) {} filterKey = ''; if (started) filterCards(); },
-    sleepMode: function (b) {
-      sleepMode = !!b; qualityFor = ''; autonavFor = '';
-      try { applyPerfAttr(); } catch (e) {}
-      if (!sleepMode) { var p = player(); if (p && isWatch() && !bg) { try { setQ(p, prefQuality()); } catch (e) {} } }
-      applyQuality();
-      if (started && isWatch()) forceAutonav();
-    }
+    unhideAll: function () { hiddenList = []; try { localStorage.removeItem(HIDDEN_KEY); } catch (e) {} filterKey = ''; if (started) filterCards(); }
   };
 
   /* ---------- 7. ad removal ----------
@@ -1336,7 +1238,6 @@
     setAttr('data-ytl-lowmotion', cfg.lowMotion ? '1' : '');
     setAttr('data-ytl-bigfont', cfg.fontLarge ? '1' : '');
     setAttr('data-ytl-nomix', cfg.hideSearchMix ? '1' : '');            // (333)
-    setAttr('data-ytl-sleepmode', sleepMode ? '1' : '');                // (340)
     var gear = document.getElementById('ytl-gear');
     if (gear && gear.getAttribute('aria-label') !== gearLabel()) gear.setAttribute('aria-label', gearLabel());
     var acc = /^#[0-9a-fA-F]{6}$/.test(cfg.accent || '') ? cfg.accent : '';
@@ -1351,7 +1252,6 @@
     if (document.documentElement) markWatched();
     autonavFor = '';
     if (started) {   // the helpers below are defined further down; first run is at start-up
-      updateBadge();
       reportTheme(true);   // amoled may have changed the colour the bars should get
       if (isWatch()) forceAutonav();
     }
@@ -1614,47 +1514,12 @@
     posSave(st);
   }
 
-  /* ---------- 10d. sleep time left on the player (154) ---------- */
-  var updateBadge = guard('badge', function () {
-    var el = document.getElementById('ytl-badge');
-    var p = player();
-    if (!cfg.sleepBadge || !badgeText || !p || !isWatch()) { if (el && el.parentNode) el.parentNode.removeChild(el); return; }
-    if (!el || el.parentNode !== p) {
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-      // tap = more time, long press = the timer choices (309); its own events never reach the player
-      el = document.createElement('button');
-      el.id = 'ytl-badge';
-      el.type = 'button';
-      el.appendChild(document.createElement('span'));
-      var held = 0, longDone = false;
-      var stop = function (ev) { ev.stopPropagation(); };
-      el.addEventListener('touchstart', function (ev) {
-        stop(ev); longDone = false; clearTimeout(held);
-        held = setTimeout(function () { longDone = true; call('sleepBadgeLong'); }, 600);
-      }, { passive: true });
-      el.addEventListener('touchend', function (ev) { stop(ev); clearTimeout(held); }, { passive: true });
-      el.addEventListener('touchmove', function () { clearTimeout(held); }, { passive: true });
-      el.addEventListener('contextmenu', function (ev) { ev.preventDefault(); stop(ev); });
-      el.addEventListener('click', guard('badge-tap', function (ev) {
-        ev.preventDefault(); ev.stopPropagation();
-        if (longDone) { longDone = false; return; }
-        call('sleepBadgeTap');
-      }), true);
-      p.appendChild(el);
-    }
-    var span = el.firstChild;
-    if (span.textContent !== badgeText) {
-      span.textContent = badgeText;
-      el.setAttribute('aria-label', badgeText + '，点按延长，长按选择时长');
-    }
-  });
-
   /* ---------- 10e. what plays next (21/22) ----------
-   * Default: YouTube's own autoplay (unchanged). With "same channel" / "playlist" (or the calm rule
-   * while a sleep timer runs) YouTube's autoplay is switched off and the next video is picked here. */
+   * Default: YouTube's own autoplay (unchanged). With "same channel" / "playlist" YouTube's autoplay
+   * is switched off and the next video is picked here. */
   function ruleMode() {
     if (cfg.nextSource === 'playlist') return 'playlist';
-    if (cfg.nextSource === 'channel' || ((cfg.sleepCalm || sleepMode) && sleeping)) return 'channel';
+    if (cfg.nextSource === 'channel') return 'channel';
     return 'rec';
   }
   function wantAutonav() {
@@ -1735,8 +1600,8 @@
         var idx = p && p.getPlaylistIndex ? p.getPlaylistIndex() : -1;
         if (pl && pl.length && idx >= 0 && idx < pl.length - 1) { log('next', 'playlist'); p.nextVideo(); return; }
         if (pl && pl.length && idx >= pl.length - 1) {
-          // list finished (313): stop as before, or go on with a recommendation; never while a timer runs
-          var rec = cfg.listEndNext && !sleeping ? (firstUnwatchedLink(id) || recLink()) : null;
+          // list finished (313): stop as before, or go on with a recommendation
+          var rec = cfg.listEndNext ? (firstUnwatchedLink(id) || recLink()) : null;
           if (rec) { log('next', 'playlist end: recommended'); rec.click(); return; }
           log('next', 'playlist end: stop');
           return;
@@ -1748,13 +1613,6 @@
     if (mode === 'channel') {
       var a = sameChannelLink(id);
       if (a) { log('next', 'same channel'); a.click(); return; }
-      // sleeping, "same channel or stop" (315): no unknown video after falling asleep
-      if (sleeping && cfg.sleepStrict) {
-        log('next', 'no same-channel video: sleep timer ends here');
-        sleepPause();
-        call('sleepFired');
-        return;
-      }
       log('next', 'no same-channel video, recommended');
     }
     if (mode === 'unseen') {
@@ -1825,22 +1683,13 @@
   var unmutedFor = '';
   var lateNavFor = '';
 
-  var pendingStop = false;    // sleep "after N videos": stop at the end of the next video (16)
   var bgFallbacks = 0;
-  var endedFor = '';
-  var curProgress = 0;        // share of the current video played, for "after N videos" (301)
-  var countedOnChange = 0;
   function onVideoChange() {
     var id = videoId();
     if (!id || id === curId) return;
     var had = !!curId;
-    // "after N videos" (301): moving on by hand, a SponsorBlock jump to the end or YouTube switching
-    // early still counts the previous video when more than 90 % of it was played
-    if (had && countMode && endedFor !== curId && curProgress >= 0.9) { endedFor = curId; countedOnChange = Date.now(); call('videoEnded', curId); }
-    curProgress = 0;
     curId = id;
     if (had) loopOne = false;
-    if (pendingStop) { pendingStop = false; stopAtEnd = true; }
     lastMetaKey = '';
     stalled = false;
     netTries = 0;
@@ -1946,16 +1795,14 @@
     }
     if (adNow()) return;
     // single-video loop (152): start over instead of moving on
-    if (loopOne && !stopAtEnd && !userPaused) {
+    if (loopOne && !userPaused) {
       v.currentTime = 0;
       play();
-      loopWrapped();
       return;
     }
-    if (countMode && endedFor !== id) { endedFor = id; call('videoEnded', id); }
-    if (stopAtEnd || userPaused) return;
+    if (userPaused) return;
     // "Continue watching?" can come up at the end instead of the next video (446)
-    setTimeout(function () { if (!userPaused && !stopAtEnd) dismissStillWatching(true); }, 1200);
+    setTimeout(function () { if (!userPaused) dismissStillWatching(true); }, 1200);
     clearTimeout(endTimer);
     var mode = ruleMode();
     // recommended, but the autoplay target was already watched (311): pick the first unwatched one
@@ -1991,22 +1838,10 @@
     sbTick(v, now);
     loopTick(v);
     posTick(v, now, false);
-    if (isFinite(v.duration) && v.duration > 0 && !adNow()) curProgress = Math.max(curProgress, (v.currentTime || 0) / v.duration);
     // 20 s before the end (445): the related list is there by now, so the autoplay switch is decided
     // again (with the screen off the DOM pass that does this is not running)
     if (lateNavFor !== curId && isFinite(v.duration) && v.duration > 40 && v.duration - v.currentTime <= 20 && !adNow()) {
       lateNavFor = curId; autonavFor = ''; forceAutonav();
-    }
-    // sleep timer: end of current video (fade over the last N s, then pause)
-    if (stopAtEnd && isFinite(v.duration) && v.duration > 0) {
-      var left = v.duration - v.currentTime;
-      var F = Math.max(5, Math.min(120, Number(cfg.fadeSec) || 60));
-      if (left <= F) setVolume(fadeVolume(left - 1, F - 1));
-      if (left <= 1.2) {
-        stopAtEnd = false;
-        sleepPause();
-        call('sleepFired');
-      }
     }
   });
 
@@ -2803,29 +2638,30 @@
     b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openSettings'); }, true);
     logo.parentNode.insertBefore(b, logo.nextSibling);
   });
-  // moon button: native playback tools sheet (sleep, black screen, touch lock, speed, loop)
+  // tools button: native playback tools sheet (speed, loop, -10 / +30 s, black screen, touch lock)
   var ensureTools = guard('tools', function () {
     if (document.getElementById('ytl-tools')) return;
     var gear = document.getElementById('ytl-gear');
     if (!gear || !gear.parentNode || !B || typeof B.openTools !== 'function') return;
     var b = document.createElement('button');
     b.id = 'ytl-tools';
-    b.setAttribute('aria-label', '播放工具与睡眠定时');
+    b.setAttribute('aria-label', '播放工具');
     var NS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '22'); svg.setAttribute('height', '22');
     var path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', 'M9.27 4.49A9 9 0 1019.51 14.73 7.75 7.75 0 019.27 4.49z');
+    // "tune" sliders (v1.15: the moon went with the sleep timer)
+    path.setAttribute('d', 'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z');
     svg.appendChild(path);
     b.appendChild(svg);
     b.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); call('openTools'); }, true);
     gear.parentNode.insertBefore(b, gear.nextSibling);
   });
-  /** The moon button shows with a loaded video (also in the mini player) or a running timer (363). */
+  /** The tools button shows with a loaded video, also in the mini player (363). */
   function updateToolsBtn() {
     var b = document.getElementById('ytl-tools');
     if (!b) return;
-    var want = !!(curId || isWatch() || sleeping || badgeText);
+    var want = !!(curId || isWatch());
     if (want === !b.hasAttribute('data-ytl-off')) return;
     if (want) b.removeAttribute('data-ytl-off'); else b.setAttribute('data-ytl-off', '');
   }
@@ -2891,7 +2727,6 @@
     ensureGear();
     ensureTools();
     updateToolsBtn();
-    if (pt === 'watch' || badgeText) updateBadge();
     if (pt === 'watch') {
       forceAutonav();
       try { checkPlayerError(); } catch (e) { report('player-error', e); }
@@ -3032,19 +2867,17 @@
     segments: function () { return segments; },
     prefQuality: prefQuality, ruleMode: ruleMode, wantAutonav: wantAutonav, sameChannelLink: sameChannelLink,
     origAudio: function () { return origAudio; }, posStore: posStore, toolState: toolState,
-    stopAtEnd: function () { return stopAtEnd; },
     parseDur: parseDur, ageDays: ageDays, cardInfo: cardInfo, filterCards: filterCards, remoteSelectors: remoteSelectors,
     scrollMem: function () { return scrollMem; }, restoreScroll: restoreScroll, watchLater: watchLater, reportTheme: reportTheme,
     // batch 4 (v1.6.0)
-    fadeVolume: fadeVolume, dismissStillWatching: dismissStillWatching, checkLogin: checkLogin,
+    dismissStillWatching: dismissStillWatching, checkLogin: checkLogin,
     playingNow: playingNow, chanById: function () { return chanById; }, cfg: function () { return cfg; },
     // batch 5 (v1.7.0)
     adKeys: function () { return AD_KEYS.slice(); }, adKeysBuiltin: AD_KEYS_BUILTIN, adLabelHit: adLabelHit,
     blockEntry: blockEntry, filterReason: filterReason, newCount: newCount, homeHistory: homeHistory,
     pickCaption: pickCaption, gearLabel: gearLabel, upNextWatched: upNextWatched, firstUnwatchedLink: firstUnwatchedLink,
     fullPending: function () { return fullNeeded; }, dirtyCount: function () { return dirtyItems.length; },
-    curProgress: function () { return curProgress; }, adContext: adContext, sendMeta: function () { sendMeta(); },
-    fadeState: function () { return { end: fade.end, len: fade.len, running: !!fade.timer }; },
+    adContext: adContext, sendMeta: function () { sendMeta(); },
     // batch 6 (v1.8.0)
     wordBlocked: wordBlocked, textRe: textRe, checkEmptyFeed: checkEmptyFeed, leakScan: leakScan, quietBatch: quietBatch,
     quietSkipped: function () { return quietSkipped; }, chipList: chipList, remote: function () { return remote; },

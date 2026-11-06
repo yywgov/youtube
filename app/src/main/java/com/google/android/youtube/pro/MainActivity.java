@@ -213,16 +213,31 @@ public class MainActivity extends Activity {
         if (startupDone || isFinishing()) return;
         startupDone = true;
         MAIN.removeCallbacks(startupRun);
-        Runnable[] jobs = {
-                this::maybeWhatsNew,
-                this::checkNotifications,
-                () -> { Updater.cleanup(this); Updater.autoCheck(this); },
-                () -> RemoteRules.autoCheck(this),
-        };
-        for (int i = 0; i < jobs.length; i++) {
-            final Runnable j = jobs[i];
-            MAIN.postDelayed(() -> { if (!isFinishing()) { try { j.run(); } catch (Throwable t) { Diag.log("startup", String.valueOf(t)); } } }, 1000L * (i + 1));
-        }
+        // v1.15: the home feed first. Local jobs a little after the first page; the network ones (daily update
+        // check, remote rules) only once the page has stopped loading and nothing is buffering, so they never
+        // compete with the feed or a video that is starting
+        later(this::checkNotifications, 1500L, false);
+        later(this::maybeWhatsNew, 2500L, false);
+        later(() -> { Updater.cleanup(this); Updater.autoCheck(this); }, 8000L, true);
+        later(() -> RemoteRules.autoCheck(this), 12000L, true);
+    }
+
+    private int pageProgress = 100;
+
+    /** Run a start-up job after {@code ms}; a network job waits (3 s at a time, at most 4 times) while the page loads or video buffers. */
+    private void later(final Runnable job, long ms, final boolean network) {
+        final int[] waits = {0};
+        MAIN.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (isFinishing()) return;
+                if (network && waits[0] < 4 && (pageProgress < 100 || PlaybackService.isBuffering())) {
+                    waits[0]++;
+                    MAIN.postDelayed(this, 3000L);
+                    return;
+                }
+                try { job.run(); } catch (Throwable t) { Diag.log("startup", String.valueOf(t)); }
+            }
+        }, ms);
     }
 
     @Override
@@ -1344,6 +1359,7 @@ public class MainActivity extends Activity {
 
     /** From the chrome client: page load progress 0..100, animated towards the new value (364). */
     public void onProgress(int p) {
+        pageProgress = p;
         if (topBar == null || topBar.getVisibility() != View.VISIBLE) return;
         if (p >= 100) hideTopBar();
         else if (p > topBar.getProgress()) topBar.setProgress(p, Ui.anim(this, 1) > 0);

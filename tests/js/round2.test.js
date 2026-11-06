@@ -72,17 +72,16 @@ test('settings: removed rows are gone, merged rows still write the original keys
     '复制到剪贴板', '"夜间时段"', 'dyn("当前"', '搜索结果隐藏「合辑」']) {
     assert.ok(!sp.includes(gone), 'still in settings: ' + gone);
   }
-  assert.ok(sp.includes('从剪贴板恢复'), 'clipboard restore kept for old backups');
+  assert.ok(!sp.includes('从剪贴板恢复'), 'backup / restore removed in v1.15');
   assert.ok(/PrefsModel\.writeFontChoice/.test(sp) && /PrefsModel\.writeSearchTidy/.test(sp));
   for (const k of ['Prefs.ORIENT_LOCK', 'Prefs.ORIENT_REMEMBER', 'Prefs.LANDSCAPE_LAYOUT', 'Prefs.SEARCH_FOCUS', 'Prefs.RESUME_LOCAL',
     'Prefs.FONT_LARGE', 'Prefs.HIDE_SEARCH_MIX']) {
-    assert.ok(new RegExp('KEYS = \\{[^}]*' + k.replace('.', '\\.') + '\\b').test(model), k + ' still in a backup list');
+    assert.ok(new RegExp('KEYS = \\{[^}]*' + k.replace('.', '\\.') + '\\b').test(model), k + ' still a known key');
   }
 });
 
-/* 467: ColorOS only */
-test('keep-alive pages: only ColorOS / OPPO components', async () => {
+/* 467 → v1.15: no keep-alive pages at all any more */
+test('keep-alive pages: none left (no vendor components)', async () => {
   const main = read('MainActivity.java');
-  assert.ok(!/miui|vivo\.permission|huawei/i.test(main));
-  assert.ok(/com\.coloros\.safecenter/.test(main) && /com\.oplus\.battery/.test(main));
+  assert.ok(!/miui|vivo\.permission|huawei|com\.coloros\.safecenter|com\.oplus\.battery/i.test(main));
 });

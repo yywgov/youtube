@@ -252,3 +252,30 @@ test('native side: black window, bars, WebView, sheets and settings with AMOLED,
   const colors = fs.readFileSync(path.join(ROOT, 'app', 'src', 'main', 'res', 'values', 'colors.xml'), 'utf8');
   assert.ok(/name="background">#000000</.test(colors), 'splash / window background');
 });
+
+/* ---------- J: lighter start ---------- */
+test('SponsorBlock is asked 1.5 s after a video starts, once, and not for a video already left', async () => {
+  const env = await setupWatch();
+  const { w, v, calls } = env;
+  fakeMedia(v, { duration: 600 });
+  fire(w, v, 'loadedmetadata');
+  fire(w, v, 'playing');
+  assert.equal(calls.filter((c) => c[0] === 'fetchSegments').length, 0, 'not together with the video\'s own requests');
+  await sleep(1700);
+  assert.deepEqual(calls.filter((c) => c[0] === 'fetchSegments').map((c) => c[1]), [VID]);
+  const off = await setupWatch({ cfg: { sponsorBlock: false } });
+  fakeMedia(off.v, { duration: 600 });
+  fire(off.w, off.v, 'loadedmetadata');
+  await sleep(1700);
+  assert.equal(off.calls.filter((c) => c[0] === 'fetchSegments').length, 0);
+});
+
+test('start-up: network jobs wait for the page and for buffering; nothing heavy right at onCreate', () => {
+  const main = java('MainActivity.java');
+  const q = /private void runStartupQueue\(\) \{([\s\S]*?)\n    \}/.exec(main)[1];
+  assert.ok(/later\(\(\) -> \{ Updater\.cleanup\(this\); Updater\.autoCheck\(this\); \}, \d{4,}L, true\)/.test(q), 'update check later, as a network job');
+  assert.ok(/later\(\(\) -> RemoteRules\.autoCheck\(this\), \d{4,}L, true\)/.test(q), 'remote rules later, as a network job');
+  assert.ok(/pageProgress < 100 \|\| PlaybackService\.isBuffering\(\)/.test(main));
+  const onCreate = /protected void onCreate\(Bundle savedInstanceState\) \{([\s\S]*?)\n    \}/.exec(main)[1];
+  assert.ok(!/Updater\.|RemoteRules\.|clearCache/.test(onCreate), 'no update / rules / cache work in onCreate');
+});

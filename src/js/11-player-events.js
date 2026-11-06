@@ -9,7 +9,7 @@
   var unmutedFor = '';
   var lateNavFor = '';
 
-  var bgFallbacks = 0;
+  var bgFallbacks = 0, sbFetchTimer = 0;
   function onVideoChange() {
     var id = videoId();
     if (!id || id === curId) return;
@@ -23,7 +23,10 @@
     segSkipped = {};
     segFor = id;
     hideSbPrompt();
-    if (cfg.sponsorBlock) call('fetchSegments', id);
+    // SponsorBlock asks 1.5 s later (v1.15): the video's own first requests go out alone; a sponsor
+    // segment is still skipped from wherever playback is when the answer comes
+    clearTimeout(sbFetchTimer);
+    if (cfg.sponsorBlock) sbFetchTimer = setTimeout(function () { if (curId === id && cfg.sponsorBlock) call('fetchSegments', id); }, 1500);
     applyQuality();
     // the observer is off with the screen off, so the per-page pass that keeps autoplay right does
     // not run: set it here for the new video as well (249)

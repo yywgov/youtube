@@ -213,6 +213,11 @@ public class PlaybackService extends Service {
         return state == PlaybackState.STATE_PLAYING || state == PlaybackState.STATE_BUFFERING;
     }
 
+    /** A video is loading / re-buffering right now: start-up network jobs wait (v1.15). */
+    public static boolean isBuffering() {
+        return state == PlaybackState.STATE_BUFFERING;
+    }
+
     /** Playing with the media volume at 0: say so once in a while (150), only when the app is on screen. */
     private static void volumeHint(Context c) {
         try {

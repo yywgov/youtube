@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification small icon: white retro TV silhouette (v1.16.0, matches the 3D TV launcher icon). Source: /workspace/work/iconbuild3d -->
+<!-- Notification small icon: white rounded play triangle (v1.18.0, matches the red tile launcher icon). Source: /workspace/work/iconbuildC -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
-        android:pathData="M8,1.5 L12,5.5 L16,1.5 L17,2.5 L13.9,5.6 L19,5.6 C20.4,5.6 21.5,6.7 21.5,8.1 L21.5,18.4 C21.5,19.8 20.4,20.9 19,20.9 L5,20.9 C3.6,20.9 2.5,19.8 2.5,18.4 L2.5,8.1 C2.5,6.7 3.6,5.6 5,5.6 L10.1,5.6 L7,2.5 Z M5.6,8.3 C5.0,8.3 4.6,8.7 4.6,9.3 L4.6,17.2 C4.6,17.8 5.0,18.2 5.6,18.2 L15.4,18.2 C16.0,18.2 16.4,17.8 16.4,17.2 L16.4,9.3 C16.4,8.7 16.0,8.3 15.4,8.3 Z M9,10.4 L13.2,13.2 L9,16 Z M18.9,9.4 A1,1 0 1,0 18.9,11.4 A1,1 0 1,0 18.9,9.4 Z M18.9,13 A1,1 0 1,0 18.9,15 A1,1 0 1,0 18.9,13 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M8.5,5.2 Q7,4.3 7,6 L7,18 Q7,19.7 8.5,18.8 L18.2,12.9 Q19.7,12 18.2,11.1 Z" />
 </vector>

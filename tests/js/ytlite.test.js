@@ -406,6 +406,8 @@ test('resolve_url / get_watch are on the prune list; prefetched player response 
   assert.ok(re.test('https://m.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false'));
   assert.ok(re.test('https://m.youtube.com/youtubei/v1/get_watch?prettyPrint=false'));
   assert.ok(re.test('https://m.youtube.com/youtubei/v1/player?key=x'));
+  assert.ok(re.test('https://m.youtube.com/youtubei/v1/playlist?prettyPrint=false'));
+  assert.ok(!re.test('https://m.youtube.com/youtubei/v1/playlist/get_add_to_playlist'));
   assert.ok(!re.test('https://m.youtube.com/youtubei/v1/browse'));
   const r = w.JSON.parse(JSON.stringify({
     responseContext: {},

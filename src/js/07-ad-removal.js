@@ -18,8 +18,8 @@
   var AD_TEST = new RegExp('"(?:' + AD_ALT + ')"');
   var AD_SUB = new RegExp('"(' + AD_ALT + ')"', 'g');
   // navigation/resolve_url and get_watch can carry a whole prefetched player response (with its ad
-  // keys) for the video a tapped link opens; uBlock added m.youtube.com to its resolve_url fix (2026-11)
-  var PRUNE_URL = /\/youtubei\/v1\/(?:player|next|reel\/|navigation\/resolve_url|get_watch)|[?&]pbj=1/;
+  // keys) for the video a tapped link opens; uBlock added m.youtube.com to its resolve_url fix (2026-11); uBlock also prunes /youtubei/v1/playlist
+  var PRUNE_URL = /\/youtubei\/v1\/(?:player|next|reel\/|navigation\/resolve_url|get_watch|playlist(?:\?|$))|[?&]pbj=1/;
   function toSet(a) { var o = {}; for (var i = 0; i < a.length; i++) o[a[i]] = true; return o; }
   // fields a player response keeps (playback, captions, storyboards, history/watch time, sign-in, end screen)
   var PR_KEEP = toSet([

@@ -247,6 +247,11 @@
     out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
       'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +
       'color:var(--ytl-accent-text);font:500 14px system-ui,sans-serif;padding:8px 4px;white-space:nowrap}');
+    // tap polish (Material 3 / HIG): 44px chip hit area, no grey WebView flash, pressed state on our own buttons
+    out.push('#ytl-chips a{min-height:44px;box-sizing:border-box;display:flex;align-items:center}#ytl-chips{overscroll-behavior-x:contain}' +
+      '#ytl-chips a,#ytl-gear,#ytl-tools,#ytl-sb button,#ytl-empty button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:opacity .1s,transform .1s}' +
+      '#ytl-chips a:active,#ytl-gear:active,#ytl-tools:active,#ytl-sb button:active,#ytl-empty button:active{opacity:.6;transform:scale(.94)}' +
+      'html[data-ytl-lowmotion] #ytl-chips a,html[data-ytl-lowmotion] #ytl-gear,html[data-ytl-lowmotion] #ytl-tools{transition:none}');
     return out.join('\n');
   }
   var CSS = sheet();

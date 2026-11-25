@@ -251,7 +251,8 @@
     out.push('#ytl-chips a{min-height:44px;box-sizing:border-box;display:flex;align-items:center}#ytl-chips{overscroll-behavior-x:contain}' +
       '#ytl-chips a,#ytl-gear,#ytl-tools,#ytl-sb button,#ytl-empty button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:opacity .1s,transform .1s}' +
       '#ytl-chips a:active,#ytl-gear:active,#ytl-tools:active,#ytl-sb button:active,#ytl-empty button:active{opacity:.6;transform:scale(.94)}' +
-      'html[data-ytl-lowmotion] #ytl-chips a,html[data-ytl-lowmotion] #ytl-gear,html[data-ytl-lowmotion] #ytl-tools{transition:none}');
+      'html[data-ytl-lowmotion] #ytl-chips a,html[data-ytl-lowmotion] #ytl-gear,html[data-ytl-lowmotion] #ytl-tools,html[data-ytl-lowmotion] #ytl-sb button,html[data-ytl-lowmotion] #ytl-empty button{transition:none}' +
+      '#ytl-empty button,#ytl-sb button{min-height:44px;box-sizing:border-box}');
     return out.join('\n');
   }
   var CSS = sheet();

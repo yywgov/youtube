@@ -253,6 +253,8 @@
       '#ytl-chips a:active,#ytl-gear:active,#ytl-tools:active,#ytl-sb button:active,#ytl-empty button:active{opacity:.6;transform:scale(.94)}' +
       'html[data-ytl-lowmotion] #ytl-chips a,html[data-ytl-lowmotion] #ytl-gear,html[data-ytl-lowmotion] #ytl-tools,html[data-ytl-lowmotion] #ytl-sb button,html[data-ytl-lowmotion] #ytl-empty button{transition:none}' +
       '#ytl-empty button,#ytl-sb button{min-height:44px;box-sizing:border-box}');
+    // scroll containment (NewPipe/M3 sheets): comment & engagement sheets don't chain scroll into the feed behind
+    out.push('ytm-engagement-panel,.engagement-panel-content,ytm-comments-sheet-view,.bottom-sheet-content{overscroll-behavior-y:contain}');
     return out.join('\n');
   }
   var CSS = sheet();

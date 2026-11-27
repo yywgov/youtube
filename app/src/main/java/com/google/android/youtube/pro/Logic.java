@@ -175,4 +175,10 @@ public final class Logic {
     public static boolean isDefaultAccent(String stored) {
         return stored == null || stored.trim().isEmpty() || "#2F6BFF".equalsIgnoreCase(stored.trim());
     }
+
+    /** A dragged sheet closes when pulled past 35 % of its height or flung down faster than 1000 dp/s (v1.25). */
+    public static boolean sheetShouldDismiss(float dragPx, float heightPx, float velocityPxS, float density) {
+        if (heightPx <= 0) return false;
+        return dragPx > heightPx * 0.35f || (velocityPxS > 1000f * density && dragPx > 0);
+    }
 }

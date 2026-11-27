@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -292,40 +293,405 @@ public final class Ui {
         return ColorStateList.valueOf(accent(c));
     }
 
-    /** Bottom sheet: rounded top, slides up, dim behind, content scrolls. */
+    // ---- motion (v1.25, DESIGN.md "Motion") ----
+    public static final int SHEET_IN = 360, SHEET_OUT = 240, SHEET_BACK = 200;
+    public static final int SCRIM_BLACK = 0x9E000000;   // 62 % on pure black
+    public static final int SCRIM_DARK = 0x80000000;    // 50 % on dark grey
+
+    /** Drawer curve (0.32, 0.72, 0, 1): sheets in and out. */
+    public static android.view.animation.Interpolator drawer() {
+        return new android.view.animation.PathInterpolator(0.32f, 0.72f, 0f, 1f);
+    }
+
+    /** Strong ease-out (0.23, 1, 0.32, 1): entering things, press release, snack bars. */
+    public static android.view.animation.Interpolator easeOut() {
+        return new android.view.animation.PathInterpolator(0.23f, 1f, 0.32f, 1f);
+    }
+
+    /**
+     * Bottom sheet (165/v1.25), still a Dialog so playback, background quality and the page script are
+     * untouched (no new Activity, no onStop). Full-screen transparent window with its own scrim; the
+     * sheet slides up, follows the finger when dragged down from the handle or from the top of its
+     * content, and slides out on dismiss (every dismiss: callers keep calling dismiss()). "Remove
+     * animations" makes all of it instant.
+     */
     public static Dialog sheet(Activity a, View content) {
-        ScrollView scroll = new ScrollView(a);
-        if (android.os.Build.VERSION.SDK_INT >= 29) scroll.setForceDarkAllowed(false);   // (392)
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(a, 10), 0, dp(a, 12));
-        View handle = new View(a);
-        handle.setBackground(round(HANDLE, dp(a, 2)));
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(a, 36), dp(a, 4));
-        hp.gravity = Gravity.CENTER_HORIZONTAL;
-        hp.bottomMargin = dp(a, 6);
-        box.addView(handle, hp);
-        box.addView(content);
-        scroll.addView(box);
-        Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
-        d.setContentView(scroll);
-        d.setCanceledOnTouchOutside(true);
-        Window w = d.getWindow();
-        if (w != null) {
+        return new Sheet(a, content);
+    }
+
+    /** The sheet window; dismiss() plays the exit and only then really closes. */
+    public static final class Sheet extends Dialog {
+        private final FrameLayout root;
+        private final View scrim;
+        private final LinearLayout panel;
+        private final DragScroll scroll;
+        private boolean closing;
+        private boolean outsideCancels = true;
+        private float downY, startT;
+        private boolean dragging;
+        private android.view.VelocityTracker vt;
+
+        Sheet(Activity a, View content) {
+            super(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
+            setOwnerActivity(a);
+            root = new FrameLayout(a);
+            scrim = new View(a);
+            scrim.setBackgroundColor(amoled(a) ? SCRIM_BLACK : SCRIM_DARK);
+            scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            scrim.setOnClickListener(v -> { if (outsideCancels) cancel(); });
+            root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+
+            panel = new LinearLayout(a);
+            panel.setOrientation(LinearLayout.VERTICAL);
+            panel.setClickable(true);   // taps on the sheet never reach the scrim
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(sheetBg(a));
-            if (amoled(a)) bg.setStroke(Math.max(1, dp(a, 1)), DIVIDER);   // a black sheet still shows its edge
-            float r = dp(a, RADIUS_DP);
+            float r = dp(a, 28);
             bg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
-            w.setBackgroundDrawable(bg);
-            w.setGravity(Gravity.BOTTOM);
-            w.setLayout(sheetWidth(a), ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (!Prefs.animationsOff(a)) w.setWindowAnimations(android.R.style.Animation_InputMethod);   // (367)
+            panel.setBackground(bg);
+            if (android.os.Build.VERSION.SDK_INT >= 29) panel.setForceDarkAllowed(false);   // (392)
+            // handle: 32 x 4 dp, in a 24 dp tall strip that also takes the drag
+            FrameLayout grip = new FrameLayout(a);
+            View handle = new View(a);
+            handle.setBackground(round(HANDLE, dp(a, 2)));
+            grip.addView(handle, new FrameLayout.LayoutParams(dp(a, 32), dp(a, 4), Gravity.CENTER));
+            grip.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            panel.addView(grip, new LinearLayout.LayoutParams(-1, dp(a, 24)));
+            if (amoled(a)) {   // a black sheet still shows its top edge
+                View edge = new View(a);
+                edge.setBackgroundColor(HAIRLINE_STRONG);
+                FrameLayout.LayoutParams ep = new FrameLayout.LayoutParams(-1, Math.max(1, dp(a, 1)), Gravity.TOP);
+                grip.addView(edge, ep);
+                grip.setClipToOutline(false);
+            }
+            scroll = new DragScroll(a, this);
+            LinearLayout box = new LinearLayout(a);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.setPadding(0, 0, 0, dp(a, 28));
+            box.addView(content);
+            scroll.addView(box);
+            panel.addView(scroll, new LinearLayout.LayoutParams(-1, -2));
+            FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(sheetWidth(a), -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            pp.topMargin = dp(a, 48);   // the scrim always shows above a tall sheet
+            root.addView(panel, pp);
+            grip.setOnTouchListener((v, ev) -> drag(ev, true));
+            // navigation bar inset under the content (gesture or button navigation)
+            root.setOnApplyWindowInsetsListener((v, ins) -> {
+                panel.setPadding(0, 0, 0, ins.getSystemWindowInsetBottom());
+                return ins;
+            });
+            setContentView(root);
+            Window w = getWindow();
+            if (w != null) {
+                w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+                w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+                w.setWindowAnimations(0);
+                w.setGravity(Gravity.BOTTOM);
+            }
+        }
+
+        @Override public void setCanceledOnTouchOutside(boolean cancel) {
+            super.setCanceledOnTouchOutside(cancel);
+            outsideCancels = cancel;
+        }
+
+        @Override public void show() {
+            super.show();
+            closing = false;
+            if (Prefs.animationsOff(getContext())) return;
+            panel.setVisibility(View.INVISIBLE);
+            scrim.setAlpha(0f);
+            panel.post(() -> {
+                float h = panel.getHeight();
+                panel.setTranslationY(h);
+                panel.setVisibility(View.VISIBLE);
+                panel.animate().translationY(0f).setDuration(SHEET_IN).setInterpolator(drawer()).start();
+                scrim.animate().alpha(1f).setDuration(SHEET_IN).setInterpolator(drawer()).start();
+            });
+        }
+
+        @Override public void dismiss() {
+            if (closing) return;
+            Activity owner = getOwnerActivity();
+            if (!isShowing() || Prefs.animationsOff(getContext()) || (owner != null && owner.isFinishing())
+                    || panel.getHeight() == 0) { reallyDismiss(); return; }
+            closing = true;
+            float h = panel.getHeight();
+            float to = Math.max(panel.getTranslationY(), h * 0.6f);
+            panel.animate().cancel();
+            scrim.animate().cancel();
+            panel.animate().translationY(to).alpha(0f).setDuration(SHEET_OUT).setInterpolator(drawer())
+                    .withEndAction(this::reallyDismiss).start();
+            scrim.animate().alpha(0f).setDuration(SHEET_OUT).setInterpolator(drawer()).start();
+            // never stay open if the animation is dropped (window detached mid-way)
+            panel.postDelayed(this::reallyDismiss, SHEET_OUT + 150);
+        }
+
+        private void reallyDismiss() {
+            try { if (isShowing()) super.dismiss(); } catch (Exception ignored) {}
+        }
+
+        /** Velocity in screen coordinates: the sheet itself moves under the finger. */
+        private void track(android.view.MotionEvent ev) {
+            android.view.MotionEvent c = android.view.MotionEvent.obtain(ev);
+            c.setLocation(ev.getRawX(), ev.getRawY());
+            vt.addMovement(c);
+            c.recycle();
+        }
+
+        /** Shared by the handle strip and the content's top edge: 1:1 down, 0.2 damping up. */
+        boolean drag(android.view.MotionEvent ev, boolean fromGrip) {
+            if (closing) return true;
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    downY = ev.getRawY();
+                    startT = panel.getTranslationY();
+                    panel.animate().cancel();
+                    scrim.animate().cancel();
+                    if (vt != null) vt.recycle();
+                    vt = android.view.VelocityTracker.obtain();
+                    track(ev);
+                    dragging = !fromGrip;   // content drags start only after its slop check
+                    return true;
+                case android.view.MotionEvent.ACTION_MOVE: {
+                    if (vt == null) { vt = android.view.VelocityTracker.obtain(); downY = ev.getRawY(); startT = panel.getTranslationY(); }
+                    track(ev);
+                    float dy = ev.getRawY() - downY + startT;
+                    float t = dy >= 0 ? dy : dy * 0.2f;
+                    panel.setTranslationY(t);
+                    float h = Math.max(1, panel.getHeight());
+                    scrim.setAlpha(Math.max(0f, Math.min(1f, 1f - Math.max(0f, t) / h)));
+                    dragging = true;
+                    return true;
+                }
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL: {
+                    float vy = 0;
+                    if (vt != null) { track(ev); vt.computeCurrentVelocity(1000); vy = vt.getYVelocity(); vt.recycle(); vt = null; }
+                    float t = panel.getTranslationY(), h = Math.max(1, panel.getHeight());
+                    boolean wasDrag = dragging;
+                    dragging = false;
+                    if (!wasDrag && Math.abs(t) < 1f) return true;
+                    float dens = getContext().getResources().getDisplayMetrics().density;
+                    if (ev.getActionMasked() == android.view.MotionEvent.ACTION_UP && Logic.sheetShouldDismiss(t, h, vy, dens)) {
+                        cancel();
+                    } else {
+                        int ms = anim(getContext(), SHEET_BACK);
+                        panel.animate().translationY(0f).setDuration(ms).setInterpolator(easeOut()).start();
+                        scrim.animate().alpha(1f).setDuration(ms).setInterpolator(easeOut()).start();
+                    }
+                    return true;
+                }
+                default:
+                    return true;
+            }
+        }
+    }
+
+    /** The sheet's scroll view: a downward pull while it is at the top drags the whole sheet instead. */
+    static final class DragScroll extends ScrollView {
+        private final Sheet sheet;
+        private final int slop;
+        private float x0, y0;
+        private boolean pulling;
+
+        DragScroll(Context c, Sheet s) {
+            super(c);
+            sheet = s;
+            slop = android.view.ViewConfiguration.get(c).getScaledTouchSlop();
+            setOverScrollMode(OVER_SCROLL_NEVER);
+            if (android.os.Build.VERSION.SDK_INT >= 29) setForceDarkAllowed(false);
+        }
+
+        @Override public boolean onInterceptTouchEvent(android.view.MotionEvent ev) {
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    x0 = ev.getRawX(); y0 = ev.getRawY(); pulling = false;
+                    break;
+                case android.view.MotionEvent.ACTION_MOVE:
+                    float dy = ev.getRawY() - y0, dx = Math.abs(ev.getRawX() - x0);
+                    if (!pulling && getScrollY() == 0 && dy > slop && dy > dx) {
+                        pulling = true;
+                        android.view.MotionEvent down = android.view.MotionEvent.obtain(ev);
+                        down.setAction(android.view.MotionEvent.ACTION_DOWN);
+                        sheet.drag(down, false);
+                        down.recycle();
+                        return true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            return super.onInterceptTouchEvent(ev);
+        }
+
+        @Override public boolean onTouchEvent(android.view.MotionEvent ev) {
+            if (pulling) {
+                boolean r = sheet.drag(ev, false);
+                int act = ev.getActionMasked();
+                if (act == android.view.MotionEvent.ACTION_UP || act == android.view.MotionEvent.ACTION_CANCEL) pulling = false;
+                return r;
+            }
+            return super.onTouchEvent(ev);
+        }
+    }
+
+    // ---- one look for confirmations, form sheets and the text editor (v1.25) ----
+
+    /** Title line of a sheet: title-medium, 24 dp in from the sides. */
+    public static TextView sheetTitle(Context c, String title) {
+        TextView head = text(c, title, TITLE_M, TEXT);
+        head.setPadding(dp(c, 24), dp(c, 4), dp(c, 24), dp(c, 12));
+        heading(head);
+        return head;
+    }
+
+    /** Action line at the bottom of a sheet: an optional text button left, the filled main button right. */
+    private static LinearLayout actions(final Dialog d, Context c, String secondaryLabel, final Runnable secondary,
+                                        String primaryLabel, final Runnable primary) {
+        LinearLayout row = new LinearLayout(c);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        row.setPadding(dp(c, 16), dp(c, 16), dp(c, 24), 0);
+        if (secondaryLabel != null) {
+            android.widget.Button s = textButton(c, secondaryLabel);
+            s.setTextColor(TEXT_2);
+            s.setOnClickListener(v -> { d.dismiss(); if (secondary != null) secondary.run(); });
+            row.addView(s, new LinearLayout.LayoutParams(-2, -2));
+        }
+        android.widget.Button p = filledButton(c, primaryLabel);
+        p.setPadding(dp(c, 24), 0, dp(c, 24), 0);
+        p.setOnClickListener(v -> { d.dismiss(); if (primary != null) primary.run(); });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(c, 48));
+        lp.leftMargin = dp(c, 8);
+        row.addView(p, lp);
+        return row;
+    }
+
+    /** Confirmation as a sheet: title, a sentence, main button + text button ("清空" / "取消"). */
+    public static Dialog confirmSheet(Activity a, String title, CharSequence body, String primaryLabel, Runnable primary,
+                                      String secondaryLabel, Runnable secondary) {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sheetTitle(a, title));
+        if (body != null) {
+            TextView t = text(a, body, BODY_M, TEXT_2);
+            t.setPadding(dp(a, 24), 0, dp(a, 24), 0);
+            box.addView(t);
+        }
+        Dialog d = sheet(a, box);
+        box.addView(actions(d, a, secondaryLabel, secondary, primaryLabel, primary));
+        d.show();
+        return d;
+    }
+
+    /**
+     * A sheet with a title, any form view (radio group, check boxes) and 保存/取消 actions: the
+     * choices only count once saved, as before (v1.25 changes the frame, not the behaviour).
+     */
+    public static Dialog formSheet(Activity a, String title, View body, String primaryLabel, Runnable primary) {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sheetTitle(a, title));
+        box.addView(body);
+        Dialog d = sheet(a, box);
+        box.addView(actions(d, a, "取消", null, primaryLabel, primary));
+        d.show();
+        return d;
+    }
+
+    public interface SwitchRow { String title(); String sub(); boolean get(); void set(boolean on); }
+
+    /** Several switches in one sheet, each takes effect at once (no OK button), then {@code changed} runs. */
+    public static Dialog switchSheet(Activity a, String title, final Runnable changed, SwitchRow... rows) {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sheetTitle(a, title));
+        for (final SwitchRow r : rows) {
+            final LinearLayout l = new LinearLayout(a);
+            l.setOrientation(LinearLayout.HORIZONTAL);
+            l.setGravity(Gravity.CENTER_VERTICAL);
+            l.setPadding(dp(a, 24), dp(a, 12), dp(a, 20), dp(a, 12));
+            l.setMinimumHeight(dp(a, r.sub() == null ? 56 : 64));
+            LinearLayout texts = new LinearLayout(a);
+            texts.setOrientation(LinearLayout.VERTICAL);
+            texts.addView(text(a, r.title(), BODY_L, TEXT));
+            if (r.sub() != null) texts.addView(text(a, r.sub(), BODY_M, TEXT_2));
+            l.addView(texts, new LinearLayout.LayoutParams(0, -2, 1f));
+            final android.widget.Switch sw = new android.widget.Switch(a);
+            sw.setChecked(r.get());
+            styleSwitch(sw);
+            sw.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            sw.setFocusable(false);
+            l.setContentDescription(r.title() + (r.sub() == null ? "" : "，" + r.sub()));
+            if (android.os.Build.VERSION.SDK_INT >= 30) l.setStateDescription(sw.isChecked() ? "已开启" : "已关闭");
+            sw.setOnCheckedChangeListener((b, on) -> {
+                r.set(on);
+                if (android.os.Build.VERSION.SDK_INT >= 30) l.setStateDescription(on ? "已开启" : "已关闭");
+                haptic(l, HAPTIC_CONFIRM);
+                if (changed != null) changed.run();
+            });
+            l.addView(sw);
+            ripple(l);
+            l.setOnClickListener(v -> sw.toggle());
+            box.addView(l);
+        }
+        Dialog d = sheet(a, box);
+        d.show();
+        return d;
+    }
+
+    /** Light haptic of a kind (372), only when the view is attached. */
+    public static void haptic(View v, int kind) {
+        try { v.performHapticFeedback(hapticConstant(kind)); } catch (Throwable ignored) {}
+    }
+
+    /**
+     * Centred dialog (v1.25), only for multi-line text editing where a draggable sheet and the keyboard
+     * would push each other: surface 2, 28 dp corners, title, the view, 取消 / 保存 at the bottom right.
+     */
+    public static Dialog dialog(Activity a, String title, View body, String primaryLabel, final Runnable primary) {
+        final Dialog d = new Dialog(a, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar);
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, dp(a, 24), 0, dp(a, 16));
+        GradientDrawable bg = round(sheetBg(a), dp(a, 28));
+        if (amoled(a)) bg.setStroke(Math.max(1, dp(a, 1)), HAIRLINE_STRONG);
+        box.setBackground(bg);
+        box.addView(sheetTitle(a, title));
+        box.addView(body);
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        row.setPadding(dp(a, 16), dp(a, 8), dp(a, 16), 0);
+        android.widget.Button cancel = textButton(a, "取消");
+        cancel.setTextColor(TEXT_2);
+        cancel.setOnClickListener(v -> d.dismiss());
+        android.widget.Button ok = textButton(a, primaryLabel);
+        ok.setOnClickListener(v -> { d.dismiss(); if (primary != null) primary.run(); });
+        row.addView(cancel);
+        row.addView(ok);
+        box.addView(row);
+        d.setContentView(box);
+        Window w = d.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
+            int wdp = a.getResources().getConfiguration().screenWidthDp;
+            w.setLayout(wdp > 600 ? dp(a, 560) : a.getResources().getDisplayMetrics().widthPixels - dp(a, 48), ViewGroup.LayoutParams.WRAP_CONTENT);
             WindowManager.LayoutParams lp = w.getAttributes();
-            lp.dimAmount = 0.4f;
+            lp.dimAmount = amoled(a) ? 0.62f : 0.5f;
             w.setAttributes(lp);
             w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+            if (!Prefs.animationsOff(a)) {
+                box.setAlpha(0f);
+                box.setScaleX(0.96f);
+                box.setScaleY(0.96f);
+                box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200).setInterpolator(easeOut()).start();
+            }
         }
+        d.show();
         return d;
     }
 
@@ -399,10 +765,7 @@ public final class Ui {
     public static Dialog choiceSheet(Activity a, String title, String[] labels, int[] swatches, int sel, final Pick cb) {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        TextView head = text(a, title, TITLE_M, TEXT);
-        head.setPadding(dp(a, 24), dp(a, 4), dp(a, 24), dp(a, 8));
-        heading(head);
-        box.addView(head);
+        box.addView(sheetTitle(a, title));
         final Dialog[] d = new Dialog[1];
         for (int i = 0; i < labels.length; i++) {
             final int which = i;

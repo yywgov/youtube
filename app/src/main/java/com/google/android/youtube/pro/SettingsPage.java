@@ -1,6 +1,5 @@
 package com.google.android.youtube.pro;
 
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -212,10 +211,7 @@ public class SettingsPage {
         master.setOnCheckedChangeListener((b, on) -> { for (android.widget.CheckBox cb : boxes) cb.setEnabled(on); });
         ScrollView sv = new ScrollView(a);
         sv.addView(box);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("SponsorBlock")
-                .setView(sv)
-                .setPositiveButton("确定", (d, w) -> {
+        Ui.formSheet(a, "SponsorBlock", sv, "确定", () -> {
                     StringBuilder b = new StringBuilder();
                     for (int i = 0; i < keys.length; i++) {
                         if (!boxes[i].isChecked()) continue;
@@ -225,9 +221,7 @@ public class SettingsPage {
                     Prefs.put(a, Prefs.SPONSOR_BLOCK, master.isChecked());
                     Prefs.put(a, Prefs.SPONSOR_CATS, b.toString());
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     // ===================== 2. 后台播放 =====================
@@ -249,6 +243,9 @@ public class SettingsPage {
         android.widget.CheckBox cb = new android.widget.CheckBox(a);
         cb.setText(text);
         cb.setTextColor(Ui.TEXT);
+        cb.setTextSize(15);
+        cb.setButtonTintList(Ui.accentList(a));
+        cb.setMinHeight(dp(48));
         cb.setChecked(on);
         parent.addView(cb);
         return cb;
@@ -385,7 +382,7 @@ public class SettingsPage {
     private void pickNext() {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.setPadding(dp(24), 0, dp(24), 0);
         final android.widget.RadioGroup g1 = radios(box, NEXT_LABELS, Math.max(0, java.util.Arrays.asList(NEXT_VALUES).indexOf(Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))));
         // (311) off by default: recommended autoplay skips a target already watched
         final android.widget.CheckBox skip = new android.widget.CheckBox(a);
@@ -404,24 +401,19 @@ public class SettingsPage {
         box.addView(note);
         ScrollView sv = new ScrollView(a);
         sv.addView(box);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("接下来播放")
-                .setView(sv)
-                .setPositiveButton("确定", (d, w) -> {
+        Ui.formSheet(a, "接下来播放", sv, "确定", () -> {
                     Prefs.put(a, Prefs.NEXT_SOURCE, NEXT_VALUES[Math.max(0, checkedIndex(g1))]);
                     Prefs.put(a, Prefs.SKIP_WATCHED_NEXT, skip.isChecked());
                     Prefs.put(a, Prefs.LIST_END_NEXT, listEnd.isChecked());
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     /** Notification layout (237): left/right keys -> notifSeek, fifth key -> notifWatchLater. */
     private void pickNotif() {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.setPadding(dp(24), 0, dp(24), 0);
         box.addView(Ui.title(a, "左右两个键"));
         final android.widget.RadioGroup g1 = radios(box, new String[]{"上一个 / 下一个", "快退 10 秒 / 快进 30 秒"}, Prefs.on(a, Prefs.NOTIF_SEEK) ? 1 : 0);
         box.addView(Ui.title(a, "第四个键"));
@@ -433,17 +425,12 @@ public class SettingsPage {
         box.addView(note);
         ScrollView sv = new ScrollView(a);
         sv.addView(box);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("通知栏按钮")
-                .setView(sv)
-                .setPositiveButton("确定", (d, w) -> {
+        Ui.formSheet(a, "通知栏按钮", sv, "确定", () -> {
                     Prefs.put(a, Prefs.NOTIF_SEEK, checkedIndex(g1) == 1);
                     Prefs.put(a, Prefs.NOTIF_WL, checkedIndex(g2) == 0);
                     Prefs.put(a, Prefs.HEADSET_MULTI, multi.isChecked());
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     // ===================== 3. 首页与内容 =====================
@@ -484,7 +471,7 @@ public class SettingsPage {
         for (int i = 0; i < WATCHED_VALUES.length; i++) if (WATCHED_VALUES[i] == c) sel = i;
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.setPadding(dp(24), 0, dp(24), 0);
         final android.widget.RadioGroup g = radios(box, WATCHED_LABELS, sel);
         // (458) the related-videos switch lives here now
         final android.widget.CheckBox rel = new android.widget.CheckBox(a);
@@ -494,18 +481,13 @@ public class SettingsPage {
         box.addView(rel);
         ScrollView sv = new ScrollView(a);
         sv.addView(box);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("隐藏已看完的视频")
-                .setView(sv)
-                .setPositiveButton("确定", (d, w) -> {
+        Ui.formSheet(a, "隐藏已看完的视频", sv, "确定", () -> {
                     Prefs.PrefStore s = new Prefs.PrefStore(Prefs.get(a));
                     PrefsModel.writeWatchedChoice(s, WATCHED_VALUES[Math.max(0, checkedIndex(g))]);
                     s.put(Prefs.HIDE_WATCHED_RELATED, rel.isChecked());
                     s.apply();
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     private String refreshLabel() {
@@ -517,7 +499,7 @@ public class SettingsPage {
     private void pickRefresh() {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
+        box.setPadding(dp(24), 0, dp(24), 0);
         final android.widget.RadioGroup g = radios(box, new String[]{"完整刷新（默认，最容易出新视频）", "轻量刷新（实验：保留离线缓存，更快；没出新视频就改回）"},
                 Prefs.on(a, Prefs.LIGHT_REFRESH) ? 1 : 0);
         final android.widget.CheckBox cnt = new android.widget.CheckBox(a);
@@ -527,16 +509,11 @@ public class SettingsPage {
         box.addView(cnt);
         ScrollView sv = new ScrollView(a);
         sv.addView(box);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("下拉刷新")
-                .setView(sv)
-                .setPositiveButton("确定", (d, w) -> {
+        Ui.formSheet(a, "下拉刷新", sv, "确定", () -> {
                     Prefs.put(a, Prefs.LIGHT_REFRESH, checkedIndex(g) == 1);
                     Prefs.put(a, Prefs.REFRESH_COUNT, cnt.isChecked());
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     private String filterLabel() {
@@ -579,16 +556,13 @@ public class SettingsPage {
     }
 
     private void confirmClearBlocks() {
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("清空屏蔽列表？")
-                .setMessage("屏蔽的频道 " + Prefs.lines(a, Prefs.BLOCK_CHANNELS).size() + " 个、关键词 " + Prefs.lines(a, Prefs.BLOCK_WORDS).size() + " 个会被删除。")
-                .setPositiveButton("清空", (d, w) -> {
+        Ui.confirmSheet(a, "清空屏蔽列表？",
+                "屏蔽的频道 " + Prefs.lines(a, Prefs.BLOCK_CHANNELS).size() + " 个、关键词 " + Prefs.lines(a, Prefs.BLOCK_WORDS).size() + " 个会被删除。",
+                "清空", () -> {
                     Prefs.clearBlockLists(a);
                     applied();
                     toastShort("已清空屏蔽列表");
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                }, "取消", null);
     }
 
     // ===================== 4. 外观与交互 =====================
@@ -613,23 +587,11 @@ public class SettingsPage {
 
     /** List look (476): compact layout, uniform card style and dimmed thumbnails in one sheet. */
     private void pickListStyle() {
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
-        final android.widget.CheckBox compact = check(box, "首页紧凑列表（小图在左、标题在右，一屏看更多）", Prefs.on(a, Prefs.COMPACT));
-        final android.widget.CheckBox card = check(box, "统一卡片样式（缩略图圆角统一、标题两行、时长和进度条更醒目）", Prefs.on(a, Prefs.CARD_STYLE));
-        final android.widget.CheckBox dim = check(box, "深色模式压暗缩略图（夜里看列表不刺眼）", Prefs.on(a, Prefs.DIM_THUMBS));
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("列表样式")
-                .setView(box)
-                .setPositiveButton("确定", (d, w) -> {
-                    Prefs.put(a, Prefs.COMPACT, compact.isChecked());
-                    Prefs.put(a, Prefs.CARD_STYLE, card.isChecked());
-                    Prefs.put(a, Prefs.DIM_THUMBS, dim.isChecked());
-                    applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        // v1.25: switches that take effect at once, same keys as before
+        Ui.switchSheet(a, "列表样式", this::applied,
+                sw("首页紧凑列表", "小图在左、标题在右，一屏看更多", Prefs.COMPACT),
+                sw("统一卡片样式", "缩略图圆角统一、标题两行、时长和进度条更醒目", Prefs.CARD_STYLE),
+                sw("深色模式压暗缩略图", "夜里看列表不刺眼", Prefs.DIM_THUMBS));
     }
 
     private String perfLabel() {
@@ -638,21 +600,19 @@ public class SettingsPage {
 
     /** Smoothness (476): list rendering optimisation and the off-screen pre-raster experiment. */
     private void pickPerf() {
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(4), dp(20), 0);
-        final android.widget.CheckBox perf = check(box, "列表渲染优化（屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭）", Prefs.on(a, Prefs.PERF_CSS));
-        final android.widget.CheckBox ras = check(box, "预渲染屏外内容（实验：滑动更跟手，但更耗内存和电；可用「关于与诊断 → 流畅度自测」对比）", Prefs.on(a, Prefs.PRE_RASTER));
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("滑动流畅度")
-                .setView(box)
-                .setPositiveButton("确定", (d, w) -> {
-                    Prefs.put(a, Prefs.PERF_CSS, perf.isChecked());
-                    Prefs.put(a, Prefs.PRE_RASTER, ras.isChecked());
-                    applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        Ui.switchSheet(a, "滑动流畅度", this::applied,
+                sw("列表渲染优化", "屏幕外的卡片不渲染、去掉骨架闪烁；排版异常时可关闭", Prefs.PERF_CSS),
+                sw("预渲染屏外内容（实验）", "滑动更跟手，但更耗内存和电", Prefs.PRE_RASTER));
+    }
+
+    /** One switch of a switch sheet over a boolean key. */
+    private Ui.SwitchRow sw(final String title, final String sub, final String key) {
+        return new Ui.SwitchRow() {
+            @Override public String title() { return title; }
+            @Override public String sub() { return sub; }
+            @Override public boolean get() { return Prefs.on(a, key); }
+            @Override public void set(boolean on) { Prefs.put(a, key, on); }
+        };
     }
 
     // accent (103/351/361/463): the brand red is the only colour now; an older pick can be set back
@@ -710,13 +670,10 @@ public class SettingsPage {
 
     private void rulesDialog() {
         final boolean on = Prefs.on(a, Prefs.REMOTE_RULES);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("远程屏蔽规则")
-                .setMessage("只从本 App 的 GitHub 仓库拉取并校验（SHA-256），失败用内置规则。\n\n状态：" + RemoteRules.status(a))
-                .setPositiveButton("立即检查", (d, w) -> RemoteRules.checkNow(a, this::refreshAll))
-                .setNeutralButton(on ? "关闭自动更新" : "开启自动更新", (d, w) -> { Prefs.put(a, Prefs.REMOTE_RULES, !on); applied(); })
-                .setNegativeButton("关闭", null)
-                .show();
+        Ui.confirmSheet(a, "远程屏蔽规则",
+                "只从本 App 的 GitHub 仓库拉取并校验（SHA-256），失败用内置规则。\n\n状态：" + RemoteRules.status(a),
+                "立即检查", () -> RemoteRules.checkNow(a, this::refreshAll),
+                on ? "关闭自动更新" : "开启自动更新", () -> { Prefs.put(a, Prefs.REMOTE_RULES, !on); applied(); });
     }
 
     private static final String REFRESH_HINT = "，滑动时大多没到最高刷新率，可能被系统按应用限制了；点此打开显示设置，在「屏幕刷新率 → 应用」里设为高刷";
@@ -1104,6 +1061,8 @@ public class SettingsPage {
             b.setText(labels[i]);
             b.setTextColor(Ui.TEXT);
             b.setTextSize(15);
+            b.setButtonTintList(Ui.accentList(a));
+            b.setMinHeight(dp(48));
             b.setPadding(dp(8), dp(8), dp(8), dp(8));
             g.addView(b);
             if (i == sel) g.check(b.getId());
@@ -1160,23 +1119,27 @@ public class SettingsPage {
         e.setHintTextColor(Ui.HINT);
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         e.setMinLines(4);
+        e.setMaxLines(10);
         e.setGravity(Gravity.TOP | Gravity.START);
+        // v1.25: surface-3 field, 12 dp corners, 2 dp bright-red outline while focused
+        android.graphics.drawable.StateListDrawable fb = new android.graphics.drawable.StateListDrawable();
+        android.graphics.drawable.GradientDrawable focused = Ui.round(Ui.chipBg(a), dp(12));
+        focused.setStroke(dp(2), Ui.ACCENT_INK);
+        fb.addState(new int[]{android.R.attr.state_focused}, focused);
+        fb.addState(new int[]{}, Ui.round(Ui.chipBg(a), dp(12)));
+        e.setBackground(fb);
+        e.setPadding(dp(16), dp(12), dp(16), dp(12));
         FrameLayout f = new FrameLayout(a);
-        f.setPadding(dp(20), dp(8), dp(20), 0);
+        f.setPadding(dp(24), 0, dp(24), 0);
         f.addView(e);
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle(title)
-                .setView(f)
-                .setPositiveButton("保存", (d, w) -> {
+        Ui.dialog(a, title, f, "保存", () -> {
                     Prefs.put(a, key, e.getText().toString());
                     // normalise (trim, dedupe, cap) by re-saving the parsed list
                     StringBuilder b = new StringBuilder();
                     for (String s : Prefs.lines(a, key)) { if (b.length() > 0) b.append('\n'); b.append(s); }
                     Prefs.put(a, key, b.toString());
                     applied();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                });
     }
 
     private void copyReport() { copyReport(a); }

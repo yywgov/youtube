@@ -17,4 +17,14 @@ public class RedesignTest {
         assertFalse(Logic.isDefaultAccent("#00BFA5"));
         assertFalse(Logic.isDefaultAccent("#3EA6FF"));
     }
+
+    /** Sheet drag: past 35 % or a fast downward fling closes, otherwise it springs back. */
+    @Test public void sheetDismiss() {
+        assertTrue(Logic.sheetShouldDismiss(400, 1000, 0, 3));
+        assertFalse(Logic.sheetShouldDismiss(300, 1000, 0, 3));
+        assertTrue(Logic.sheetShouldDismiss(50, 1000, 3500, 3));
+        assertFalse(Logic.sheetShouldDismiss(50, 1000, 2500, 3));
+        assertFalse(Logic.sheetShouldDismiss(-20, 1000, 5000, 3));
+        assertFalse(Logic.sheetShouldDismiss(10, 0, 0, 3));
+    }
 }

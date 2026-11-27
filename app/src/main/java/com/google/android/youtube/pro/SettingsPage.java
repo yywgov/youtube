@@ -799,11 +799,16 @@ public class SettingsPage {
         stack.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         pages.add(root);
         if (under != null) {
-            int ms = Ui.anim(a, Ui.ANIM_MS);
-            root.setTranslationX(dp(48));
+            // shared axis X (v1.27): the new page comes 32 dp from the right and fades in, ease-out 260 ms;
+            // the page under it moves 32 dp left and fades, so the eye follows the direction
+            int ms = Ui.anim(a, Ui.PAGE_IN);
+            root.setTranslationX(dp(32));
             root.setAlpha(0f);
-            root.animate().translationX(0f).alpha(1f).setDuration(ms).withEndAction(() -> under.setVisibility(View.INVISIBLE)).start();
-            if (ms == 0) under.setVisibility(View.INVISIBLE);
+            under.animate().cancel();
+            root.animate().translationX(0f).alpha(1f).setDuration(ms).setInterpolator(Ui.easeOut())
+                    .withEndAction(() -> { under.setVisibility(View.INVISIBLE); under.setTranslationX(0f); under.setAlpha(1f); }).start();
+            if (ms > 0) under.animate().translationX(-dp(32)).alpha(0f).setDuration(ms).setInterpolator(Ui.easeOut()).start();
+            else under.setVisibility(View.INVISIBLE);
             root.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
         }
     }
@@ -819,7 +824,15 @@ public class SettingsPage {
         under.setVisibility(View.VISIBLE);
         refreshAll();
         final FrameLayout st = stack;
-        top.animate().translationX(dp(48)).alpha(0f).setDuration(Ui.anim(a, 150)).withEndAction(() -> {
+        // back (v1.27): 200 ms, interruptible from wherever the forward move had got to
+        int ms = Ui.anim(a, Ui.PAGE_OUT);
+        top.animate().cancel();
+        under.animate().cancel();
+        if (ms > 0) {
+            if (under.getAlpha() >= 1f && under.getTranslationX() == 0f) { under.setTranslationX(-dp(32)); under.setAlpha(0f); }
+            under.animate().translationX(0f).alpha(1f).setDuration(ms).setInterpolator(Ui.easeOut()).start();
+        } else { under.setTranslationX(0f); under.setAlpha(1f); }
+        top.animate().translationX(dp(32)).alpha(0f).setDuration(ms).setInterpolator(Ui.easeOut()).withEndAction(() -> {
             if (st != null) st.removeView(top);
         }).start();
         under.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
@@ -940,6 +953,7 @@ public class SettingsPage {
         sw.setOnCheckedChangeListener((b, checked) -> {
             set.set(checked);
             stateDesc(l, checked);
+            Ui.haptic(l, Ui.HAPTIC_CONFIRM);   // (v1.27) a switch confirms with a light tick
             applied();
         });
         l.addView(sw);

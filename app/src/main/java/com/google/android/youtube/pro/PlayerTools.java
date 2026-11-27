@@ -93,6 +93,7 @@ public final class PlayerTools {
                 t.setGravity(Gravity.CENTER);
                 t.setTag(r);
                 t.setMinHeight(dp(40));
+                Ui.pressScale(t);
                 t.setOnClickListener(v -> {
                     send(r);
                     showRate(r);
@@ -220,6 +221,7 @@ public final class PlayerTools {
         b.setContentDescription(spoken);
         b.setFocusable(true);
         b.setClickable(true);
+        Ui.pressScale(b);
         b.setOnClickListener(v -> {
             MainActivity.js("ytl.seekBy(" + sec + ")");
             if (seekShown != null && seekShown != b) seekReset.run();

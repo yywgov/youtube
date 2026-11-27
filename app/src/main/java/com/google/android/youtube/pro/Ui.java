@@ -225,6 +225,7 @@ public final class Ui {
         b.setMinHeight(dp(c, 48));
         b.setMinimumHeight(dp(c, 48));
         b.setBackground(round(accent(c), dp(c, 24)));
+        pressScale(b);
         return b;
     }
 
@@ -237,6 +238,7 @@ public final class Ui {
         style(b, LABEL_L);
         b.setMinHeight(dp(c, 48));
         b.setMinimumHeight(dp(c, 48));
+        pressScale(b);
         return b;
     }
 
@@ -293,14 +295,42 @@ public final class Ui {
         return ColorStateList.valueOf(accent(c));
     }
 
-    // ---- motion (v1.25, DESIGN.md "Motion") ----
+    // ---- motion (v1.25/v1.27, DESIGN.md "Motion"): only transform and opacity, all interruptible ----
     public static final int SHEET_IN = 360, SHEET_OUT = 240, SHEET_BACK = 200;
+    public static final int PRESS_IN = 100, PRESS_OUT = 160, SNACK_IN = 220, SNACK_OUT = 160, PAGE_IN = 260, PAGE_OUT = 200, SWITCH_MS = 150;
     public static final int SCRIM_BLACK = 0x9E000000;   // 62 % on pure black
     public static final int SCRIM_DARK = 0x80000000;    // 50 % on dark grey
 
     /** Drawer curve (0.32, 0.72, 0, 1): sheets in and out. */
     public static android.view.animation.Interpolator drawer() {
         return new android.view.animation.PathInterpolator(0.32f, 0.72f, 0f, 1f);
+    }
+
+    /** Ease-in-out (0.77, 0, 0.175, 1): things moving on screen (a selected segment). */
+    public static android.view.animation.Interpolator easeInOut() {
+        return new android.view.animation.PathInterpolator(0.77f, 0f, 0.175f, 1f);
+    }
+
+    /**
+     * Press feedback (v1.27) for buttons, segments and the seek buttons, not for list rows (they keep
+     * the platform ripple): scale .96 in 100 ms, back in 160 ms, strong ease-out. Nothing when the
+     * system's "remove animations" is on.
+     */
+    public static void pressScale(View v) {
+        if (Prefs.animationsOff(v.getContext())) return;
+        android.animation.StateListAnimator sla = new android.animation.StateListAnimator();
+        sla.addState(new int[]{android.R.attr.state_pressed}, scaleTo(v, 0.96f, PRESS_IN));
+        sla.addState(new int[]{}, scaleTo(v, 1f, PRESS_OUT));
+        v.setStateListAnimator(sla);
+    }
+
+    private static android.animation.Animator scaleTo(View v, float to, int ms) {
+        android.animation.AnimatorSet set = new android.animation.AnimatorSet();
+        set.playTogether(android.animation.ObjectAnimator.ofFloat(v, "scaleX", to),
+                android.animation.ObjectAnimator.ofFloat(v, "scaleY", to));
+        set.setDuration(ms);
+        set.setInterpolator(easeOut());
+        return set;
     }
 
     /** Strong ease-out (0.23, 1, 0.32, 1): entering things, press release, snack bars. */
@@ -668,9 +698,9 @@ public final class Ui {
         return d;
     }
 
-    /** Light haptic of a kind (372), only when the view is attached. */
+    /** Light haptic of a kind (372), only while haptics are on (the stored 轻震 value, default on). */
     public static void haptic(View v, int kind) {
-        try { v.performHapticFeedback(hapticConstant(kind)); } catch (Throwable ignored) {}
+        try { if (Prefs.on(v.getContext(), Prefs.HAPTIC)) v.performHapticFeedback(hapticConstant(kind)); } catch (Throwable ignored) {}
     }
 
     /**
@@ -757,6 +787,7 @@ public final class Ui {
         b.setMaxLines(2);
         b.setPadding(dp(c, 8), dp(c, 8), dp(c, 8), dp(c, 8));
         b.setOnClickListener(click);
+        pressScale(b);
         return b;
     }
 

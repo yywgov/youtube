@@ -34,3 +34,13 @@ test('v1.26 snack bar, empty note and press feedback follow the design', async (
   assert.ok(css.includes('user-select:none'));
   assert.ok(!/transition:all/.test(css), 'never transition: all');
 });
+
+test('v1.27 injected motion is off with "remove animations" and in battery saver', async () => {
+  const { w } = await load({ path: '/' });
+  const css = w.document.getElementById('ytl-css').textContent;
+  for (const sel of ['#ytl-sb', '#ytl-gear', '#ytl-tools', '#ytl-empty button', '#ytl-chips a']) {
+    assert.ok(css.includes('html[data-ytl-lowmotion] ' + sel), 'low motion: ' + sel);
+    assert.ok(css.includes('html[data-ytl-lowpower] ' + sel), 'battery saver: ' + sel);
+  }
+  assert.ok(!/ytm-rich-item-renderer[^{]*\{[^}]*transition/.test(css), 'no motion on feed cards');
+});

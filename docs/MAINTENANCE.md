@@ -56,3 +56,10 @@
 - 强调色：只在不是品牌红时出现「改回品牌红」一行（v1.23 起品牌色为红 #C8102E，旧默认蓝 #2F6BFF 视同品牌红）。备份只存文件（剪贴板恢复保留，兼容以前的剪贴板备份）。
 - 「记录与隐私」卡、开源许可弹窗、数据页说明脚注、睡眠页只读「当前」行删除；问题报告并入「诊断」页。
 - 保活跳转只保留 ColorOS/OPPO 组件。
+
+## 界面设计系统（v1.23–v1.27 重设计）
+- 颜色只写在 `Ui.java`：品牌红填充 `DEFAULT_ACCENT #C8102E`，深底上的红色文字/图标/小红点 `ACCENT_INK #FF5468`；表面三级 `surface()` / `sheetBg()` / `chipBg()`。旧默认蓝 `#2F6BFF` 视同品牌红（`Logic.isDefaultAccent`），`accent` key 不改名。
+- 字号用 `Ui.Type`（TITLE_L/TITLE_M/BODY_L/BODY_M/LABEL_L/LABEL_M/CAPTION/NUMERAL），只用 400/500；会变的数字 `Ui.tnum`。
+- 图标：`node tools/icons/gen-icons.mjs` 从 `tools/icons/kubai/`（Kubai Icons，MIT）和 `tools/icons/material/`（Material Symbols Rounded，Apache-2.0）生成 drawable；顶栏两个注入按钮的 path 也由它打印。启动器图标不在此脚本。
+- 弹层：`Ui.sheet`（`Ui.Sheet` 是 Dialog，dismiss 带退出动画、可拖动关闭）；确认 `Ui.confirmSheet`、表单 `Ui.formSheet`、多开关 `Ui.switchSheet`、多行编辑 `Ui.dialog`。不要为界面新开 Activity（onStop 会影响后台播放）。
+- 动效：只动 transform/opacity，曲线 `Ui.easeOut()/drawer()/easeInOut()`，时长常量在 Ui；`Prefs.animationsOff()` 时全部为 0。信息流和滚动不加动画。

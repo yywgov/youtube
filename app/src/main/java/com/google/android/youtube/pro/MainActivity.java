@@ -89,6 +89,7 @@ public class MainActivity extends Activity {
     private FrameLayout overlayRoot;
     private LinearLayout snack;
     private TextView snackText;
+    private android.view.View snackClose;
     private Button snackAction;
     private final Runnable hideSnackRun = this::hideSnack;
     private View blackView;
@@ -848,11 +849,20 @@ public class MainActivity extends Activity {
         haptic(Ui.HAPTIC_LONG);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        TextView head = Ui.text(this, title.isEmpty() ? "视频" : title, 14, Ui.TEXT_2);
+        // v1.26: the video's title (two lines) and its channel on top, no thumbnail (no extra request)
+        TextView head = Ui.text(this, title.isEmpty() ? "视频" : title, Ui.LABEL_L, Ui.TEXT);
         head.setMaxLines(2);
         head.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        head.setPadding(dp(20), dp(4), dp(20), dp(8));
+        head.setPadding(dp(24), dp(4), dp(24), channel.isEmpty() ? dp(12) : 0);
+        Ui.heading(head);
         box.addView(head);
+        if (!channel.isEmpty()) {
+            TextView ch = Ui.text(this, channel, Ui.BODY_M, Ui.TEXT_2);
+            ch.setSingleLine(true);
+            ch.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            ch.setPadding(dp(24), 0, dp(24), dp(12));
+            box.addView(ch);
+        }
         final android.app.Dialog[] d = new android.app.Dialog[1];
         // already in "watch later" (331): adding it again makes no sense there
         // signed out (346): the row would only say "sign in first"
@@ -1009,10 +1019,12 @@ public class MainActivity extends Activity {
             // the bar starts leaving the moment its action is pressed (366)
             snackAction.setOnClickListener(v -> { hideSnack(); if (onAction != null) onAction.run(); });
         } else snackAction.setVisibility(View.GONE);
+        if (snackClose != null) snackClose.setVisibility(action != null && ms >= 6000 ? View.VISIBLE : View.GONE);
+        snack.setPaddingRelative(dp(16), dp(2), snackClose != null && snackClose.getVisibility() == View.VISIBLE ? dp(4) : (action != null ? dp(8) : dp(16)), dp(2));
         snack.setVisibility(View.VISIBLE);
         snack.setAlpha(0f);
         snack.setTranslationY(dp(8));
-        snack.animate().alpha(1f).translationY(0f).setDuration(Ui.anim(this, Ui.ANIM_MS)).start();
+        snack.animate().alpha(1f).translationY(0f).setDuration(Ui.anim(this, 220)).setInterpolator(Ui.easeOut()).start();
         snack.announceForAccessibility(text);   // (375)
         MAIN.removeCallbacks(hideSnackRun);
         MAIN.postDelayed(hideSnackRun, ms);
@@ -1028,7 +1040,7 @@ public class MainActivity extends Activity {
         if (snack == null || snack.getVisibility() != View.VISIBLE) { snackHasAction = false; return; }
         snackHasAction = false;
         snack.animate().cancel();
-        snack.animate().alpha(0f).translationY(dp(8)).setDuration(Ui.anim(this, 150)).withEndAction(() -> {
+        snack.animate().alpha(0f).translationY(dp(4)).setDuration(Ui.anim(this, 160)).setInterpolator(Ui.easeOut()).withEndAction(() -> {
             if (snack == null) return;
             snack.setVisibility(View.GONE);
             snack.setTranslationY(0f);
@@ -1147,10 +1159,18 @@ public class MainActivity extends Activity {
             pill.setGravity(android.view.Gravity.CENTER_VERTICAL);
             pill.setPadding(dp(12), dp(8), dp(14), dp(8));
             pill.setBackground(Ui.round(Ui.OVERLAY_PILL, dp(18)));
-            final Ui.Ring ring = new Ui.Ring(this, Ui.accent(this));
-            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(18), dp(18));
+            // v1.26: line lock icon inside the bright-red hold ring
+            final Ui.Ring ring = new Ui.Ring(this, Ui.ACCENT_INK);
+            FrameLayout ringBox = new FrameLayout(this);
+            ringBox.addView(ring, new FrameLayout.LayoutParams(dp(24), dp(24)));
+            android.widget.ImageView lockIc = new android.widget.ImageView(this);
+            lockIc.setImageResource(R.drawable.ic_lock);
+            lockIc.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT));
+            lockIc.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            ringBox.addView(lockIc, new FrameLayout.LayoutParams(dp(14), dp(14), android.view.Gravity.CENTER));
+            LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(dp(24), dp(24));
             rp.rightMargin = dp(8);
-            pill.addView(ring, rp);
+            pill.addView(ringBox, rp);
             final TextView label = new TextView(this);
             label.setText("已锁定，长按 1.5 秒解锁");
             label.setTextColor(Ui.TEXT);
@@ -1289,25 +1309,34 @@ public class MainActivity extends Activity {
             LinearLayout sb = new LinearLayout(this);
             sb.setOrientation(LinearLayout.HORIZONTAL);
             sb.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            sb.setPadding(dp(16), dp(6), dp(6), dp(6));
-            sb.setBackground(Ui.round(Ui.SNACK, dp(10)));
-            sb.setElevation(dp(6));
-            snackText = new TextView(this);
-            snackText.setTextColor(Ui.TEXT);
-            snackText.setTextSize(14);
+            // v1.26: #2A2A2A, 12 dp corners, 1 dp hairline, shadow (it floats over any picture)
+            sb.setPadding(dp(16), dp(2), dp(4), dp(2));
+            sb.setMinimumHeight(dp(52));
+            android.graphics.drawable.GradientDrawable sbg = Ui.round(Ui.SNACK, dp(12));
+            sbg.setStroke(Math.max(1, dp(1)), Ui.HAIRLINE);
+            sb.setBackground(sbg);
+            sb.setElevation(dp(8));
+            snackText = Ui.text(this, "", Ui.BODY_M, Ui.TEXT);
             snackText.setMaxLines(2);
             snackText.setEllipsize(android.text.TextUtils.TruncateAt.END);
             sb.addView(snackText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             snackAction = new Button(this, null, android.R.attr.borderlessButtonStyle);
             snackAction.setTextColor(Ui.accentText(this));
             snackAction.setAllCaps(false);
+            Ui.style(snackAction, Ui.LABEL_L);
             sb.addView(snackAction, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
-            Button close = new Button(this, null, android.R.attr.borderlessButtonStyle);
-            close.setText("✕");
-            close.setTextColor(Ui.TEXT_2);
+            // close: a 20 dp line x in a 48 dp target, only on bars with an action that stay 6 s or more
+            android.widget.ImageButton close = new android.widget.ImageButton(this);
+            close.setImageResource(R.drawable.ic_close_white);
+            close.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+            close.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+            close.setPadding(dp(14), dp(14), dp(14), dp(14));
+            close.setBackground(null);
+            Ui.ripple(close);
             close.setContentDescription("关闭");
             close.setOnClickListener(v -> hideSnack());
             sb.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            snackClose = close;
             sb.setVisibility(View.GONE);
             final FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             sp.gravity = android.view.Gravity.BOTTOM;

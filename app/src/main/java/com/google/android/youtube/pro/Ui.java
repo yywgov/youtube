@@ -39,7 +39,7 @@ public final class Ui {
     public static final int ACCENT_TINT = 0x38C8102E;
     // (350) every native colour comes from here; a contract test keeps literals out of other classes
     public static final int CHIP = 0xFF333333;        // chip / pill buttons on a sheet
-    public static final int SNACK = 0xF2323232;       // snack bar background
+    public static final int SNACK = 0xFF2A2A2A;       // snack bar background (v1.26, same as the injected #ytl-sb)
     public static final int HANDLE = 0xFF5F5F5F;      // drag handle on sheets
     public static final int HINT = 0xFF777777;        // input hint text
     public static final int TEXT_3 = 0xFFCCCCCC;      // secondary text on dialogs
@@ -327,6 +327,7 @@ public final class Ui {
         private final DragScroll scroll;
         private boolean closing;
         private boolean outsideCancels = true;
+        private boolean cancelable = true;
         private float downY, startT;
         private boolean dragging;
         private android.view.VelocityTracker vt;
@@ -338,7 +339,7 @@ public final class Ui {
             scrim = new View(a);
             scrim.setBackgroundColor(amoled(a) ? SCRIM_BLACK : SCRIM_DARK);
             scrim.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            scrim.setOnClickListener(v -> { if (outsideCancels) cancel(); });
+            scrim.setOnClickListener(v -> { if (outsideCancels && cancelable) cancel(); });
             root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
 
             panel = new LinearLayout(a);
@@ -374,7 +375,7 @@ public final class Ui {
             FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(sheetWidth(a), -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
             pp.topMargin = dp(a, 48);   // the scrim always shows above a tall sheet
             root.addView(panel, pp);
-            grip.setOnTouchListener((v, ev) -> drag(ev, true));
+            grip.setOnTouchListener((v, ev) -> canDrag() && drag(ev, true));
             // navigation bar inset under the content (gesture or button navigation)
             root.setOnApplyWindowInsetsListener((v, ins) -> {
                 panel.setPadding(0, 0, 0, ins.getSystemWindowInsetBottom());
@@ -390,6 +391,14 @@ public final class Ui {
                 w.setGravity(Gravity.BOTTOM);
             }
         }
+
+        /** Not cancelable (a download in progress): no back, no scrim tap, no drag to close. */
+        @Override public void setCancelable(boolean flag) {
+            super.setCancelable(flag);
+            cancelable = flag;
+        }
+
+        boolean canDrag() { return cancelable && !closing; }
 
         @Override public void setCanceledOnTouchOutside(boolean cancel) {
             super.setCanceledOnTouchOutside(cancel);
@@ -511,7 +520,8 @@ public final class Ui {
                     break;
                 case android.view.MotionEvent.ACTION_MOVE:
                     float dy = ev.getRawY() - y0, dx = Math.abs(ev.getRawX() - x0);
-                    if (!pulling && getScrollY() == 0 && dy > slop && dy > dx) {
+                    if (!pulling && sheet.canDrag() && getScrollY() == 0 && dy > slop && dy > dx
+                            && !innerScrollsUp(this, (int) ev.getRawX(), (int) ev.getRawY())) {
                         pulling = true;
                         android.view.MotionEvent down = android.view.MotionEvent.obtain(ev);
                         down.setAction(android.view.MotionEvent.ACTION_DOWN);
@@ -524,6 +534,22 @@ public final class Ui {
                     break;
             }
             return super.onInterceptTouchEvent(ev);
+        }
+
+        /** A scrolling box inside the sheet (release notes) that can still scroll up keeps the gesture. */
+        private static boolean innerScrollsUp(View v, int rx, int ry) {
+            if (!(v instanceof ViewGroup)) return false;
+            ViewGroup g = (ViewGroup) v;
+            int[] at = new int[2];
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View ch = g.getChildAt(i);
+                if (ch.getVisibility() != View.VISIBLE) continue;
+                ch.getLocationOnScreen(at);
+                if (rx < at[0] || ry < at[1] || rx >= at[0] + ch.getWidth() || ry >= at[1] + ch.getHeight()) continue;
+                if (ch.canScrollVertically(-1)) return true;
+                if (innerScrollsUp(ch, rx, ry)) return true;
+            }
+            return false;
         }
 
         @Override public boolean onTouchEvent(android.view.MotionEvent ev) {

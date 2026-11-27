@@ -1,7 +1,6 @@
 package com.google.android.youtube.pro;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
@@ -12,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.TypedValue;
+import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -151,12 +151,8 @@ public final class Updater {
                 if (!alive(act)) return;
                 if (fr == null) {
                     if (manual) {
-                        new AlertDialog.Builder(act, android.R.style.Theme_Material_Dialog_Alert)
-                                .setTitle("检查更新失败")
-                                .setMessage(ferr + "\n\n也可以到 GitHub Releases 手动下载。")
-                                .setPositiveButton("打开 Releases", (d, w) -> act.openExternal(RELEASES))
-                                .setNegativeButton("关闭", null)
-                                .show();
+                        Ui.confirmSheet(act, "检查更新失败", ferr + "\n\n也可以到 GitHub Releases 手动下载。",
+                                "打开 Releases", () -> act.openExternal(RELEASES), "关闭", null);
                     }
                     return;
                 }
@@ -280,28 +276,152 @@ public final class Updater {
 
     // ===================== dialogs =====================
 
-    private static void showUpdateDialog(MainActivity a, Release r, String installed, boolean manual) {
-        StringBuilder msg = new StringBuilder();
-        msg.append("当前版本：").append(installed).append('\n');
-        msg.append("最新版本：").append(r.version);
-        if (r.apkSize > 0) msg.append(String.format(Locale.ROOT, "（%.1f MB）", r.apkSize / 1048576.0));
-        // on mobile data say how much it costs (401)
-        if (metered(a)) msg.append(r.apkSize > 0 ? String.format(Locale.ROOT, "\n当前是移动数据，下载约用 %.1f MB 流量", r.apkSize / 1048576.0)
-                : "\n当前是移动数据，下载会使用流量");
-        if (r.sha256 != null || r.shaUrl != null) msg.append("\n下载后会校验 SHA-256");
-        String notes = cleanNotes(r.notes);
-        if (!notes.isEmpty()) msg.append("\n\n").append(notes);
-        AlertDialog.Builder b = new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("发现新版本 " + r.tag)
-                .setMessage(styled(msg.toString(), r.notes))
-                .setNegativeButton("以后再说", null);
-        if (r.apkUrl != null) {
-            b.setPositiveButton("立即更新", (d, w) -> download(a, r));
-        } else {
-            b.setPositiveButton("打开发布页", (d, w) -> a.openExternal(r.page));
+    // ---- the update sheet (v1.26): one sheet, info -> downloading in place ----
+    /** The open update sheet and the column inside it that each state fills. */
+    static final class UpdateSheet {
+        android.app.Dialog dialog;
+        LinearLayout body;
+        boolean live() { return dialog != null && dialog.isShowing(); }
+    }
+
+    private static int dp(android.content.Context c, float v) { return Ui.dp(c, v); }
+
+    /** 56 dp app icon, the big line and the small line under it. */
+    private static View sheetHead(MainActivity a, String big, String small) {
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(a, 24), dp(a, 4), dp(a, 24), dp(a, 16));
+        try {
+            android.widget.ImageView ic = new android.widget.ImageView(a);
+            ic.setImageDrawable(a.getApplicationInfo().loadIcon(a.getPackageManager()));
+            ic.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(a, 56), dp(a, 56));
+            ip.rightMargin = dp(a, 16);
+            row.addView(ic, ip);
+        } catch (Throwable ignored) {}
+        LinearLayout t = new LinearLayout(a);
+        t.setOrientation(LinearLayout.VERTICAL);
+        TextView b = Ui.text(a, big, Ui.TITLE_M, Ui.TEXT);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        Ui.tnum(b);
+        Ui.heading(b);
+        t.addView(b);
+        if (small != null) {
+            TextView s2 = Ui.text(a, small, Ui.BODY_M, Ui.TEXT_2);
+            Ui.tnum(s2);
+            t.addView(s2);
         }
-        if (!manual) b.setNeutralButton("跳过此版本", (d, w) -> Prefs.put(a, Prefs.SKIP_VERSION, r.tag));
-        b.show();
+        row.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+        return row;
+    }
+
+    /** Small surface-3 block: a caption over a value. */
+    private static View infoBlock(MainActivity a, String caption, String value) {
+        LinearLayout b = new LinearLayout(a);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setPadding(dp(a, 12), dp(a, 8), dp(a, 12), dp(a, 8));
+        b.setBackground(Ui.round(Ui.chipBg(a), dp(a, 8)));
+        b.addView(Ui.text(a, caption, Ui.CAPTION, Ui.TEXT_2));
+        TextView v = Ui.text(a, value, Ui.LABEL_M, Ui.TEXT);
+        Ui.tnum(v);
+        v.setMaxLines(2);
+        b.addView(v);
+        b.setContentDescription(caption + "：" + value);
+        return b;
+    }
+
+    /** "本次更新" box: dark, 16 dp corners, at most 40 % of the screen, scrolls. */
+    private static View notesBox(MainActivity a, String body, String md) {
+        final int max = Math.round(a.getResources().getDisplayMetrics().heightPixels * 0.4f);
+        android.widget.ScrollView sv = new android.widget.ScrollView(a) {
+            @Override protected void onMeasure(int w, int h) {
+                super.onMeasure(w, android.view.View.MeasureSpec.makeMeasureSpec(max, android.view.View.MeasureSpec.AT_MOST));
+            }
+        };
+        sv.setBackground(Ui.round(Ui.bg(a), dp(a, 16)));
+        sv.setClipToOutline(true);
+        sv.setNestedScrollingEnabled(true);
+        TextView t = Ui.text(a, styled(body, md), Ui.BODY_M, Ui.TEXT);
+        t.setPadding(dp(a, 16), dp(a, 12), dp(a, 16), dp(a, 12));
+        t.setTextIsSelectable(false);
+        sv.addView(t);
+        LinearLayout wrap = new LinearLayout(a);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(dp(a, 24), dp(a, 16), dp(a, 24), 0);
+        TextView cap = Ui.text(a, "本次更新", Ui.LABEL_M, Ui.TEXT_2);
+        cap.setPadding(0, 0, 0, dp(a, 8));
+        Ui.heading(cap);
+        wrap.addView(cap);
+        wrap.addView(sv, new LinearLayout.LayoutParams(-1, -2));
+        return wrap;
+    }
+
+    /** Full-width filled main button with 24 dp sides. */
+    private static View mainButton(MainActivity a, String label, View.OnClickListener click) {
+        android.widget.Button b = Ui.filledButton(a, label);
+        b.setOnClickListener(click);
+        LinearLayout wrap = new LinearLayout(a);
+        wrap.setPadding(dp(a, 24), dp(a, 20), dp(a, 24), 0);
+        wrap.addView(b, new LinearLayout.LayoutParams(-1, dp(a, 48)));
+        return wrap;
+    }
+
+    /** Text buttons under the main one: left (secondary grey, may be null) and right (bright red). */
+    private static View textRow(MainActivity a, String left, View.OnClickListener leftClick, String right, View.OnClickListener rightClick) {
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(a, 12), dp(a, 4), dp(a, 12), 0);
+        if (left != null) {
+            android.widget.Button l = Ui.textButton(a, left);
+            l.setTextColor(Ui.TEXT_2);
+            l.setOnClickListener(leftClick);
+            row.addView(l);
+        }
+        View gap = new View(a);
+        row.addView(gap, new LinearLayout.LayoutParams(0, 1, 1f));
+        if (right != null) {
+            android.widget.Button r = Ui.textButton(a, right);
+            r.setOnClickListener(rightClick);
+            row.addView(r);
+        }
+        return row;
+    }
+
+    private static UpdateSheet newSheet(MainActivity a) {
+        UpdateSheet us = new UpdateSheet();
+        us.body = new LinearLayout(a);
+        us.body.setOrientation(LinearLayout.VERTICAL);
+        us.dialog = Ui.sheet(a, us.body);
+        return us;
+    }
+
+    private static void showUpdateDialog(MainActivity a, Release r, String installed, boolean manual) {
+        final UpdateSheet us = newSheet(a);
+        final LinearLayout body = us.body;
+        body.addView(sheetHead(a, a.getString(R.string.app_name) + " " + r.version, "你现在用的是 " + installed));
+        LinearLayout blocks = new LinearLayout(a);
+        blocks.setOrientation(LinearLayout.HORIZONTAL);
+        blocks.setPadding(dp(a, 20), 0, dp(a, 20), 0);
+        String size = r.apkSize > 0 ? String.format(Locale.ROOT, "%.1f MB", r.apkSize / 1048576.0) : "未知";
+        boolean sha = r.sha256 != null || r.shaUrl != null;
+        // on mobile data say how much it costs (401)
+        String net = metered(a) ? (r.apkSize > 0 ? String.format(Locale.ROOT, "移动数据 约 %.1f MB", r.apkSize / 1048576.0) : "移动数据") : "不计流量";
+        String[][] info = {{"大小", size}, {"校验", sha ? "SHA-256" : "无"}, {"网络", net}};
+        for (String[] kv : info) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
+            lp.setMargins(dp(a, 4), 0, dp(a, 4), 0);
+            blocks.addView(infoBlock(a, kv[0], kv[1]), lp);
+        }
+        body.addView(blocks);
+        String notes = cleanNotes(r.notes);
+        if (!notes.isEmpty()) body.addView(notesBox(a, notes, r.notes));
+        if (r.apkUrl != null) body.addView(mainButton(a, "立即更新", v -> download(a, r, us)));
+        else body.addView(mainButton(a, "打开发布页", v -> { us.dialog.dismiss(); a.openExternal(r.page); }));
+        body.addView(textRow(a, manual ? null : "跳过此版本", v -> { Prefs.put(a, Prefs.SKIP_VERSION, r.tag); us.dialog.dismiss(); },
+                "以后再说", v -> us.dialog.dismiss()));
+        us.dialog.show();
     }
 
     /** Notes with their list bullets kept and heading lines in bold (399). */
@@ -384,35 +504,49 @@ public final class Updater {
         return dir;
     }
 
-    private static void download(MainActivity a, Release r) {
+    private static void download(MainActivity a, Release r) { download(a, r, null); }
+
+    /**
+     * Download (v1.26 look): the update sheet turns into its downloading state in place (a new sheet
+     * when started from elsewhere). Download, resume, checksum and install logic are unchanged.
+     */
+    private static void download(MainActivity a, Release r, UpdateSheet from) {
         final AtomicBoolean cancelled = new AtomicBoolean(false);
         final AtomicBoolean background = new AtomicBoolean(false);
         final android.content.Context appCtx = a.getApplicationContext();
-        int pad = Math.round(20 * a.getResources().getDisplayMetrics().density);
-        LinearLayout box = new LinearLayout(a);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(pad, pad / 2, pad, 0);
+        final UpdateSheet us = from != null && from.live() ? from : newSheet(a);
+        LinearLayout box = us.body;
+        box.removeAllViews();
+        box.addView(sheetHead(a, "正在下载 " + r.version, r.apkSize > 0 ? String.format(Locale.ROOT, "共 %.1f MB，完成后校验并安装", r.apkSize / 1048576.0) : "完成后校验并安装"));
         final ProgressBar bar = new ProgressBar(a, null, android.R.attr.progressBarStyleHorizontal);
         bar.setMax(1000);
         bar.setIndeterminate(r.apkSize <= 0);
-        box.addView(bar, new LinearLayout.LayoutParams(-1, -2));
-        final TextView label = new TextView(a);
-        label.setTextColor(Ui.TEXT_3);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        // 6 dp round-ended bar: surface-3 track, brand-red fill
+        android.graphics.drawable.ClipDrawable fill = new android.graphics.drawable.ClipDrawable(
+                Ui.round(Ui.accent(a), dp(a, 3)), android.view.Gravity.START, android.graphics.drawable.ClipDrawable.HORIZONTAL);
+        android.graphics.drawable.LayerDrawable ld = new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[]{Ui.round(Ui.chipBg(a), dp(a, 3)), fill});
+        ld.setId(0, android.R.id.background);
+        ld.setId(1, android.R.id.progress);
+        bar.setProgressDrawable(ld);
+        bar.setIndeterminateTintList(Ui.accentList(a));
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(a, 6));
+        bp.setMargins(dp(a, 24), dp(a, 8), dp(a, 24), dp(a, 8));
+        box.addView(bar, bp);
+        final TextView label = Ui.text(a, "准备下载…", Ui.BODY_M, Ui.TEXT_2);
         Ui.tnum(label);   // "6.3 / 9.8 MB" keeps its width while it counts
-        label.setText("准备下载…");
+        label.setPadding(dp(a, 24), 0, dp(a, 24), 0);
         box.addView(label);
-        final AlertDialog dlg = new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("正在下载 " + r.tag)
-                .setView(box)
-                .setCancelable(false)
-                .setNegativeButton("取消", (d, w) -> cancelled.set(true))
-                // keep using the app (396): progress moves to a notification, the install is offered when done
-                .setNeutralButton("后台下载", (d, w) -> {
-                    background.set(true);
-                    notifyProgress(appCtx, r.tag, 0, r.apkSize, "下载完成后点此安装", false, false);
-                })
-                .show();
+        final android.app.Dialog dlg = us.dialog;
+        dlg.setCancelable(false);
+        dlg.setCanceledOnTouchOutside(false);
+        // keep using the app (396): progress moves to a notification, the install is offered when done
+        box.addView(textRow(a, "后台下载", v -> {
+            background.set(true);
+            notifyProgress(appCtx, r.tag, 0, r.apkSize, "下载完成后点此安装", false, false);
+            dlg.dismiss();
+        }, "取消下载", v -> { cancelled.set(true); dlg.dismiss(); }));
+        if (!dlg.isShowing()) dlg.show();
         final WeakReference<MainActivity> ref = new WeakReference<>(a);
         final String safe = r.apkName.replaceAll("[^A-Za-z0-9._-]", "_");
         final File dir = downloadDir(a);
@@ -498,13 +632,8 @@ public final class Updater {
                 }
                 if (ferr != null) {
                     if (!ferr.isEmpty()) {
-                        new AlertDialog.Builder(act, android.R.style.Theme_Material_Dialog_Alert)
-                                .setTitle("更新失败")
-                                .setMessage(ferr)
-                                .setPositiveButton("重试", (d, w) -> download(act, r))
-                                .setNeutralButton("浏览器下载", (d, w) -> act.openExternal(r.apkUrl))
-                                .setNegativeButton("关闭", null)
-                                .show();
+                        Ui.confirmSheet(act, "更新失败", ferr, "重试", () -> download(act, r),
+                                "浏览器下载", () -> act.openExternal(r.apkUrl));
                     }
                     return;
                 }
@@ -636,11 +765,11 @@ public final class Updater {
     private static void whatsNewDialog(MainActivity a, String version, String notes) {
         String body = cleanNotes(notes);
         if (body.isEmpty()) return;
-        new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("已更新到 " + version + "，本次更新")
-                .setMessage(styled(body, notes))
-                .setPositiveButton("知道了", null)
-                .show();
+        final UpdateSheet us = newSheet(a);
+        us.body.addView(sheetHead(a, "已更新到 " + version, a.getString(R.string.app_name)));
+        us.body.addView(notesBox(a, body, notes));
+        us.body.addView(mainButton(a, "知道了", v -> us.dialog.dismiss()));
+        us.dialog.show();
     }
 
     private static void progress(ProgressBar bar, TextView label, long done, long total) {
@@ -672,12 +801,8 @@ public final class Updater {
                 Diag.log("update", "certificate mismatch: install refused");
                 //noinspection ResultOfMethodCallIgnored
                 apk.delete();
-                new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                        .setTitle("安装包签名不一致")
-                        .setMessage("下载的安装包不是用本 App 的证书签名的，已删除，没有安装。可以到 GitHub Releases 手动核对。")
-                        .setPositiveButton("打开 Releases", (d, w) -> a.openExternal(RELEASES))
-                        .setNegativeButton("关闭", null)
-                        .show();
+                Ui.confirmSheet(a, "安装包签名不一致", "下载的安装包不是用本 App 的证书签名的，已删除，没有安装。可以到 GitHub Releases 手动核对。",
+                        "打开 Releases", () -> a.openExternal(RELEASES), "关闭", null);
                 return;
             }
             if (!"yes".equals(same)) Diag.log("update", "certificate not checked: " + same);
@@ -685,19 +810,17 @@ public final class Updater {
 
         if (!a.getPackageManager().canRequestPackageInstalls()) {
             Prefs.put(a, Prefs.PENDING_APK, apk.getAbsolutePath());
-            new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                    .setTitle("需要允许安装应用")
-                    .setMessage("请在下一页为 " + a.getString(R.string.app_name) + " 打开「允许安装未知应用 / 允许来自此来源的应用」，返回后会自动继续安装。")
-                    .setPositiveButton("去开启", (d, w) -> {
+            Ui.confirmSheet(a, "需要允许安装应用",
+                    "请在下一页为 " + a.getString(R.string.app_name) + " 打开「允许安装未知应用 / 允许来自此来源的应用」，返回后会自动继续安装。",
+                    "去开启", () -> {
                         try {
                             a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:" + a.getPackageName())));
                         } catch (Exception e) {
                             a.openAppDetails();
                         }
-                    })
-                    .setNegativeButton("取消", (d, w) -> Prefs.get(a).edit().remove(Prefs.PENDING_APK).apply())
-                    .show();
+                    },
+                    "取消", () -> Prefs.get(a).edit().remove(Prefs.PENDING_APK).apply());
             return;
         }
         launchInstaller(a, apk);

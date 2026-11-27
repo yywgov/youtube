@@ -15,7 +15,7 @@
 	<string name="js_hidden">已隐藏这个视频</string>
 	<string name="js_undo">撤销</string>
 	<string name="js_skipped">已跳过</string>
-	<string name="js_show_all">暂时显示全部</string>
+	<string name="js_show_all">这次显示全部</string>
 	<string name="js_filtered_all">已按你的过滤隐藏 {n} 个视频</string>
 	<!-- playback notification and media card (380) -->
 	<string name="n_channel">后台播放</string>

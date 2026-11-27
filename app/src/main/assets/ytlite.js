@@ -377,10 +377,13 @@
     out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:none}');
     out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:none}');
     out.push('#ytl-gear svg,#ytl-tools svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}');
-    out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
-      'background:rgba(33,33,33,.96);color:#fff;font:14px/20px system-ui,sans-serif;padding:10px 14px 10px 16px;border-radius:10px;' +
-      'box-shadow:0 2px 10px rgba(0,0,0,.5);max-width:90vw;white-space:nowrap}' +
-      '#ytl-sb button{background:none;border:0;color:var(--ytl-accent-text);font:500 14px system-ui,sans-serif;padding:4px 6px;margin:0}');
+    // snack / undo bar (v1.26): same look as the native one; enters with @starting-style (older WebViews just show it)
+    out.push('#ytl-sb{position:fixed;left:12px;right:12px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:2147483646;display:flex;align-items:center;gap:12px;' +
+      'background:var(--ytl-snack);color:#f1f1f1;font:400 14px/20px Roboto,system-ui,sans-serif;padding:6px 8px 6px 16px;min-height:52px;box-sizing:border-box;' +
+      'border:1px solid rgba(255,255,255,.08);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.55);white-space:normal;max-width:560px;margin:0 auto;' +
+      'transform:translateY(0);opacity:1;transition:transform .22s cubic-bezier(.23,1,.32,1),opacity .22s cubic-bezier(.23,1,.32,1)}' +
+      '@starting-style{#ytl-sb{transform:translateY(8px);opacity:0}}' +
+      '#ytl-sb button{margin-left:auto;flex:0 0 auto;background:none;border:0;color:var(--ytl-accent-text);font:500 15px/20px Roboto,system-ui,sans-serif;padding:4px 8px;margin-top:0;margin-bottom:0}');
     // batch 6 (v1.8.0)
     // search: auto-generated mixes (333)
     out.push('html[data-ytl-nomix][data-ytl-page="search"] [data-ytl-searchmix]{display:none!important}');
@@ -390,15 +393,23 @@
     // tools button only with a video (363)
     out.push('#ytl-tools[data-ytl-off]{display:none!important}');
     // empty feed note (326)
-    out.push('#ytl-empty{margin:12px;padding:12px 14px;border-radius:12px;background:rgba(128,128,128,.14);font:14px/20px system-ui,sans-serif;' +
-      'color:inherit;display:flex;gap:12px;align-items:center}#ytl-empty button{margin-left:auto;background:none;border:0;' +
-      'color:var(--ytl-accent-text);font:500 14px system-ui,sans-serif;padding:8px 4px;white-space:nowrap}');
+    out.push('#ytl-empty{margin:12px;padding:8px 8px 8px 16px;border-radius:12px;background:rgba(128,128,128,.14);font:400 14px/20px Roboto,system-ui,sans-serif;' +
+      'color:inherit;display:flex;gap:12px;align-items:center}html[dark] #ytl-empty,html[data-ytl-dark] #ytl-empty{background:var(--ytl-surface-1)}' +
+      '#ytl-empty svg{flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.67}' +
+      '#ytl-empty button{margin-left:auto;background:none;border:0;' +
+      'color:var(--ytl-accent-text);font:500 15px/20px Roboto,system-ui,sans-serif;padding:8px;white-space:nowrap}' +
+      'html:not([dark]):not([data-ytl-dark]) #ytl-empty button{color:var(--ytl-accent)}');
     // tap polish (Material 3 / HIG): 44px chip hit area, no grey WebView flash, pressed state on our own buttons
     out.push('#ytl-chips a{min-height:44px;box-sizing:border-box;display:flex;align-items:center}#ytl-chips{overscroll-behavior-x:contain}' +
-      '#ytl-chips a,#ytl-gear,#ytl-tools,#ytl-sb button,#ytl-empty button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:opacity .1s,transform .1s}' +
-      '#ytl-chips a:active,#ytl-gear:active,#ytl-tools:active,#ytl-sb button:active,#ytl-empty button:active{opacity:.6;transform:scale(.94)}' +
+      '#ytl-chips a,#ytl-gear,#ytl-tools,#ytl-sb button,#ytl-empty button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;' +
+      '-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transition:opacity .16s cubic-bezier(.23,1,.32,1),transform .16s cubic-bezier(.23,1,.32,1)}' +
+      '#ytl-chips a:active,#ytl-gear:active,#ytl-tools:active,#ytl-sb button:active,#ytl-empty button:active{opacity:.72;transform:scale(.96);transition-duration:.1s}' +
       'html[data-ytl-lowmotion] #ytl-chips a,html[data-ytl-lowmotion] #ytl-gear,html[data-ytl-lowmotion] #ytl-tools,html[data-ytl-lowmotion] #ytl-sb button,html[data-ytl-lowmotion] #ytl-empty button{transition:none}' +
-      '#ytl-empty button,#ytl-sb button{min-height:44px;box-sizing:border-box}');
+      '#ytl-empty button,#ytl-sb button{min-height:44px;box-sizing:border-box}' +
+      'html[data-ytl-lowmotion] #ytl-chips a:active,html[data-ytl-lowmotion] #ytl-gear:active,html[data-ytl-lowmotion] #ytl-tools:active,html[data-ytl-lowmotion] #ytl-sb button:active,html[data-ytl-lowmotion] #ytl-empty button:active{transform:none}' +
+      'html[data-ytl-lowpower] #ytl-sb,html[data-ytl-lowpower] #ytl-chips a,html[data-ytl-lowpower] #ytl-gear,html[data-ytl-lowpower] #ytl-tools,html[data-ytl-lowpower] #ytl-sb button,html[data-ytl-lowpower] #ytl-empty button{transition:none!important}');
+    // uniform cards on: a faint inner line keeps a dark thumbnail apart from the black page
+    out.push('html[data-ytl-cards] .media-item-thumbnail-container,html[data-ytl-cards] yt-thumbnail-view-model{box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}');
     // scroll containment (NewPipe/M3 sheets): comment & engagement sheets don't chain scroll into the feed behind
     out.push('ytm-engagement-panel,.engagement-panel-content,ytm-comments-sheet-view,.bottom-sheet-content{overscroll-behavior-y:contain}');
     return out.join('\n');
@@ -2253,10 +2264,17 @@
       el = document.createElement('div');
       el.id = 'ytl-empty';
       el.setAttribute('role', 'status');
+      // v1.26: a line eye-off icon (Kubai Icons, MIT) in front of the sentence
+      var NS = 'http://www.w3.org/2000/svg', ic = document.createElementNS(NS, 'svg');
+      ic.setAttribute('viewBox', '0 0 24 24'); ic.setAttribute('width', '20'); ic.setAttribute('height', '20'); ic.setAttribute('aria-hidden', 'true');
+      ['M3 12A9.75 9.75 0 0 1 21 12A9.75 9.75 0 0 1 3 12Z', 'M9.5 12A2.5 2.5 0 1 1 14.5 12A2.5 2.5 0 1 1 9.5 12Z', 'M5.207 5.207L18.793 18.793'].forEach(function (d) {
+        var p = document.createElementNS(NS, 'path'); p.setAttribute('d', d); ic.appendChild(p);
+      });
+      el.appendChild(ic);
       var span = document.createElement('span');
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.textContent = S('showAll', '暂时显示全部');
+      btn.textContent = S('showAll', '这次显示全部');
       btn.addEventListener('click', guard('empty-show', function (ev) {
         ev.preventDefault(); ev.stopPropagation();
         filtersPaused = true;

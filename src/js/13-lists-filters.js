@@ -236,10 +236,17 @@
       el = document.createElement('div');
       el.id = 'ytl-empty';
       el.setAttribute('role', 'status');
+      // v1.26: a line eye-off icon (Kubai Icons, MIT) in front of the sentence
+      var NS = 'http://www.w3.org/2000/svg', ic = document.createElementNS(NS, 'svg');
+      ic.setAttribute('viewBox', '0 0 24 24'); ic.setAttribute('width', '20'); ic.setAttribute('height', '20'); ic.setAttribute('aria-hidden', 'true');
+      ['M3 12A9.75 9.75 0 0 1 21 12A9.75 9.75 0 0 1 3 12Z', 'M9.5 12A2.5 2.5 0 1 1 14.5 12A2.5 2.5 0 1 1 9.5 12Z', 'M5.207 5.207L18.793 18.793'].forEach(function (d) {
+        var p = document.createElementNS(NS, 'path'); p.setAttribute('d', d); ic.appendChild(p);
+      });
+      el.appendChild(ic);
       var span = document.createElement('span');
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.textContent = S('showAll', '暂时显示全部');
+      btn.textContent = S('showAll', '这次显示全部');
       btn.addEventListener('click', guard('empty-show', function (ev) {
         ev.preventDefault(); ev.stopPropagation();
         filtersPaused = true;

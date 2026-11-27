@@ -22,3 +22,15 @@ test('v1.23 top-bar buttons use 2px line icons', async () => {
   assert.equal(svg.getAttribute('width'), '24');
   assert.equal(svg.querySelectorAll('path').length, 2);
 });
+
+test('v1.26 snack bar, empty note and press feedback follow the design', async () => {
+  const { w } = await load({ path: '/' });
+  const css = w.document.getElementById('ytl-css').textContent;
+  assert.ok(css.includes('@starting-style{#ytl-sb{transform:translateY(8px);opacity:0}}'), 'bar enters with @starting-style');
+  assert.match(css, /#ytl-sb\{[^}]*left:12px;right:12px;bottom:calc\(64px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(css, /#ytl-sb\{[^}]*background:var\(--ytl-snack\)/);
+  assert.ok(css.includes('html[data-ytl-lowmotion] #ytl-sb'), 'no slide with animations removed');
+  assert.match(css, /#ytl-gear:active[^{]*\{opacity:\.72;transform:scale\(\.96\)/);
+  assert.ok(css.includes('user-select:none'));
+  assert.ok(!/transition:all/.test(css), 'never transition: all');
+});

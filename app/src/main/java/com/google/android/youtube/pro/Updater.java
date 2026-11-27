@@ -399,6 +399,7 @@ public final class Updater {
         final TextView label = new TextView(a);
         label.setTextColor(Ui.TEXT_3);
         label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        Ui.tnum(label);   // "6.3 / 9.8 MB" keeps its width while it counts
         label.setText("准备下载…");
         box.addView(label);
         final AlertDialog dlg = new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
@@ -636,7 +637,7 @@ public final class Updater {
         String body = cleanNotes(notes);
         if (body.isEmpty()) return;
         new AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("已更新到 " + version + " · 本次更新")
+                .setTitle("已更新到 " + version + "，本次更新")
                 .setMessage(styled(body, notes))
                 .setPositiveButton("知道了", null)
                 .show();

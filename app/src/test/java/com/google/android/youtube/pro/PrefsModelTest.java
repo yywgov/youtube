@@ -83,8 +83,8 @@ public class PrefsModelTest {
     }
 
     @Test public void notificationLayoutSummary() {
-        assertEquals("上一个 · 播放 · 下一个 · 稍后观看", PrefsModel.notifLayout(false, true));
-        assertEquals("快退 10 秒 · 播放 · 快进 30 秒", PrefsModel.notifLayout(true, false));
+        assertEquals("上一个、播放、下一个、稍后观看", PrefsModel.notifLayout(false, true));
+        assertEquals("快退 10 秒、播放、快进 30 秒", PrefsModel.notifLayout(true, false));
     }
 
     @Test public void booleanDefaultsUnchanged() {

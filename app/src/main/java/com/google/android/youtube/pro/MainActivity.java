@@ -860,7 +860,7 @@ public class MainActivity extends Activity {
         box.addView(Ui.sheetRow(this, R.drawable.ic_more_white, wl ? "移除 / 更多" : "不感兴趣 / 更多", "打开 YouTube 自己的菜单", v -> { d[0].dismiss(); js("ytl.openCardMenu()"); }));
         if (!channel.isEmpty() || !key.isEmpty()) {
             final String label = channel.isEmpty() ? key : channel;
-            box.addView(Ui.sheetRow(this, R.drawable.ic_block_white, "不再显示此频道", label + " · 只在本机屏蔽，可在设置里撤销", v -> {
+            box.addView(Ui.sheetRow(this, R.drawable.ic_block_white, "不再显示此频道", label + "，只在本机屏蔽，可在设置里撤销", v -> {
                 d[0].dismiss();
                 // with the channel link (322): still matches after a rename, never a namesake
                 Prefs.addLine(this, Prefs.BLOCK_CHANNELS, key.isEmpty() ? channel : key + "|" + channel);
@@ -1092,7 +1092,7 @@ public class MainActivity extends Activity {
                 }
             });
             TextView hint = new TextView(this);
-            hint.setText("黑屏播放中 · 双击恢复");
+            hint.setText("黑屏播放中，双击恢复");
             hint.setTextColor(Ui.BLACK_HINT);   // readable on black (377)
             hint.setTextSize(14);
             FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(-2, -2, android.view.Gravity.CENTER);
@@ -1152,7 +1152,7 @@ public class MainActivity extends Activity {
             rp.rightMargin = dp(8);
             pill.addView(ring, rp);
             final TextView label = new TextView(this);
-            label.setText("触控已锁定 · 长按 1.5 秒解锁");
+            label.setText("已锁定，长按 1.5 秒解锁");
             label.setTextColor(Ui.TEXT);
             label.setTextSize(13);
             pill.addView(label);
@@ -1174,7 +1174,7 @@ public class MainActivity extends Activity {
                     case MotionEvent.ACTION_CANCEL:
                         MAIN.removeCallbacks(unlock);
                         ring.reset();
-                        label.setText("触控已锁定 · 长按 1.5 秒解锁");
+                        label.setText("已锁定，长按 1.5 秒解锁");
                         pill.animate().alpha(0.15f).setStartDelay(1500).setDuration(Ui.anim(this, 600)).start();
                         break;
                     default:

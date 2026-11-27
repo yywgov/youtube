@@ -214,7 +214,7 @@
     // how many cards the filters took away (321), so a short feed is not a mystery
     var gone = document.querySelectorAll('[data-ytl-filter]:not([data-ytl-filter="ad"]), [data-ytl-seen]').length;
     call('toast', (n ? S('newVideos', '更新了 {n} 个新视频').replace('{n}', n) : S('noNew', '暂时没有新视频，稍后再刷新试试')) +
-      (gone ? S('filteredN', ' · 已过滤 {n} 个').replace('{n}', gone) : ''));
+      (gone ? S('filteredN', '，已过滤 {n} 个').replace('{n}', gone) : ''));
   });
 
   /* filters emptied the home feed (326): say so at the top, with a way to see everything this time */

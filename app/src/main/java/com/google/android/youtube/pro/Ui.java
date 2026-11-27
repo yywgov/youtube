@@ -25,7 +25,7 @@ public final class Ui {
     public static final int SURFACE = 0xFF1E1E1E;
     public static final int SURFACE_HI = 0xFF2A2A2A;
     public static final int SHEET = 0xFF212121;
-    public static final int TEXT = 0xFFFFFFFF;
+    public static final int TEXT = 0xFFF1F1F1;           // text 1 (same as m.youtube's text colour)
     public static final int TEXT_2 = 0xFFAAAAAA;
     public static final int DIVIDER = 0x1FFFFFFF;
     /**
@@ -44,13 +44,21 @@ public final class Ui {
     public static final int TEXT_3 = 0xFFCCCCCC;      // secondary text on dialogs
     public static final int BLACK_HINT = 0xFF9E9E9E;  // text on the black screen, ≈7:1 on black (377)
     public static final int OVERLAY_PILL = 0xB0000000; // translucent pill (touch lock, fullscreen moon)
-    public static final int SWITCH_OFF = 0xFFBDBDBD;
+    public static final int SWITCH_OFF = 0xFF8A8A8A;   // M3 off outline + knob
     public static final int BLACK = 0xFF000000;
     public static final int WHITE = 0xFFFFFFFF;
     public static final int TRACK_OFF = 0x40FFFFFF;
 
     /** Settings cards on the pure-black theme (v1.15): just enough lift to keep the groups apart. */
-    public static final int SURFACE_AMOLED = 0xFF141414;
+    public static final int SURFACE_AMOLED = 0xFF121212;
+    // three surface levels (v1.24, DESIGN.md): card / sheet / control, pure black and dark
+    public static final int SURFACE_1_BLACK = 0xFF121212, SURFACE_2_BLACK = 0xFF1A1A1A, SURFACE_3_BLACK = 0xFF262626;
+    public static final int SURFACE_1_DARK = 0xFF1C1C1C, SURFACE_2_DARK = 0xFF212121, SURFACE_3_DARK = 0xFF2E2E2E;
+    public static final int TEXT_TERTIARY = 0xFF7C7C7C;   // version line, chevrons (4.8:1 on black)
+    public static final int STATUS_NOTE = 0xFFE9B8BF;     // explanation line on the red status card
+    public static final int ACCENT_LINE = 0x24FF5468;     // 14 % bright-red outline of the status card
+    public static final int HAIRLINE = 0x14FFFFFF;        // 8 % white
+    public static final int HAIRLINE_STRONG = 0x24FFFFFF; // 14 % white
 
     /** Pure-black (AMOLED) theme switched on (91; on by default since v1.15). */
     public static boolean amoled(Context c) { return Prefs.on(c, Prefs.AMOLED); }
@@ -58,11 +66,49 @@ public final class Ui {
     /** Native background: pure black with AMOLED, the page grey otherwise (settings, sheets, WebView, bars). */
     public static int bg(Context c) { return amoled(c) ? BLACK : BG; }
 
-    /** Bottom-sheet background: black with AMOLED. */
-    public static int sheetBg(Context c) { return amoled(c) ? BLACK : SHEET; }
+    /** Bottom-sheet / dialog background: surface 2. */
+    public static int sheetBg(Context c) { return amoled(c) ? SURFACE_2_BLACK : SURFACE_2_DARK; }
 
-    /** Settings card background. */
-    public static int surface(Context c) { return amoled(c) ? SURFACE_AMOLED : SURFACE; }
+    /** Settings card background: surface 1. */
+    public static int surface(Context c) { return amoled(c) ? SURFACE_1_BLACK : SURFACE_1_DARK; }
+
+    /** Chips, segmented controls, tonal buttons, the icon squares of the group rows: surface 3. */
+    public static int chipBg(Context c) { return amoled(c) ? SURFACE_3_BLACK : SURFACE_3_DARK; }
+
+    // ---- type scale (v1.24, DESIGN.md): only weights 400 and 500, size / line height in sp ----
+    public static final class Type {
+        public final float sp, lh; public final boolean medium;
+        Type(float sp, float lh, boolean medium) { this.sp = sp; this.lh = lh; this.medium = medium; }
+    }
+    public static final Type TITLE_L = new Type(22, 28, true), TITLE_M = new Type(18, 24, true),
+            BODY_L = new Type(16, 22, false), BODY_M = new Type(14, 20, false),
+            LABEL_L = new Type(15, 20, true), LABEL_M = new Type(13, 18, true),
+            CAPTION = new Type(12, 16, false), NUMERAL = new Type(28, 32, true);
+
+    /** Medium (500) face: the real weight on Android 9+, sans-serif-medium before. */
+    public static Typeface medium() {
+        if (android.os.Build.VERSION.SDK_INT >= 28) return Typeface.create(Typeface.DEFAULT, 500, false);
+        return Typeface.create("sans-serif-medium", Typeface.NORMAL);
+    }
+
+    public static TextView text(Context c, CharSequence s, Type t, int color) {
+        TextView v = text(c, s, t.sp, color);
+        style(v, t);
+        return v;
+    }
+
+    /** Apply a type role to an existing view (size, weight, line height). */
+    public static void style(TextView v, Type t) {
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, t.sp);
+        v.setTypeface(t.medium ? medium() : Typeface.DEFAULT);
+        float lhPx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, t.lh, v.getResources().getDisplayMetrics());
+        if (android.os.Build.VERSION.SDK_INT >= 28) v.setLineHeight(Math.round(lhPx));
+        else v.setLineSpacing(0f, t.lh / t.sp);
+        if (t == NUMERAL) tnum(v);
+    }
+
+    /** Numbers that change (speed, seconds, version, MB, counts) keep their width. */
+    public static void tnum(TextView v) { v.setFontFeatureSettings("tnum"); }
 
     /** Same colour with another alpha (switch track). */
     public static int withAlpha(int color, int alpha) {
@@ -74,6 +120,8 @@ public final class Ui {
     public static final int PRESSED = 0x22FFFFFF;
     public static final int RADIUS_DP = 16;
     public static final int ROW_MIN_DP = 56;
+    public static final int ROW_SUB_DP = 64;   // a row with an explanation line
+    public static final int CARD_RADIUS_DP = 20;
     public static final int ANIM_MS = 200;
 
     private Ui() {}
@@ -172,7 +220,9 @@ public final class Ui {
         b.setText(label);
         b.setAllCaps(false);
         b.setTextColor(WHITE);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        style(b, LABEL_L);
+        b.setMinHeight(dp(c, 48));
+        b.setMinimumHeight(dp(c, 48));
         b.setBackground(round(accent(c), dp(c, 24)));
         return b;
     }
@@ -183,7 +233,9 @@ public final class Ui {
         b.setText(label);
         b.setAllCaps(false);
         b.setTextColor(accentText(c));
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        style(b, LABEL_L);
+        b.setMinHeight(dp(c, 48));
+        b.setMinimumHeight(dp(c, 48));
         return b;
     }
 
@@ -217,10 +269,10 @@ public final class Ui {
         return t;
     }
 
+    /** Group title over a card (v1.24): label-medium, secondary grey, no accent; far from the card above, near its own. */
     public static TextView title(Context c, CharSequence s) {
-        TextView t = text(c, s, 13, accentText(c));
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setPadding(dp(c, 20), dp(c, 14), dp(c, 20), dp(c, 4));
+        TextView t = text(c, s, LABEL_M, TEXT_2);
+        t.setPadding(dp(c, 20), dp(c, 20), dp(c, 20), dp(c, 8));
         heading(t);
         return t;
     }
@@ -289,11 +341,10 @@ public final class Ui {
         return wdp > 760 ? dp(c, 720) : ViewGroup.LayoutParams.MATCH_PARENT;
     }
 
-    /** Section header inside a sheet (352): accent, bold, heading for screen readers. */
+    /** Section header inside a sheet (352/v1.24): label-medium, secondary grey, heading for screen readers. */
     public static TextView header(Context c, String label) {
-        TextView t = text(c, label, 13, accentText(c));
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setPadding(dp(c, 20), dp(c, 12), dp(c, 20), dp(c, 2));
+        TextView t = text(c, label, LABEL_M, TEXT_2);
+        t.setPadding(dp(c, 24), dp(c, 16), dp(c, 24), dp(c, 8));
         heading(t);
         return t;
     }
@@ -307,12 +358,12 @@ public final class Ui {
         b.setText(label);
         b.setAllCaps(false);
         b.setTextColor(TEXT);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        b.setBackground(round(CHIP, dp(c, 20)));
+        style(b, LABEL_L);
+        b.setBackground(round(chipBg(c), dp(c, 12)));
         b.setMinHeight(dp(c, 48));
         b.setMinimumHeight(dp(c, 48));
         b.setMaxLines(2);
-        b.setPadding(dp(c, 8), dp(c, 6), dp(c, 8), dp(c, 6));
+        b.setPadding(dp(c, 8), dp(c, 8), dp(c, 8), dp(c, 8));
         b.setOnClickListener(click);
         return b;
     }
@@ -348,8 +399,8 @@ public final class Ui {
     public static Dialog choiceSheet(Activity a, String title, String[] labels, int[] swatches, int sel, final Pick cb) {
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
-        TextView head = text(a, title, 18, TEXT);
-        head.setPadding(dp(a, 20), dp(a, 4), dp(a, 20), dp(a, 8));
+        TextView head = text(a, title, TITLE_M, TEXT);
+        head.setPadding(dp(a, 24), dp(a, 4), dp(a, 24), dp(a, 8));
         heading(head);
         box.addView(head);
         final Dialog[] d = new Dialog[1];
@@ -358,8 +409,8 @@ public final class Ui {
             LinearLayout l = new LinearLayout(a);
             l.setOrientation(LinearLayout.HORIZONTAL);
             l.setGravity(Gravity.CENTER_VERTICAL);
-            l.setPadding(dp(a, 20), dp(a, 8), dp(a, 16), dp(a, 8));
-            l.setMinimumHeight(dp(a, 52));
+            l.setPadding(dp(a, 24), dp(a, 8), dp(a, 20), dp(a, 8));
+            l.setMinimumHeight(dp(a, 56));
             if (swatches != null && i < swatches.length) {
                 View dot = new View(a);
                 GradientDrawable g = new GradientDrawable();
@@ -370,7 +421,7 @@ public final class Ui {
                 dp.rightMargin = dp(a, 16);
                 l.addView(dot, dp);
             }
-            TextView t = text(a, labels[i], 16, TEXT);
+            TextView t = text(a, labels[i], BODY_L, TEXT);
             l.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             if (i == sel) {
                 android.widget.ImageView ck = new android.widget.ImageView(a);
@@ -391,8 +442,8 @@ public final class Ui {
     }
 
     /**
-     * Clearer switch (355): a 52 × 32 dp rounded track in the accent colour when on, a raised grey
-     * track when off, and a white knob; still the platform Switch underneath.
+     * Material 3 switch (355/v1.24): 52 × 32 dp; on = brand-red track + 24 dp white knob, off = 2 dp grey
+     * outline + 16 dp grey knob. Still the platform Switch underneath.
      */
     public static void styleSwitch(android.widget.Switch sw) {
         try {
@@ -401,14 +452,14 @@ public final class Ui {
             android.graphics.drawable.StateListDrawable track = new android.graphics.drawable.StateListDrawable();
             GradientDrawable on = round(acc, dp(c, 16));
             on.setSize(dp(c, 52), dp(c, 32));
-            GradientDrawable off = round(SURFACE_HI, dp(c, 16));
-            off.setStroke(dp(c, 2), TEXT_2);
+            GradientDrawable off = round(0x00000000, dp(c, 16));
+            off.setStroke(dp(c, 2), SWITCH_OFF);
             off.setSize(dp(c, 52), dp(c, 32));
             track.addState(new int[]{android.R.attr.state_checked}, on);
             track.addState(new int[]{}, off);
             android.graphics.drawable.StateListDrawable thumb = new android.graphics.drawable.StateListDrawable();
-            thumb.addState(new int[]{android.R.attr.state_checked}, knob(c, SWITCH_THUMB, 6));
-            thumb.addState(new int[]{}, knob(c, SWITCH_THUMB_OFF, 8));
+            thumb.addState(new int[]{android.R.attr.state_checked}, knob(c, SWITCH_THUMB, 4));
+            thumb.addState(new int[]{}, knob(c, SWITCH_OFF, 8));
             sw.setThumbTintList(null);
             sw.setTrackTintList(null);
             sw.setTrackDrawable(track);
@@ -436,12 +487,13 @@ public final class Ui {
     public static View sheetRow(Context c, int icon, String title, String sub, View.OnClickListener click) {
         LinearLayout texts = new LinearLayout(c);
         texts.setOrientation(LinearLayout.VERTICAL);
-        texts.addView(text(c, title, 16, TEXT));
-        if (sub != null && !sub.isEmpty()) texts.addView(text(c, sub, 12, TEXT_2));
+        texts.addView(text(c, title, BODY_L, TEXT));
+        boolean hasSub = sub != null && !sub.isEmpty();
+        if (hasSub) texts.addView(text(c, sub, BODY_M, TEXT_2));
         LinearLayout l = new LinearLayout(c);
         l.setOrientation(LinearLayout.HORIZONTAL);
-        l.setPadding(dp(c, 20), dp(c, 10), dp(c, 20), dp(c, 10));
-        l.setMinimumHeight(dp(c, 52));
+        l.setPadding(dp(c, 24), dp(c, 12), dp(c, 24), dp(c, 12));
+        l.setMinimumHeight(dp(c, hasSub ? 64 : 56));
         l.setGravity(Gravity.CENTER_VERTICAL);
         if (icon != 0) {
             android.widget.ImageView iv = new android.widget.ImageView(c);

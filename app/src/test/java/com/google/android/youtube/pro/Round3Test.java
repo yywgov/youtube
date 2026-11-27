@@ -9,8 +9,8 @@ import org.junit.Test;
 public class Round3Test {
     @Test public void listStyleLabel() {
         assertEquals("默认", PrefsModel.listStyleLabel(false, false, false));
-        assertEquals("紧凑 · 压暗缩略图", PrefsModel.listStyleLabel(true, false, true));
-        assertEquals("紧凑 · 统一卡片 · 压暗缩略图", PrefsModel.listStyleLabel(true, true, true));
+        assertEquals("紧凑、压暗缩略图", PrefsModel.listStyleLabel(true, false, true));
+        assertEquals("紧凑、统一卡片、压暗缩略图", PrefsModel.listStyleLabel(true, true, true));
     }
 
     @Test public void perfLabel() {

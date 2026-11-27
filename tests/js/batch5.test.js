@@ -194,7 +194,7 @@ test('new videos are compared with the last three refreshes; filtered cards are 
   const r = await load({ path: '/?ytlr=abc', body, cfg: { blockWords: ['spoiler'] },
     before: (w) => { w.localStorage.setItem('ytl_home_ids', JSON.stringify(['aaaaaaaaaa1', 'aaaaaaaaaa2'])); } });
   const t = r.calls.filter((c) => c[0] === 'toast').map((c) => c[1]);
-  assert.ok(t.some((x) => /更新了 3 个新视频 · 已过滤 1 个/.test(x)), JSON.stringify(t));
+  assert.ok(t.some((x) => /更新了 3 个新视频，已过滤 1 个/.test(x)), JSON.stringify(t));
   const hist = JSON.parse(r.w.localStorage.getItem('ytl_home_hist'));
   assert.equal(hist.length, 2, 'old single list taken over + this one');
 });

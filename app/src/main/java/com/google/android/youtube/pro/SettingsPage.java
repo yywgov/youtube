@@ -39,17 +39,23 @@ public class SettingsPage {
     private int hiddenCount = -1;
 
     public void show() {
-        page(a.getString(R.string.app_name) + " 设置", box -> {
+        page("设置", box -> {
+            searchPill(box);   // (442) a full-round field that opens the search page
             statusCard(box);
-            LinearLayout q = card(box);
-            q.addView(row(SEARCH_TITLE, "输入关键字，直接跳到那一项（如：字幕、续播、屏蔽）", v -> searchPage()));   // (442)
             LinearLayout c = card(box);
-            // a line icon per group (359), same family as the app icon
-            c.addView(nav(R.drawable.ic_set_play, "播放", "画质、声音与速度、续播提示、字幕、SponsorBlock", this::playPage));
-            c.addView(nav(R.drawable.ic_set_bg, "后台播放", "接下来播放、通知栏与耳机", this::bgPage));
-            c.addView(nav(R.drawable.ic_set_home, "首页与内容", "启动页、已看完、内容过滤、隐藏模块、搜索", this::listPage));
-            c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、字号、轻震、列表样式、滑动流畅度", this::lookPage));
-            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "检查更新、远程规则、关于与诊断", this::dataPage));
+            // a line icon per group (359) in a 40 dp square; the line under it is three or four keywords
+            c.addView(nav(R.drawable.ic_set_play, "播放", "画质、速度、字幕、SponsorBlock", this::playPage));
+            c.addView(nav(R.drawable.ic_set_bg, "后台播放", "接下来播放、通知栏、耳机", this::bgPage));
+            c.addView(nav(R.drawable.ic_set_home, "首页与内容", "启动页、已看完、过滤、搜索", this::listPage));
+            c.addView(nav(R.drawable.ic_set_palette, "外观与交互", "主题、字号、列表样式、流畅度", this::lookPage));
+            c.addView(nav(R.drawable.ic_set_cloud, "数据与更新", "更新、远程规则、关于与诊断", this::dataPage));
+            if (crawl == null) {
+                TextView ver = Ui.text(a, a.getString(R.string.app_name) + " " + version(), Ui.CAPTION, Ui.TEXT_TERTIARY);
+                Ui.tnum(ver);
+                ver.setGravity(Gravity.CENTER_HORIZONTAL);
+                ver.setPadding(dp(16), dp(24), dp(16), dp(8));
+                box.addView(ver);
+            }
         });
     }
 
@@ -62,11 +68,58 @@ public class SettingsPage {
     private void statusCard(LinearLayout box) {
         List<View> rows = new ArrayList<>();
         String ready = Updater.readyTag(a);
-        if (ready != null) rows.add(row("发现新版本 " + ready, "点此下载并安装（不会自动弹窗打扰）", v -> Updater.checkNow(a)));
-        if (!a.notificationsOk()) rows.add(row("通知已关闭", "锁屏和通知栏无法控制播放 · 点此打开通知设置", v -> a.openNotificationSettings()));
+        if (ready != null) rows.add(statusRow(R.drawable.ic_cloud_download, "发现新版本 " + ready, "点此下载并安装，不会自动弹窗打扰", v -> Updater.checkNow(a)));
+        if (!a.notificationsOk()) rows.add(statusRow(R.drawable.ic_bell_off, "通知已关闭", "锁屏和通知栏无法控制播放，点此打开通知设置", v -> a.openNotificationSettings()));
         if (rows.isEmpty()) return;
         LinearLayout card = card(box);
+        // v1.24: accent tint + 14 % bright-red outline, bright-red icon, pale-pink explanation
+        android.graphics.drawable.GradientDrawable bg = Ui.round(Ui.ACCENT_TINT, dp(Ui.CARD_RADIUS_DP));
+        bg.setStroke(Math.max(1, dp(1)), Ui.ACCENT_LINE);
+        card.setBackground(bg);
         for (View r : rows) card.addView(r);
+    }
+
+    private View statusRow(int icon, String title, String sub, View.OnClickListener click) {
+        LinearLayout l = baseRow();
+        android.widget.ImageView iv = new android.widget.ImageView(a);
+        iv.setImageResource(icon);
+        iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.ACCENT_INK));
+        iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(24), dp(24));
+        ip.rightMargin = dp(16);
+        l.addView(iv, ip);
+        l.addView(texts(title, Ui.text(a, sub, Ui.BODY_M, Ui.STATUS_NOTE)), new LinearLayout.LayoutParams(0, -2, 1f));
+        Ui.ripple(l);
+        l.setOnClickListener(click);
+        l.setContentDescription(title + "，" + sub);
+        return l;
+    }
+
+    /** Root search (442, v1.24): a 52 dp full-round pill on surface 1 with a search icon; opens the search page. */
+    private void searchPill(LinearLayout box) {
+        if (crawl != null) return;
+        LinearLayout l = new LinearLayout(a);
+        l.setOrientation(LinearLayout.HORIZONTAL);
+        l.setGravity(Gravity.CENTER_VERTICAL);
+        l.setPadding(dp(16), 0, dp(16), 0);
+        l.setBackground(Ui.round(Ui.surface(a), dp(26)));
+        l.setClipToOutline(true);
+        android.widget.ImageView iv = new android.widget.ImageView(a);
+        iv.setImageResource(R.drawable.ic_search);
+        iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+        iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(24), dp(24));
+        ip.rightMargin = dp(12);
+        l.addView(iv, ip);
+        l.addView(Ui.text(a, SEARCH_TITLE, Ui.BODY_L, Ui.TEXT_2), new LinearLayout.LayoutParams(0, -2, 1f));
+        android.widget.FrameLayout fg = new android.widget.FrameLayout(a);
+        Ui.ripple(fg);
+        l.setForeground(fg.getBackground());
+        l.setOnClickListener(v -> searchPage());
+        l.setContentDescription(SEARCH_TITLE + "，输入关键字直接跳到那一项");
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        lp.setMargins(dp(16), dp(8), dp(16), dp(4));
+        box.addView(l, lp);
     }
 
     private void reopen() {
@@ -84,7 +137,7 @@ public class SettingsPage {
         page("播放", box -> {
             LinearLayout q = card(box, "画质");
             q.addView(sub("画质策略", () -> pick(Q_VALUES, Q_SHORT, Prefs.str(a, Prefs.QUALITY, "auto"))
-                    + " · 省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
+                    + "，省电 " + (Prefs.on(a, Prefs.POWER_SAVE_AUTO) ? "≤480p" : "不变"), this::qualityPage));
             LinearLayout s = card(box, "声音、速度与续播");
             // the original audio track is always preferred since v1.15 (origAudio no longer read)
             s.addView(toggle("记住播放速度", "下一个视频沿用上次选的速度（最高 2 倍）", Prefs.REMEMBER_RATE));
@@ -92,8 +145,8 @@ public class SettingsPage {
             // "offer the last video when reopened" (resumePrompt) was removed in v1.15
             LinearLayout c = card(box, "字幕与片段");
             c.addView(sub("字幕", () -> pick(CAP_VALUES, CAP_SHORT, Prefs.str(a, Prefs.CAPTIONS, "yt"))
-                    + " · 大小" + pick(new String[]{"default", "s", "l", "xl"}, new String[]{"默认", "小", "大", "特大"}, Prefs.str(a, Prefs.SUB_SIZE, "default"))
-                    + " · 背景" + pick(new String[]{"default", "half", "none"}, new String[]{"默认", "半透明", "无"}, Prefs.str(a, Prefs.SUB_BG, "default")), this::captionsPage));
+                    + "，大小" + pick(new String[]{"default", "s", "l", "xl"}, new String[]{"默认", "小", "大", "特大"}, Prefs.str(a, Prefs.SUB_SIZE, "default"))
+                    + "，背景" + pick(new String[]{"default", "half", "none"}, new String[]{"默认", "半透明", "无"}, Prefs.str(a, Prefs.SUB_BG, "default")), this::captionsPage));
             c.addView(dyn("SponsorBlock", this::sponsorLabel, v -> pickSponsor()));
             c.addView(toggle("视频结束不显示推荐墙", "只隐藏片尾推荐网格，自动续播倒计时照常", Prefs.NO_END_WALL));
         });
@@ -127,7 +180,7 @@ public class SettingsPage {
     private String sponsorLabel() {
         if (!Prefs.sponsorBlock(a)) return "关闭";
         if (Prefs.sponsorCats(a).isEmpty()) return "已开启但未选类别（不会跳过）";
-        return "跳过：" + Prefs.sponsorCatsLabel(a) + " · 跳过后 2 秒内可撤销";
+        return "跳过：" + Prefs.sponsorCatsLabel(a) + "，跳过后 2 秒内可撤销";
     }
 
     /** One sheet for SponsorBlock (230): master switch on top, categories below; keys stay separate. */
@@ -188,7 +241,7 @@ public class SettingsPage {
             LinearLayout h = card(box, "通知栏与耳机");
             // the headset multi-click switch moved into this row's sheet (475)
             h.addView(dyn("通知栏按钮与耳机", () -> PrefsModel.notifLayout(Prefs.on(a, Prefs.NOTIF_SEEK), Prefs.on(a, Prefs.NOTIF_WL))
-                    + (Prefs.on(a, Prefs.HEADSET_MULTI) ? " · 耳机多击" : " · 耳机多击已关"), v -> pickNotif()));
+                    + (Prefs.on(a, Prefs.HEADSET_MULTI) ? "，耳机多击" : "，耳机多击已关"), v -> pickNotif()));
         });
     }
 
@@ -271,8 +324,9 @@ public class SettingsPage {
             in.setHint("例如：字幕、续播、屏蔽、画质");
             in.setHintTextColor(Ui.HINT);
             in.setTextColor(Ui.TEXT);
-            in.setBackground(Ui.round(Ui.surface(a), dp(Ui.RADIUS_DP)));
-            in.setPadding(dp(16), dp(12), dp(16), dp(12));
+            in.setBackground(Ui.round(Ui.surface(a), dp(26)));
+            in.setMinHeight(dp(52));
+            in.setPadding(dp(20), dp(12), dp(20), dp(12));
             in.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.setMargins(dp(16), dp(8), dp(16), dp(4));
@@ -288,7 +342,7 @@ public class SettingsPage {
                 for (final Hit h : all) {
                     if (!Logic.searchMatches(q, h.title, h.sub, h.where)) continue;
                     if (++n > 40) break;
-                    results.addView(row(h.title, h.where + (h.sub.isEmpty() ? "" : " · " + h.sub), v -> {
+                    results.addView(row(h.title, h.where + (h.sub.isEmpty() ? "" : "，" + h.sub), v -> {
                         for (Runnable r : h.path) r.run();
                     }));
                 }
@@ -312,8 +366,8 @@ public class SettingsPage {
 
     /** Small explanation under a card (441): plain text, not a row that looks tappable. */
     private void footnote(LinearLayout box, String text) {
-        TextView t = Ui.text(a, text, 12, Ui.TEXT_2);
-        t.setPadding(dp(32), dp(2), dp(32), dp(8));
+        TextView t = Ui.text(a, text, Ui.CAPTION, Ui.TEXT_2);
+        t.setPadding(dp(32), dp(8), dp(32), dp(8));
         box.addView(t);
     }
 
@@ -323,8 +377,8 @@ public class SettingsPage {
     private String nextLabel() {
         return "平时：" + pick(NEXT_VALUES, NEXT_LABELS, Prefs.str(a, Prefs.NEXT_SOURCE, "rec"))
                 + (Prefs.on(a, Prefs.SKIP_WATCHED_NEXT) && "rec".equals(Prefs.str(a, Prefs.NEXT_SOURCE, "rec")) ? "（跳过看过的）" : "")
-                + (Prefs.on(a, Prefs.LIST_END_NEXT) ? " · 列表播完接推荐" : "")
-                + " · 屏蔽的频道和本地隐藏的视频不会被自动播放";
+                + (Prefs.on(a, Prefs.LIST_END_NEXT) ? "，列表播完接推荐" : "")
+                + "，屏蔽的频道和本地隐藏的视频不会被自动播放";
     }
 
     /** Next video (231): nextSource + its two options; sleepCalm / sleepStrict went with the sleep timer (v1.15). */
@@ -421,7 +475,7 @@ public class SettingsPage {
         String l = WATCHED_LABELS[0];
         for (int i = 0; i < WATCHED_VALUES.length; i++) if (WATCHED_VALUES[i] == c) l = WATCHED_LABELS[i];
         if (c == 0) return l;
-        return l + (Prefs.on(a, Prefs.HIDE_WATCHED_RELATED) ? " · 首页和相关视频" : " · 只在首页") + " · 看了一部分的保留";
+        return l + (Prefs.on(a, Prefs.HIDE_WATCHED_RELATED) ? "，首页和相关视频" : "，只在首页") + "，看了一部分的保留";
     }
 
     private void pickWatched() {
@@ -456,7 +510,7 @@ public class SettingsPage {
 
     private String refreshLabel() {
         return (Prefs.on(a, Prefs.LIGHT_REFRESH) ? "轻量刷新（实验）" : "完整刷新")
-                + (Prefs.on(a, Prefs.REFRESH_COUNT) ? " · 提示新视频数" : "");
+                + (Prefs.on(a, Prefs.REFRESH_COUNT) ? "，提示新视频数" : "");
     }
 
     /** Pull to refresh (457): full / light, and the "N new videos" toast, in one sheet. */
@@ -492,7 +546,7 @@ public class SettingsPage {
         if (Prefs.get(a).getInt(Prefs.MIN_DUR, 0) > 0) n++;
         if (Prefs.get(a).getInt(Prefs.MAX_AGE, 0) > 0) n++;
         if (Prefs.on(a, Prefs.HIDE_LIVE)) n++;
-        return (n == 0 ? "未开启" : "已开 " + n + " 项") + " · 频道、关键词、短视频、旧视频、直播、本地隐藏";
+        return (n == 0 ? "未开启" : "已开 " + n + " 项") + "，频道、关键词、短视频、旧视频、直播、本地隐藏";
     }
 
     /** Every reason a video can be missing, in one page (235). */
@@ -510,7 +564,7 @@ public class SettingsPage {
             f.addView(toggle("隐藏直播、首映和即将开播", "只在首页和「接下来播放」里生效", Prefs.HIDE_LIVE));
             LinearLayout l = card(box, "本地");
             l.addView(dyn("本地隐藏的视频", () -> (hiddenCount < 0 ? "长按菜单里「本地隐藏」过的视频" : hiddenCount + " 个")
-                    + " · 点此全部恢复", v -> {
+                    + "，点此全部恢复", v -> {
                 MainActivity.js("ytl.unhideAll()");
                 hiddenCount = 0;
                 refreshAll();
@@ -643,10 +697,10 @@ public class SettingsPage {
             u.addView(dyn("检查更新", () -> {
                 String r = Updater.readyTag(a);
                 String last = Prefs.str(a, Prefs.UPDATE_LAST_RESULT, "");
-                return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + " · 每天自动检查一次"
-                        + (last.isEmpty() ? "（有新版只显示小红点）" : " · 上次：" + last);
+                return r != null ? "有新版本 " + r + "，点此更新" : "当前 " + version() + "，每天自动检查一次"
+                        + (last.isEmpty() ? "（有新版只显示小红点）" : "，上次：" + last);
             }, v -> Updater.checkNow(a)));
-            u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新 · " : "已关闭 · ") + RemoteRules.status(a), v -> rulesDialog()));
+            u.addView(dyn("远程屏蔽规则", () -> (Prefs.on(a, Prefs.REMOTE_RULES) ? "自动更新，" : "已关闭，") + RemoteRules.status(a), v -> rulesDialog()));
             // backup / restore, "restore defaults" and its 10 s undo were removed in v1.15
             // the history row and two explanation lines went (464); report + logs share one page (465)
             LinearLayout d = card(box);
@@ -665,18 +719,18 @@ public class SettingsPage {
                 .show();
     }
 
-    private static final String REFRESH_HINT = " · 滑动时大多没到最高刷新率，可能被系统按应用限制了；点此打开显示设置，在「屏幕刷新率 → 应用」里设为高刷";
+    private static final String REFRESH_HINT = "，滑动时大多没到最高刷新率，可能被系统按应用限制了；点此打开显示设置，在「屏幕刷新率 → 应用」里设为高刷";
 
     private void logsPage() {
         page("关于与诊断", box -> {
             LinearLayout c = card(box);
-            c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端 · 包名 " + a.getPackageName(), null));
+            c.addView(row(a.getString(R.string.app_name) + " " + version(), "个人自用的精简 YouTube 客户端，包名 " + a.getPackageName(), null));
             c.addView(row("WebView", MainActivity.webViewVersion(a), null));
             // background playback (v1.15): read-only, no guidance; the foreground media service and its
             // wake / Wi-Fi locks are what keep playback going with the screen off
             c.addView(dyn("后台播放", () -> "前台媒体服务" + (PlaybackService.isForeground() ? "运行中" : "未运行")
-                    + " · 电池优化" + (a.isIgnoringBattery() ? "：不受限制" : "：受系统管理")
-                    + (a.notificationsOk() ? "" : " · 通知已关闭"), null));
+                    + "，电池优化" + (a.isIgnoringBattery() ? "：不受限制" : "：受系统管理")
+                    + (a.notificationsOk() ? "" : "，通知已关闭"), null));
             if (a.refreshLimited()) {
                 c.addView(row("屏幕刷新率", a.refreshRateLabel() + REFRESH_HINT, v -> a.openDisplaySettings()));
             } else {
@@ -685,7 +739,7 @@ public class SettingsPage {
             LinearLayout r = card(box, "问题与日志");
             r.addView(row("复制问题报告", "版本、WebView、设备、设置摘要和最近日志，粘贴发给我", v -> copyReport()));
             r.addView(dyn("复制漏网广告记录", () -> Diag.lines(a, Diag.ADS) + " 条", v -> copyLog(Diag.ADS, "漏网广告记录")));
-            r.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行 · 只保留最近 30 天", v -> copyLog(Diag.DIAG, "诊断日志")));
+            r.addView(dyn("复制诊断日志", () -> Diag.lines(a, Diag.DIAG) + " 行，只保留最近 30 天", v -> copyLog(Diag.DIAG, "诊断日志")));
             r.addView(dyn("复制崩溃记录", () -> { String k = Diag.lastCrash(a); return k.isEmpty() ? "没有崩溃记录" : "最近 3 次崩溃的完整堆栈"; },
                     v -> copyLog(Diag.CRASH, "崩溃记录")));
             r.addView(dyn("网络拦截统计", com.google.android.youtube.pro.webview.AdBlocker::summary, null));
@@ -757,7 +811,7 @@ public class SettingsPage {
         LinearLayout bar = new LinearLayout(a);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(4), dp(4), dp(16), dp(4));
+        bar.setPadding(dp(4), dp(8), dp(16), dp(8));   // 64 dp top bar
         ImageButton back = new ImageButton(a);
         back.setImageResource(R.drawable.ic_arrow_back_white);
         back.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT));
@@ -766,7 +820,7 @@ public class SettingsPage {
         back.setContentDescription("返回");
         back.setOnClickListener(v -> pop());
         bar.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        TextView t = Ui.text(a, title, 20, Ui.TEXT);
+        TextView t = Ui.text(a, title, Ui.TITLE_L, Ui.TEXT);
         t.setPadding(dp(8), 0, 0, 0);
         Ui.heading(t);   // (379)
         bar.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -829,10 +883,10 @@ public class SettingsPage {
         if (title != null) parent.addView(Ui.title(a, title));
         LinearLayout c = new LinearLayout(a);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackground(Ui.round(Ui.surface(a), dp(Ui.RADIUS_DP)));
+        c.setBackground(Ui.round(Ui.surface(a), dp(Ui.CARD_RADIUS_DP)));
         c.setClipToOutline(true);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(dp(16), dp(title == null ? 12 : 2), dp(16), dp(4));
+        lp.setMargins(dp(16), dp(title == null ? 16 : 0), dp(16), dp(4));
         parent.addView(c, lp);
         return c;
     }
@@ -844,7 +898,7 @@ public class SettingsPage {
         l.setOrientation(LinearLayout.HORIZONTAL);
         l.setGravity(Gravity.CENTER_VERTICAL);
         l.setMinimumHeight(dp(Ui.ROW_MIN_DP));
-        l.setPadding(dp(16), dp(10), dp(12), dp(10));
+        l.setPadding(dp(16), dp(12), dp(12), dp(12));
         return l;
     }
 
@@ -852,14 +906,17 @@ public class SettingsPage {
         if (crawl != null) crawl.row(title, sub == null ? "" : String.valueOf(sub.getText()));
         LinearLayout t = new LinearLayout(a);
         t.setOrientation(LinearLayout.VERTICAL);
-        t.addView(Ui.text(a, title, 16, Ui.TEXT));
-        if (sub != null) t.addView(sub);
+        t.addView(Ui.text(a, title, Ui.BODY_L, Ui.TEXT));
+        if (sub != null) {
+            t.addView(sub);
+            t.setMinimumHeight(dp(Ui.ROW_SUB_DP - 24));   // a row with an explanation is at least 64 dp
+        }
         return t;
     }
 
     private View row(String title, String sub, View.OnClickListener click) {
         LinearLayout l = baseRow();
-        l.addView(texts(title, sub == null ? null : Ui.text(a, sub, 13, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
+        l.addView(texts(title, sub == null ? null : Ui.text(a, sub, Ui.BODY_M, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
         if (click != null) { Ui.ripple(l); l.setOnClickListener(click); }
         l.setContentDescription(sub == null ? title : title + "，" + sub);
         return l;
@@ -870,7 +927,7 @@ public class SettingsPage {
     /** Row whose explanation is computed, refreshed when a sub page closes or a value changes. */
     private View dyn(String title, final Label label, View.OnClickListener click) {
         LinearLayout l = baseRow();
-        final TextView sub = Ui.text(a, "", 13, Ui.TEXT_2);
+        final TextView sub = Ui.text(a, "", Ui.BODY_M, Ui.TEXT_2);
         l.addView(texts(title, sub), new LinearLayout.LayoutParams(0, -2, 1f));
         Runnable r = () -> { try { sub.setText(label.get()); } catch (Exception ignored) {} };
         r.run();
@@ -884,15 +941,19 @@ public class SettingsPage {
         if (crawl != null) crawl.child(open);
         LinearLayout l = baseRow();
         if (icon != 0) {
+            // v1.24: the icon sits in a 40 dp surface-3 square with 12 dp corners
             android.widget.ImageView iv = new android.widget.ImageView(a);
             iv.setImageResource(icon);
-            iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+            iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT));
+            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+            iv.setPadding(dp(8), dp(8), dp(8), dp(8));
+            iv.setBackground(Ui.round(Ui.chipBg(a), dp(12)));
             iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(24), dp(24));
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(40), dp(40));
             ip.rightMargin = dp(16);
             l.addView(iv, ip);
         }
-        l.addView(texts(title, Ui.text(a, sub, 13, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
+        l.addView(texts(title, Ui.text(a, sub, Ui.BODY_M, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
         l.addView(chevron());
         Ui.ripple(l);
         l.setOnClickListener(v -> open.run());
@@ -910,7 +971,7 @@ public class SettingsPage {
     /** Switch row over any stored state, e.g. a merged row that writes two keys (459). */
     private View toggle(String title, String sub, final BoolGet get, final BoolSet set) {
         final LinearLayout l = baseRow();
-        l.addView(texts(title, Ui.text(a, sub, 13, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
+        l.addView(texts(title, Ui.text(a, sub, Ui.BODY_M, Ui.TEXT_2)), new LinearLayout.LayoutParams(0, -2, 1f));
         final Switch sw = new Switch(a);
         sw.setChecked(get.get());
         tint(sw);
@@ -945,12 +1006,13 @@ public class SettingsPage {
      */
     private View valueRow(String title, String note, final Label value, View.OnClickListener click) {
         LinearLayout l = baseRow();
-        TextView sub = note == null ? null : Ui.text(a, note, 13, Ui.TEXT_2);
+        TextView sub = note == null ? null : Ui.text(a, note, Ui.BODY_M, Ui.TEXT_2);
         if (sub != null) { sub.setMaxLines(2); sub.setEllipsize(android.text.TextUtils.TruncateAt.END); }
         l.addView(texts(title, sub), new LinearLayout.LayoutParams(0, -2, 1f));
-        final TextView val = Ui.text(a, "", 14, Ui.accentText(a));
+        final TextView val = Ui.text(a, "", Ui.BODY_M, Ui.TEXT_2);   // v1.24: the value is not red any more
+        Ui.tnum(val);
         val.setPadding(dp(12), 0, 0, 0);
-        val.setMaxWidth(dp(140));
+        val.setMaxWidth(dp(132));
         val.setGravity(Gravity.END);
         l.addView(val);
         Runnable r = () -> {
@@ -1015,9 +1077,9 @@ public class SettingsPage {
     private View chevron() {
         android.widget.ImageView iv = new android.widget.ImageView(a);
         iv.setImageResource(R.drawable.ic_chevron_right);
-        iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_2));
+        iv.setImageTintList(android.content.res.ColorStateList.valueOf(Ui.TEXT_TERTIARY));
         iv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(20), dp(20));
         lp.leftMargin = dp(8);
         iv.setLayoutParams(lp);
         return iv;
@@ -1087,7 +1149,7 @@ public class SettingsPage {
 
     private String countLabel(String key, String note) {
         int n = Prefs.lines(a, key).size();
-        return (n == 0 ? "未设置" : n + " 个") + " · " + note;
+        return (n == 0 ? "未设置" : n + " 个") + "，" + note;
     }
 
     private void editLines(String title, String hint, final String key) {

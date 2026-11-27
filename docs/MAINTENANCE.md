@@ -53,6 +53,6 @@
 - 设置里只删了行、行为照旧按已存的值：打开搜索时弹出键盘（searchFocus）、未登录时记住观看进度（resumeLocal）。
 - 合并成一行（key 不变）：网页字号 = fontFollow + fontLarge；夜间提示 = nightPrompt + nightStart/End；下拉刷新 = lightRefresh + refreshCount；
   隐藏已看完 = hideWatched + seenMin + hideWatchedRelated；搜索结果只留视频和频道 = hideSearchExtras + hideSearchMix（映射在 PrefsModel，JUnit Round2Test）。
-- 强调色：只在不是品牌蓝时出现「改回品牌蓝」一行。备份只存文件（剪贴板恢复保留，兼容以前的剪贴板备份）。
+- 强调色：只在不是品牌红时出现「改回品牌红」一行（v1.23 起品牌色为红 #C8102E，旧默认蓝 #2F6BFF 视同品牌红）。备份只存文件（剪贴板恢复保留，兼容以前的剪贴板备份）。
 - 「记录与隐私」卡、开源许可弹窗、数据页说明脚注、睡眠页只读「当前」行删除；问题报告并入「诊断」页。
 - 保活跳转只保留 ColorOS/OPPO 组件。

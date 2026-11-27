@@ -609,7 +609,7 @@ public class PlaybackService extends Service {
             pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_FWD, getString(R.string.n_fwd), R.drawable.ic_forward_30_white).build());
         }
         if (cards && wl) {
-            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_WL, getString(R.string.n_wl), R.drawable.ic_watch_later_white).build());
+            pb.addCustomAction(new PlaybackState.CustomAction.Builder(ACTION_WL, getString(R.string.n_wl), R.drawable.ic_n_later).build());
         }
         return pb.build();
     }
@@ -700,10 +700,10 @@ public class PlaybackService extends Service {
                         : new Notification.Action.Builder(R.drawable.ic_skip_next_white, getString(R.string.n_next), action(ACTION_NEXT, 4)).build());
         if (!playing) {
             // paused: the fourth button closes playback and the notification (290)
-            b.addAction(new Notification.Action.Builder(R.drawable.ic_close_white, getString(R.string.n_close), action(ACTION_CLOSE, 14)).build());
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_n_close, getString(R.string.n_close), action(ACTION_CLOSE, 14)).build());
         } else if (Prefs.on(this, Prefs.NOTIF_WL) && MainActivity.signedIn()) {
             // heard something good: save it for later (100); signed in only (346)
-            b.addAction(new Notification.Action.Builder(R.drawable.ic_watch_later_white, getString(R.string.n_wl), action(ACTION_WL, 9)).build());
+            b.addAction(new Notification.Action.Builder(R.drawable.ic_n_later, getString(R.string.n_wl), action(ACTION_WL, 9)).build());
         }
         b.setStyle(new Notification.MediaStyle()
                         .setMediaSession(session.getSessionToken())

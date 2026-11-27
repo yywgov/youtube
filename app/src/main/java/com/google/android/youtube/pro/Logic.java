@@ -170,4 +170,9 @@ public final class Logic {
         for (String w : q.split("\\s+")) if (!w.isEmpty() && all.indexOf(w) < 0) return false;
         return true;
     }
+
+    /** The stored accent means "brand colour" (v1.23): nothing stored, or the old brand blue of 1.8–1.22. */
+    public static boolean isDefaultAccent(String stored) {
+        return stored == null || stored.trim().isEmpty() || "#2F6BFF".equalsIgnoreCase(stored.trim());
+    }
 }

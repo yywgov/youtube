@@ -28,10 +28,14 @@ public final class Ui {
     public static final int TEXT = 0xFFFFFFFF;
     public static final int TEXT_2 = 0xFFAAAAAA;
     public static final int DIVIDER = 0x1FFFFFFF;
-    /** Brand blue of the app icon (351); a lighter tint of it for text on dark surfaces (contrast ≥ 4.5:1). */
-    public static final int DEFAULT_ACCENT = 0xFF2F6BFF;
-    public static final int DEFAULT_ACCENT_TEXT = 0xFF6B95FF;
-    public static final int OLD_DEFAULT_BLUE = 0xFF3EA6FF;   // the default before 1.8, offered as "天蓝"
+    /**
+     * Brand red (v1.23, DESIGN.md): the lit face of the app icon. ACCENT fills (white text on it 5.9:1),
+     * ACCENT_INK is the only red used for text, icons and dots on dark surfaces (6.7:1 on black).
+     */
+    public static final int DEFAULT_ACCENT = 0xFFC8102E;
+    public static final int ACCENT_PRESSED = 0xFFA60D26;
+    public static final int ACCENT_INK = 0xFFFF5468;
+    public static final int ACCENT_TINT = 0x38C8102E;
     // (350) every native colour comes from here; a contract test keeps literals out of other classes
     public static final int CHIP = 0xFF333333;        // chip / pill buttons on a sheet
     public static final int SNACK = 0xF2323232;       // snack bar background
@@ -40,7 +44,6 @@ public final class Ui {
     public static final int TEXT_3 = 0xFFCCCCCC;      // secondary text on dialogs
     public static final int BLACK_HINT = 0xFF9E9E9E;  // text on the black screen, ≈7:1 on black (377)
     public static final int OVERLAY_PILL = 0xB0000000; // translucent pill (touch lock, fullscreen moon)
-    public static final int PROGRESS = 0xFFFF0033;    // top load bar (YouTube red)
     public static final int SWITCH_OFF = 0xFFBDBDBD;
     public static final int BLACK = 0xFF000000;
     public static final int WHITE = 0xFFFFFFFF;
@@ -75,17 +78,20 @@ public final class Ui {
 
     private Ui() {}
 
-    /** Accent colour chosen in settings (103), or the default blue. */
+    /**
+     * Fill accent (103): a colour the user picked in an older version keeps working; nothing stored or
+     * the old brand blue #2F6BFF means the brand red (the key is never rewritten).
+     */
     public static int accent(Context c) {
         String a = Prefs.str(c, Prefs.ACCENT, "");
+        if (Logic.isDefaultAccent(a)) return DEFAULT_ACCENT;
         try { if (a.matches("#[0-9a-fA-F]{6}")) return 0xFF000000 | Integer.parseInt(a.substring(1), 16); } catch (Exception ignored) {}
         return DEFAULT_ACCENT;
     }
 
-    /** Accent for text (351): the user's colour, or the lighter brand tint that reads well on dark grey. */
+    /** Red for text / icons / dots on dark surfaces: always the bright ink, a picked colour only fills (G1). */
     public static int accentText(Context c) {
-        int a = accent(c);
-        return a == DEFAULT_ACCENT ? DEFAULT_ACCENT_TEXT : a;
+        return ACCENT_INK;
     }
 
     // ---- haptics (372) ----

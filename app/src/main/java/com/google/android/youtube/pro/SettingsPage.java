@@ -543,7 +543,7 @@ public class SettingsPage {
         page("外观与交互", box -> {
             LinearLayout c = card(box, "主题与手感");
             c.addView(toggle("纯黑主题（AMOLED）", "深色模式下网页和 App 的背景都是纯黑，更省电、夜里不刺眼（默认开）", Prefs.AMOLED));
-            // accent (463): only offered while a colour other than the brand blue is still set
+            // accent (463): only offered while a colour other than the brand red is still set
             if (!accentIsDefault()) c.addView(accentRow());
             c.addView(fontRow());   // two font switches became one choice (455)
             // the long-press menu and keep-scroll switches lost their rows (477): both stay on (the defaults)
@@ -601,17 +601,16 @@ public class SettingsPage {
                 .show();
     }
 
-    // accent (103/351/361/463): the brand blue is the only colour now; an older pick can be set back
-    private static final String[] ACCENT_LABELS = {"品牌蓝", "天蓝", "青", "紫", "橙", "粉"};
+    // accent (103/351/361/463): the brand red is the only colour now; an older pick can be set back
+    private static final String[] ACCENT_LABELS = {"品牌红", "天蓝", "青", "紫", "橙", "粉"};
     private static final String[] ACCENT_VALUES = {"", "#3EA6FF", "#00BFA5", "#9C6BFF", "#FF8A00", "#FF4F8B"};
 
     private boolean accentIsDefault() {
-        String cur = Prefs.str(a, Prefs.ACCENT, "");
-        return cur.isEmpty() || "#2F6BFF".equalsIgnoreCase(cur);
+        return Logic.isDefaultAccent(Prefs.str(a, Prefs.ACCENT, ""));
     }
 
     private View accentRow() {
-        return valueRow("强调色", "点此改回默认的品牌蓝", () -> {
+        return valueRow("强调色", "点此改回品牌红", () -> {
             String cur = Prefs.str(a, Prefs.ACCENT, "");
             for (int i = 0; i < ACCENT_VALUES.length; i++) if (ACCENT_VALUES[i].equalsIgnoreCase(cur)) return ACCENT_LABELS[i];
             return cur;

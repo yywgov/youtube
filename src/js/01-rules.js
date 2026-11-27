@@ -183,8 +183,9 @@
     out.push('html[data-ytl-subbg="none"] ' + cs + '{background:transparent!important;text-shadow:0 0 3px #000,0 0 2px #000,1px 1px 2px #000}');
     // ---- batch 3 look (each behind its own html attribute, so a setting off means no rule applies) ----
     // design tokens for our own controls (164)
-    out.push(':root{--ytl-accent:#2f6bff;--ytl-accent-text:#6b95ff;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
-    out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick);--ytl-accent-text:var(--ytl-accent-pick)}');
+    // v1.23 brand red (DESIGN.md): accent fills, accent-text / dot are the bright ink for text and dots on dark
+    out.push(':root{--ytl-accent:#c8102e;--ytl-accent-text:#ff5468;--ytl-dot:#ff5468;--ytl-snack:#2a2a2a;--ytl-surface-1:#121212;--ytl-radius:12px;--ytl-surface:rgba(33,33,33,.96);--ytl-anim:200ms}');
+    out.push('html[data-ytl-accent]{--ytl-accent:var(--ytl-accent-pick)}');
     rule(RULES.accentFill.map(function (x) { return 'html[data-ytl-accent] ' + x; }), 'background:var(--ytl-accent)!important;background-color:var(--ytl-accent)!important');
     // pure black (91/v1.15). data-ytl-dark is set by this script (YouTube's own html[dark] is not always
     // there); m.youtube's variable names are hashed per build, so the ones holding dark surface colours are
@@ -224,13 +225,14 @@
     // very large text (378): card titles get a third line instead of being cut after two
     out.push('html[data-ytl-bigfont] .media-item-headline,html[data-ytl-bigfont] ytm-media-item h3{-webkit-line-clamp:3!important}');
     // update ready (137)
-    out.push('html[data-ytl-update] #ytl-gear{position:relative}html[data-ytl-update] #ytl-gear::after{content:"";position:absolute;top:9px;right:9px;width:8px;height:8px;border-radius:50%;background:#ff4e45}');
+    out.push('html[data-ytl-update] #ytl-gear{position:relative}html[data-ytl-update] #ytl-gear::after{content:"";position:absolute;top:11px;right:11px;width:10px;height:10px;border-radius:50%;background:var(--ytl-dot);box-shadow:0 0 0 2px var(--yt-spec-base-background,#0f0f0f)}');
     // search quick filters (125)
     out.push('#ytl-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}#ytl-chips::-webkit-scrollbar{display:none}' +
       '#ytl-chips a{flex:0 0 auto;padding:6px 12px;border-radius:8px;background:rgba(128,128,128,.18);color:inherit;font:500 13px/18px system-ui,sans-serif;text-decoration:none;white-space:nowrap}' +
       '#ytl-chips a[aria-current]{background:var(--ytl-accent);color:#fff}');
-    out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:currentColor}');
-    out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:currentColor}');
+    out.push('#ytl-tools{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 0 0 2px;color:inherit;fill:none}');
+    out.push('#ytl-gear{display:flex;align-items:center;justify-content:center;width:48px;height:48px;background:none;border:0;padding:0;margin:0 2px;color:inherit;fill:none}');
+    out.push('#ytl-gear svg,#ytl-tools svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}');
     out.push('#ytl-sb{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:14px;' +
       'background:rgba(33,33,33,.96);color:#fff;font:14px/20px system-ui,sans-serif;padding:10px 14px 10px 16px;border-radius:10px;' +
       'box-shadow:0 2px 10px rgba(0,0,0,.5);max-width:90vw;white-space:nowrap}' +

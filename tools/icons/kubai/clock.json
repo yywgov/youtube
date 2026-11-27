@@ -1,0 +1,1 @@
+{"name":"clock","w":{"2":{"o":[{"d":"M3 12A9 9 0 1 1 21 12A9 9 0 1 1 3 12Z","k":"shell","key":"face","part":"#0","tint":true},{"d":"M12 12L12 7","k":"line","key":"min","part":"#1","on":"face","lit":true},{"d":"M12 12L15.9 14.25","k":"line","key":"hour","part":"#2","on":"face","lit":true}]}}}

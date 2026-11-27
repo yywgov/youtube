@@ -351,7 +351,7 @@ public final class Prefs {
             o.put("compact", on(c, COMPACT));
             o.put("cardStyle", on(c, CARD_STYLE));
             o.put("dimThumbs", on(c, DIM_THUMBS));
-            o.put("accent", str(c, ACCENT, ""));
+            o.put("accent", Logic.isDefaultAccent(str(c, ACCENT, "")) ? "" : str(c, ACCENT, ""));   // old blue = brand red
             o.put("longPress", on(c, LONG_PRESS));
             o.put("searchFocus", on(c, SEARCH_FOCUS));
             o.put("searchChips", on(c, SEARCH_CHIPS));

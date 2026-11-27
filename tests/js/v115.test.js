@@ -176,7 +176,7 @@ test('pure black is on by default, set at document start, and does not depend on
   for (const v of ['base-background', 'raised-background', 'menu-background', 'general-background-a', 'general-background-b', 'general-background-c']) {
     assert.ok(root.includes('--yt-spec-' + v + ':#000!important'), v);
   }
-  assert.ok(!/#121212/.test(css), 'menus / sheets are black too, not #121212');
+  assert.ok(!/#121212/.test(css.replace(/--ytl-[a-z0-9-]+:#[0-9a-f]+/g, '')), 'menus / sheets are black too, not #121212 (our own --ytl tokens aside)');
   assert.deepEqual(env.calls.filter((c) => c[0] === 'pageTheme').map((c) => c[1]).slice(-1), ['#000000']);
 });
 

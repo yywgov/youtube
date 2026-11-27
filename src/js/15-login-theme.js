@@ -91,7 +91,7 @@
       // a candidate only: the same name may be dark text in a light block; the computed value decides
       for (var j = 0; j < st.length; j++) {
         var n = st[j];
-        if (n.charCodeAt(0) !== 45 || n.charCodeAt(1) !== 45 || amoledCandSeen[n]) continue;
+        if (n.charCodeAt(0) !== 45 || n.charCodeAt(1) !== 45 || amoledCandSeen[n] || n.indexOf('--ytl-') === 0) continue;   // our own tokens stay
         if (isDarkSurface(st.getPropertyValue(n))) { amoledCandSeen[n] = 1; amoledCand.push(n); }
       }
       return;
